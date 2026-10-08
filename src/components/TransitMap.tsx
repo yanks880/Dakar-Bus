@@ -133,8 +133,8 @@ export function TransitMap({
   corridorStops = [],
   onSelectCorridorStop,
 }: TransitMapProps) {
-  const userIcon = useMemo(() => makeMarker('map-user-marker', 'Votre position', '#10865b'), [])
-  const originIcon = useMemo(() => makeMarker('map-route-marker map-route-marker-origin', 'Départ sélectionné', '#126d4b'), [])
+  const userIcon = useMemo(() => makeMarker('map-user-marker', 'Votre position', '#198754'), [])
+  const originIcon = useMemo(() => makeMarker('map-route-marker map-route-marker-origin', 'Départ sélectionné', '#146b43'), [])
   const destinationIcon = useMemo(() => makeMarker('map-route-marker map-route-marker-destination', 'Destination sélectionnée', '#d78a32'), [])
   const stops = useMemo(() => mappableStops(publishedStops), [publishedStops])
   const corridorLineStops = useMemo(
@@ -212,7 +212,7 @@ export function TransitMap({
             pathOptions={{
               color: '#ffffff',
               weight: 2,
-              fillColor: stop.id.startsWith('ter') ? '#2f6fb3' : '#0f8f66',
+              fillColor: stop.id.startsWith('ter') ? '#2f6fb3' : '#198754',
               fillOpacity: 0.95,
             }}
             eventHandlers={onSelectCorridorStop ? { click: () => onSelectCorridorStop(stop) } : undefined}
@@ -247,7 +247,7 @@ export function TransitMap({
             [coverage.minLat, coverage.minLon],
             [coverage.maxLat, coverage.maxLon],
           ]}
-          pathOptions={{ color: '#128258', weight: 1, dashArray: '5 6', fillColor: '#128258', fillOpacity: 0.05 }}
+          pathOptions={{ color: '#198754', weight: 1, dashArray: '5 6', fillColor: '#198754', fillOpacity: 0.05 }}
         />
       )}
 
@@ -258,8 +258,8 @@ export function TransitMap({
           radius={stop.stopId === selectedStopId ? 9 : 6}
           pathOptions={
             stop.stopId === selectedStopId
-              ? { color: '#ffffff', weight: 3, fillColor: '#0b7250', fillOpacity: 1 }
-              : { color: '#ffffff', weight: 2, fillColor: '#13845c', fillOpacity: 0.92 }
+              ? { color: '#ffffff', weight: 3, fillColor: '#146a42', fillOpacity: 1 }
+              : { color: '#ffffff', weight: 2, fillColor: '#198754', fillOpacity: 0.92 }
           }
           eventHandlers={onSelectStop ? { click: () => onSelectStop(stop) } : undefined}
         >
@@ -274,7 +274,7 @@ export function TransitMap({
           <Circle
             center={[location.lat, location.lng]}
             radius={location.accuracy}
-            pathOptions={{ color: '#10865b', weight: 1, fillColor: '#10865b', fillOpacity: 0.11 }}
+            pathOptions={{ color: '#198754', weight: 1, fillColor: '#198754', fillOpacity: 0.11 }}
           />
           <Marker position={[location.lat, location.lng]} icon={userIcon} keyboard title="Votre position" />
         </>
