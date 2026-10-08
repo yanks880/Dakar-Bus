@@ -56,6 +56,7 @@ import {
   type Journey,
   type JourneySearch,
 } from './domain/journeys'
+import { formatMeters, planReferenceJourney, type PlannerOutcome } from './domain/planner'
 import { NETWORK_SOURCES, type NetworkId, type NetworkSource } from './domain/network'
 import { NETWORK_REFERENCE_DATA, formatFrequencyPeriod, formatSourceVerification } from './domain/frequencies'
 import { getRemainingMinutes } from './domain/truth'
@@ -135,6 +136,8 @@ interface JourneyState {
   search: JourneySearch | null
   error: string | null
   errorCode: string | null
+  referenceOutcome?: PlannerOutcome
+  referenceNotice?: string
 }
 
 const IDLE_JOURNEY: JourneyState = { status: 'idle', search: null, error: null, errorCode: null }
@@ -224,6 +227,21 @@ function journeyErrorMessage(code: string | null): string {
     default:
       return 'Le calcul d’itinéraire n’a pas répondu. Réessayez : aucune course n’est affichée sans réponse du serveur.'
   }
+}
+
+function shouldUseReferenceFallback(result: ApiResult): boolean {
+  if (result.ok) return false
+  return result.status === 0 || (result.status === 404 && result.code === null) || result.code === 'NOT_PUBLISHED'
+}
+
+function planReferencePoints(origin: MapPoint, destination: MapPoint): PlannerOutcome {
+  const endpoint = (point: MapPoint) => ({
+    label: point.label,
+    lat: point.lat,
+    lon: point.lng,
+    ...(point.stopId && getCorridorStop(point.stopId) ? { stopId: point.stopId } : {}),
+  })
+  return planReferenceJourney(endpoint(origin), endpoint(destination))
 }
 
 function explicitJourneyNetwork(journey: Journey): 'brt' | 'ter' | null {
@@ -802,6 +820,17 @@ function App() {
 
     const result = await fetchApi(`/api/journeys?${parameters.toString()}`)
     if (!result.ok) {
+      if (shouldUseReferenceFallback(result)) {
+        const referenceOutcome = planReferencePoints(origin, destination)
+        const referenceNotice = result.code === 'NOT_PUBLISHED'
+          ? 'Aucun jeu de transport publié : cette estimation utilise uniquement la référence locale TER/BRT.'
+          : 'Le serveur d’horaires est indisponible sur cet hébergement : estimation locale TER/BRT, sans horaire déclaré ni temps réel.'
+        setJourney({ status: 'ready', search: null, error: null, errorCode: null, referenceOutcome, referenceNotice })
+        announce(referenceOutcome.ok
+          ? `Estimation locale TER/BRT : environ ${referenceOutcome.totalMinutes} minutes. Pas de prochain passage ni de temps réel.`
+          : `${referenceNotice} ${referenceOutcome.message}`)
+        return
+      }
       const message = journeyErrorMessage(result.code)
       setJourney({ status: 'error', search: null, error: message, errorCode: result.code })
       announce(message)
@@ -880,18 +909,13 @@ function App() {
                 <div><span className="eyebrow">AFFICHAGE</span><strong>Couches du réseau</strong></div>
                 <button type="button" className="icon-button popover-close" aria-label="Fermer les couches" onClick={() => setLayersOpen(false)}><X size={17} /></button>
               </div>
-              <p className="popover-note">TER et BRT affichent le réseau de référence (tracés et arrêts de source publique) ; les autres catégories restent vides tant qu’une source fiable n’est pas intégrée.</p>
+              <p className="popover-note">Activez uniquement les couches que vous souhaitez voir sur la carte.</p>
               <div className="layer-options">
                 {NETWORK_SOURCES.map((network) => (
                   <label className="layer-option" key={network.id}>
                     <input type="checkbox" checked={networkLayers[network.id]} onChange={() => toggleNetwork(network.id)} />
                     <span className={`layer-icon layer-icon-${network.id}`}><NetworkIcon id={network.id} size={16} /></span>
                     <span className="layer-label">{network.label}</span>
-                    <span className="layer-empty">
-                      {network.id === 'ter' ? `${TER_STOPS.length} gares (référence)`
-                        : network.id === 'brt' ? `${BRT_STOPS.length} stations (référence)`
-                        : 'sans données'}
-                    </span>
                   </label>
                 ))}
               </div>
@@ -900,10 +924,8 @@ function App() {
                   <input type="checkbox" checked={showCoverage} onChange={() => setShowCoverage((shown) => !shown)} />
                   <span className="layer-icon layer-icon-published"><Database size={16} /></span>
                   <span className="layer-label">Périmètre publié</span>
-                  <span className="layer-empty">{network?.snapshot?.bounds?.stopsWithCoordinates ?? 0} arrêts</span>
                 </label>
               )}
-              <div className="popover-footnote"><Info size={13} /> Les couches de référence n’ajoutent ni horaire GTFS ni temps réel.</div>
             </div>
           )}
         </div>
@@ -1064,7 +1086,9 @@ function App() {
           {activeTab === 'settings' && (
             <>
               <SettingsHelpSection />
-              <SettingsDisclosure title="Réseaux et données">
+              <SettingsDisclosure title="État des données">
+                <ReadApiCard published={published} dataAvailable={dataAvailable} onRefresh={() => void loadPublishedNetwork()} />
+                <ReferenceFrequencyCards />
                 <DataCatalogSection
                   filter={exploreFilter}
                   sources={visibleSources}
@@ -1078,9 +1102,6 @@ function App() {
               </SettingsDisclosure>
               <SettingsDisclosure title="Conditions d’utilisation"><LegalSection /></SettingsDisclosure>
               <SettingsDisclosure title="Mises à jour"><ChangelogSection /></SettingsDisclosure>
-              <SettingsDisclosure title="État des données">
-                <ReadApiCard published={published} dataAvailable={dataAvailable} onRefresh={() => void loadPublishedNetwork()} />
-              </SettingsDisclosure>
               <LocalConsoleSection
                 open={consoleOpen}
                 onToggle={() => setConsoleOpen((current) => !current)}
@@ -1263,8 +1284,8 @@ function ExplorerPanel({
         <p className="explore-nearby-message" role="status">Les arrêts proches n’ont pas pu être chargés.</p>
       )}
       {dataAvailable && gpsState === 'ready' && nearby.status === 'ready' && (
-        <section className="explore-nearby" aria-label="Arrêts proches">
-          <h3>Près de vous</h3>
+        <section className="explore-nearby" aria-label="Mobilité à proximité">
+          <h3>Mobilité à proximité</h3>
           {nearby.stops.length > 0 ? (
             <ul className="published-stop-list">
               {nearby.stops.slice(0, 3).map((stop) => (
@@ -1284,11 +1305,7 @@ function ExplorerPanel({
         </section>
       )}
 
-      {!dataAvailable && (
-        <p className="explore-data-note">Aucun horaire GTFS n’est connecté. Les fiches ci-dessous sont des références officielles, pas des prochains passages.</p>
-      )}
-
-      <ReferenceFrequencyCards />
+      <ReferenceNetworkSummary />
 
       <div className="destination-shortcuts" aria-label="Destinations enregistrées">
         <strong className="destination-shortcuts-title">Mes destinations</strong>
@@ -1317,7 +1334,41 @@ function ExplorerPanel({
   )
 }
 
+const COMPACT_NETWORK_IDS: readonly NetworkId[] = ['ter', 'brt', 'ddd', 'aftu', 'tata']
 const REFERENCE_NETWORK_CARD_IDS = ['ter', 'brt', 'ddd', 'aftu'] as const
+
+function compactFrequencyLabel(network: NetworkSource): string {
+  if (network.id === 'tata') return 'Référence catalogue'
+  const headways = [...new Set(network.referenceData?.officialFrequencies.map((item) => item.headwayMinutes) ?? [])]
+    .sort((a, b) => a - b)
+  if (headways.length === 1) return `${headways[0]} min`
+  if (headways.length > 1) return `${headways[0]}–${headways[headways.length - 1]} min`
+  return 'Fréquence de référence'
+}
+
+/** Résumé Explorer : fréquences de référence uniquement, jamais un prochain passage. */
+function ReferenceNetworkSummary() {
+  const networks = COMPACT_NETWORK_IDS
+    .map((id) => NETWORK_SOURCES.find((network) => network.id === id))
+    .filter((network): network is NetworkSource => Boolean(network))
+
+  return (
+    <section className="network-summary-section" aria-label="Réseaux de référence">
+      <div className="network-summary-heading">
+        <strong>Réseaux de référence</strong>
+      </div>
+      <ul className="network-summary-list">
+        {networks.map((network) => (
+          <li key={network.id}>
+            <span className="network-summary-dot is-referenced" aria-hidden="true" />
+            <span className="network-summary-name">{network.referenceData?.shortName ?? network.label}</span>
+            <strong>{compactFrequencyLabel(network)}</strong>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
 
 function ReferenceFrequencyCards() {
   return (
@@ -1510,14 +1561,14 @@ function RoutePanel({
       </form>
 
       {routeAttempted ? (
-        <RouteOutcome journey={journey} dataAvailable={dataAvailable} countdownNow={countdownNow} />
+        <RouteOutcome journey={journey} routePoints={routePoints} dataAvailable={dataAvailable} countdownNow={countdownNow} />
       ) : (
         <div className="route-truth-card">
           <div className="route-truth-icon"><ShieldCheck size={17} /></div>
           {dataAvailable ? (
-            <div><strong>Horaires disponibles</strong><span>Trajets directs uniquement.</span></div>
+            <div><strong>Horaires théoriques disponibles</strong><span>Courses directes déclarées ; estimation TER/BRT si le serveur est indisponible.</span></div>
           ) : (
-            <div><strong>En attente des horaires</strong><span>Le calcul s’activera dès qu’une source vérifiée sera disponible.</span></div>
+            <div><strong>Estimation TER/BRT disponible</strong><span>Réseau de référence, durées estimées — pas de prochains passages.</span></div>
           )}
         </div>
       )}
@@ -1526,7 +1577,12 @@ function RoutePanel({
   )
 }
 
-function RouteOutcome({ journey, dataAvailable, countdownNow }: { journey: JourneyState; dataAvailable: boolean; countdownNow: number }) {
+function RouteOutcome({ journey, routePoints, dataAvailable, countdownNow }: {
+  journey: JourneyState
+  routePoints: Partial<Record<RoutePointKey, MapPoint>>
+  dataAvailable: boolean
+  countdownNow: number
+}) {
   if (journey.status === 'loading') {
     return (
       <div className="route-unavailable" role="status" aria-live="polite">
@@ -1536,6 +1592,17 @@ function RouteOutcome({ journey, dataAvailable, countdownNow }: { journey: Journ
           <p>Arrêts publiés et horaires théoriques du snapshot actif uniquement.</p>
         </div>
       </div>
+    )
+  }
+
+  if (journey.referenceOutcome) {
+    return (
+      <ReferenceJourneyOutcome
+        outcome={journey.referenceOutcome}
+        notice={journey.referenceNotice ?? ''}
+        originLabel={routePoints.origin?.label ?? 'Départ'}
+        destinationLabel={routePoints.destination?.label ?? 'Destination'}
+      />
     )
   }
 
@@ -1616,6 +1683,67 @@ function RouteOutcome({ journey, dataAvailable, countdownNow }: { journey: Journ
           ? 'Aucune position de véhicule et aucun temps réel : ces heures sont celles déclarées dans le flux publié.'
           : 'Aucune donnée publiée n’est servie : ces heures proviennent exclusivement du flux publié.'}
       </p>
+    </section>
+  )
+}
+
+function ReferenceJourneyOutcome({ outcome, notice, originLabel, destinationLabel }: {
+  outcome: PlannerOutcome
+  notice: string
+  originLabel: string
+  destinationLabel: string
+}) {
+  if (!outcome.ok) {
+    return (
+      <div className="route-unavailable reference-route-unavailable" role="status" aria-live="polite">
+        <div className="unavailable-icon"><AlertTriangle size={18} /></div>
+        <div>
+          <strong>Aucun trajet TER/BRT de référence trouvé</strong>
+          <p>{notice}</p>
+          <p className="route-unavailable-note">{outcome.message}</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <section className="journey-results reference-journey-results" aria-label="Estimation de trajet TER/BRT">
+      <div className="journey-results-head">
+        <span className="eyebrow">ESTIMATION LOCALE · TER + BRT</span>
+        <span className="journey-count-chip">Réseau de référence</span>
+      </div>
+      <p className="reference-journey-notice">{notice}</p>
+      <p className="reference-journey-points"><strong>{originLabel}</strong><ArrowRight size={15} aria-hidden="true" /><strong>{destinationLabel}</strong></p>
+      <div className="planner-summary">
+        <strong>≈ {outcome.totalMinutes} min</strong>
+        <span>{outcome.transfers} correspondance{outcome.transfers > 1 ? 's' : ''}</span>
+        <span className="strip-divider" />
+        <span><Footprints size={13} /> {formatMeters(outcome.totalWalkM)}</span>
+        <span className="strip-divider" />
+        <span>{outcome.boardedLines.join(' + ')}</span>
+      </div>
+      <ol className="planner-legs">
+        {outcome.legs.map((leg, index) => {
+          const isTer = leg.line?.network === 'ter'
+          const Icon = leg.kind === 'ride' ? (isTer ? TrainFront : BusFront) : Footprints
+          const title = leg.kind === 'ride'
+            ? `${leg.line?.shortName ?? 'Ligne'} · ${leg.from} → ${leg.to}`
+            : leg.kind === 'walk_transfer'
+              ? `Correspondance à pied · ${leg.from} → ${leg.to}`
+              : `Marche${leg.to ? ` vers ${leg.to}` : ''}`
+          const detail = leg.kind === 'ride'
+            ? `~${leg.minutes} min${leg.intermediateStops?.length ? ` · via ${leg.intermediateStops.join(', ')}` : ''}`
+            : `${formatMeters(leg.distanceM)} · ~${leg.minutes} min${leg.note ? ` · ${leg.note}` : ''}`
+          return (
+            <li key={`${leg.kind}-${leg.line?.id ?? ''}-${index}`} className={`planner-leg planner-leg-${leg.kind}${leg.line?.network ? ` planner-leg-${leg.line.network}` : ''}`}>
+              <span className="planner-leg-icon"><Icon size={15} /></span>
+              <span className="planner-leg-copy"><strong>{title}</strong><small>{detail}</small></span>
+              <span className="planner-leg-time">~{leg.minutes} min</span>
+            </li>
+          )
+        })}
+      </ol>
+      <p className="journey-footnote journey-footnote-strong">{outcome.limitation}</p>
     </section>
   )
 }
@@ -1830,8 +1958,8 @@ function UniversalSearchCard({
   )
 }
 
-/** Section « Réseaux et données » de Paramètres : catalogue lisible des lignes
- *  publiées, du réseau de référence TER/BRT et des sources à relier. */
+/** Catalogue technique de l’accordéon « État des données » : lignes publiées,
+ *  réseau de référence TER/BRT et sources à relier. */
 function DataCatalogSection({
   filter,
   sources,
