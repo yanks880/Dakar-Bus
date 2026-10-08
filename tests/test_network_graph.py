@@ -217,8 +217,20 @@ class DirectJourneyTests(GraphFixtures):
             self.assertEqual(result["alight"]["arrival"], "06:30:00")
             self.assertEqual(result["duration_min"], 30)
             self.assertEqual(result["date"], "2026-10-08")
+            self.assertEqual(result["next_departure_at"], "2026-10-08T06:00:00Z")
+            self.assertEqual(result["departure_status"], "SCHEDULED")
             self.assertIn("temps réel", result["note"])
             self.assertFalse(journey["realtime"])
+
+            no_timezone = {**graph, "timezone": None}
+            without_invented_instant = find_direct_journeys(
+                no_timezone,
+                (14.7000, -17.4500),
+                (14.6600, -17.4300),
+                at=datetime(2026, 10, 8, 5, 30, tzinfo=timezone.utc),
+            )
+            self.assertIsNone(without_invented_instant["results"][0]["next_departure_at"])
+            self.assertEqual(without_invented_instant["results"][0]["departure_status"], "UNKNOWN")
 
     def test_the_walk_graph_uses_station_links_to_reach_a_ride(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -255,6 +267,19 @@ class DirectJourneyTests(GraphFixtures):
             self.assertTrue(journey["exhausted_today"])
             self.assertEqual(journey["local_day"], "2026-10-08")
             self.assertIsNone(journey["next_service_date"])
+            self.assertEqual(journey["results"][0]["next_departure_at"], "2026-10-09T06:00:00Z")
+
+            exact_departure = find_direct_journeys(
+                graph,
+                (14.7000, -17.4500),
+                (14.6600, -17.4300),
+                at=datetime(2026, 10, 8, 6, 0, tzinfo=timezone.utc),
+            )
+            self.assertEqual(exact_departure["results"][0]["date"], "2026-10-09")
+            self.assertGreater(
+                datetime.fromisoformat(exact_departure["results"][0]["next_departure_at"].replace("Z", "+00:00")),
+                datetime(2026, 10, 8, 6, 0, tzinfo=timezone.utc),
+            )
 
     def test_a_weekend_only_exception_date_is_taken_into_account(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

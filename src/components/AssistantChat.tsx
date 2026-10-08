@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Bot, Send, Sparkles, X } from 'lucide-react'
-import { answerAssistant, type AssistantContext, type AssistantMessage } from '../domain/assistant'
+import { answerAssistant, getAssistantCountdownMinutes, type AssistantContext, type AssistantMessage } from '../domain/assistant'
 
 const SUGGESTIONS: readonly string[] = [
   'Quel est le prochain BRT vers Guédiawaye ?',
@@ -17,6 +17,34 @@ function firstGreeting(context: AssistantContext): AssistantMessage {
     role: 'assistant',
     text: answerAssistant('bonjour', context),
   }
+}
+
+function createReply(question: string, context: AssistantContext): AssistantMessage {
+  const now = Date.now()
+  const countdownMinutes = getAssistantCountdownMinutes(question, context, now)
+  return {
+    id: nextMessageId++,
+    role: 'assistant',
+    text: answerAssistant(question, context, now),
+    ...(countdownMinutes === null ? {} : { countdownMinutes }),
+  }
+}
+
+function AssistantBubble({ message }: { message: AssistantMessage }) {
+  const countdown = message.countdownMinutes
+  if (message.role !== 'assistant' || countdown === undefined || countdown < 1) {
+    return <p className={`assistant-bubble assistant-bubble-${message.role}`}>{message.text}</p>
+  }
+  const label = `${countdown} min`
+  const index = message.text.indexOf(label)
+  if (index < 0) return <p className="assistant-bubble assistant-bubble-assistant">{message.text}</p>
+  return (
+    <p className="assistant-bubble assistant-bubble-assistant">
+      {message.text.slice(0, index)}
+      <strong className="assistant-countdown">{label}</strong>
+      {message.text.slice(index + label.length)}
+    </p>
+  )
 }
 
 /**
@@ -41,21 +69,21 @@ export function AssistantChat({ context }: { context: AssistantContext }) {
     event.preventDefault()
     const question = draft.trim()
     if (!question) return
-    const answer = answerAssistant(question, context)
+    const reply = createReply(question, context)
     setMessages((current) => [
       ...current,
       { id: nextMessageId++, role: 'user', text: question },
-      { id: nextMessageId++, role: 'assistant', text: answer },
+      reply,
     ])
     setDraft('')
   }
 
   function ask(question: string) {
-    const answer = answerAssistant(question, context)
+    const reply = createReply(question, context)
     setMessages((current) => [
       ...current,
       { id: nextMessageId++, role: 'user', text: question },
-      { id: nextMessageId++, role: 'assistant', text: answer },
+      reply,
     ])
   }
 
@@ -72,9 +100,7 @@ export function AssistantChat({ context }: { context: AssistantContext }) {
             <button type="button" className="icon-button" aria-label="Fermer l’assistant" onClick={() => setOpen(false)}><X size={16} /></button>
           </header>
           <div className="assistant-messages" ref={listRef} role="log" aria-live="polite">
-            {messages.map((message) => (
-              <p key={message.id} className={`assistant-bubble assistant-bubble-${message.role}`}>{message.text}</p>
-            ))}
+            {messages.map((message) => <AssistantBubble key={message.id} message={message} />)}
           </div>
           <div className="assistant-suggestions">
             {SUGGESTIONS.map((suggestion) => (

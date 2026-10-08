@@ -3,8 +3,10 @@
  *
  * Ce moteur combine les corridors TER et BRT (voir `corridors.ts`) :
  * marche d'accès, montée, correspondance marchable, descente, marche finale.
- * Il inclut les temps de marche, d'attente (demi-cadence annoncée) et de
- * parcours (distance / vitesse commerciale de référence).
+ * Il inclut les temps de marche, d'attente (demi-fréquence officielle de
+ * référence, utilisée comme estimation) et de parcours (distance / vitesse
+ * commerciale de référence). Les périodes TER restent distinctes ; sans jour
+ * ni heure demandés, le calculateur retient le headway officiel maximal.
  *
  * Honnêteté :
  * - il ne calcule que sur le réseau de référence (TER + BRT) : les réseaux
@@ -292,7 +294,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
     transfers,
     boardedLines,
     limitation:
-      'Estimation sur le réseau de référence TER + BRT (fréquences et vitesses annoncées publiquement) : ni horaire déclaré, ni temps réel, ni réseaux DDD/AFTU/TATA.',
+      'Estimation du réseau de référence sur les fréquences officielles TER/BRT et des vitesses de référence ; le TER utilise le headway maximal faute de jour/heure choisis. Ce n’est ni un horaire, ni du temps réel, ni une fréquence DDD/AFTU/TATA.',
   }
 }
 

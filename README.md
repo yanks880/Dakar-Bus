@@ -1,16 +1,17 @@
 # Dakar Bus
 
-Web app mobile-first pour explorer la mobilité de Dakar. L'interface place la carte au centre du produit et applique une règle stricte : aucun arrêt, horaire, tracé, statut de service ou passage n'est publié sans donnée traçable.
+Web app mobile-first qui guide les déplacements à Dakar. Dans Explorer, la carte occupe le tiers supérieur de l’écran ; une recherche « On va où ? » et les raccourcis Maison, Boulot et Adresse simplifient l’accès aux destinations. L’application applique une règle stricte : aucun arrêt, horaire, tracé, statut de service ou passage n'est publié sans donnée traçable.
 
 ## État actuel
 
 Cette première fondation fournit :
 
 - une carte interactive de Dakar, avec fond OpenStreetMap et attribution visible ;
-- une interface responsive en 4 piliers : Explorer (carte + GPS), Trajet (recherche universelle), Alertes, Paramètres (aide, données, CGU, historique, console technique) ;
+- une interface responsive en 4 onglets : Explorer (carte, recherche « On va où ? », GPS et destinations enregistrées), Trajet (préparation d’un itinéraire), Alertes et Paramètres (guide et sections d’information repliables) ;
 - une demande de géolocalisation explicite, affichage de sa précision et gestion des refus/erreurs ;
 - une sélection de départ et destination par toucher/clic sur la carte ;
 - un catalogue de sources prévu pour TER, BRT, Dakar Dem Dikk, AFTU et TATA, sans prétendre qu'un jeu de données est déjà intégré ;
+- la gare TER-09 affichée sous le nom « Keur Mbaye Fall » dans la carte, la recherche et le GTFS de référence ;
 - une PWA installable et un cache hors connexion limité à l'enveloppe de l'application ;
 - un auditeur GTFS Static en lecture seule, sans extraction de l’archive, avec rapport JSON, contrôle des tables essentielles, relations, coordonnées, horaires, calendriers, tracés, fréquences et transferts ;
 - un outil de staging versionné qui conserve le ZIP original, son checksum, le manifeste de provenance déclaré, les comptages et le rapport de validation, sans publication automatique ;
@@ -34,9 +35,10 @@ Aucune décision n'est anonyme : approuver, refuser, annuler ou publier exige un
 Une couche **réseau de référence** distincte du pipeline de publication a été ajoutée :
 
 - **Cadrage de la carte** : la carte englobe désormais toute la région utile (Almadies → Rufisque/Bargny, jusqu’aux terminus Diamniadio et Guédiawaye) via `fitBounds` au chargement.
-- **Tracés TER et BRT** : les 13 gares du TER (liste Sen TER, positions OpenStreetMap/SETER) et les 23 stations du BRT sont tracées en superposition du fond OpenStreetMap, avec arrêts cliquables. Les positions des stations BRT sont les coordonnées **exactes** des nœuds OpenStreetMap de la relation de ligne B1 (`network=SunuBRT`, relations 19961937/19961993, relevées le 8 octobre 2026) : la séquence officielle des 23 stations est verrouillée par les tests (`src/domain/corridors.test.ts`) et reprise telle quelle dans le GTFS de référence. Le tracé reliant ces arrêts reste une géométrie de référence (pas le tracé métrique des voies), explicitement étiquetée — pas un flux opérateur validé. Les interrupteurs de couche TER/BRT pilotent cet affichage.
-- **Assistant IA** : bouton flottant en bas à gauche de la carte (onglet Explorer), et réponses dans la recherche universelle de Trajet. Moteur local à règles (aucun service externe) branché sur le réseau de référence, le calculateur et l’état réel des API : listes d’arrêts, desserte d’un lieu, fréquences annoncées, itinéraires, tarif de référence, état des perturbations (aucune alerte inventée).
-- **Calculateur de correspondances** : dans l’onglet Trajet, un module calcule le meilleur enchaînement TER + BRT entre deux points (arrêts de référence ou points de la carte), avec temps de marche, d’attente (demi-cadence annoncée) et de parcours estimés. DDD/AFTU/TATA ne sont pas inventés : le calculateur le dit.
+- **Tracés TER et BRT** : les 13 gares du TER (liste Sen TER, positions OpenStreetMap/SETER, sans date de vérification externe documentée) et les 23 stations du BRT sont tracées en superposition du fond OpenStreetMap, avec arrêts cliquables. Les stations BRT sont associées aux identifiants de nœuds OpenStreetMap de la relation B1 (`network=SunuBRT`, relations 19961937/19961993) ; la date de vérification externe de ces positions n’est pas documentée. La séquence de référence des 23 stations est verrouillée par les tests (`src/domain/corridors.test.ts`) et reprise telle quelle dans le GTFS de référence. Le tracé reliant ces arrêts reste une géométrie de référence (pas le tracé métrique des voies), explicitement étiquetée — pas un flux opérateur validé. Les interrupteurs de couche TER/BRT pilotent cet affichage.
+- **Assistant IA** : bouton flottant en bas à gauche de la carte (onglet Explorer) et réponses à la recherche « On va où ? ». Moteur local à règles (aucun service externe) branché sur le réseau de référence, le calculateur et l’état réel des API : listes d’arrêts, desserte d’un lieu, fréquences officielles de référence, itinéraires, tarif de référence, état des perturbations (aucune alerte inventée).
+- **Calculateur de correspondances** : dans l’onglet Trajet, un module calcule le meilleur enchaînement TER + BRT entre deux points (arrêts de référence ou points de la carte), avec temps de marche, d’attente (demi-fréquence officielle de référence) et de parcours estimés. DDD/AFTU/TATA ne sont pas inventés : le calculateur le dit.
+- **Fiches de référence Explorer** : BRT B1 (6 min, 06:00–21:00), les périodes distinctes du TER (10/20 min selon le jour et l’heure), DDD (38 lignes, 400 bus) et AFTU (72 lignes, 2 300 bus, 14 GIE). Les fréquences DDD/AFTU par ligne restent inconnues ; aucune fréquence ne devient un prochain passage. Les sources sont liées aux URL consignées dans le dépôt ; aucune date de vérification en ligne n’est déclarée lorsqu’elle n’est pas documentée.
 - **Catalogue de données** : dans Paramètres, bloc « Réseau de référence » filtrable (TER/BRT) à côté des lignes publiées.
 - **Onglet Alertes** : canaux officiels d’information (Sen TER, SunuBRT, CETUD) affichés tant qu’aucun flux d’alertes vérifiable n’est connecté.
 
@@ -377,16 +379,16 @@ La navigation est répartie sur quatre onglets, chacun avec un rôle unique : au
 
 | Onglet | Rôle exclusif | Contenu |
 | --- | --- | --- |
-| **Explorer** | Vue cartographique et géolocalisation | Carte Leaflet plein écran ou panneau latéral, couches TER/BRT, géolocalisation, rayon de 5 km autour de l'usager, flux des mobilités à proximité avec leurs horaires annoncés, assistant IA en bouton flottant. Aucun état d'API, aucun slogan. |
-| **Trajet** | Recherche universelle et itinéraires | Barre de recherche universelle (index complet des arrêts : snapshot publié + TER + BRT) reliée à l'assistant, calculateur multimodal TER/BRT avec correspondances marchables, courses directes déclarées du snapshot, rappel des 5 mobilités prises en charge (TER, BRT, DDD, AFTU, TATA). Pas de fond de carte. |
+| **Explorer** | Guide de destination, carte et géolocalisation | Carte Leaflet en tiers supérieur, recherche « On va où ? », couches TER/BRT, géolocalisation, arrêts proches vérifiés et raccourcis Maison, Boulot et Adresse sur une ligne. Assistant IA disponible depuis la carte. |
+| **Trajet** | Préparation d’un itinéraire | Choix d’un départ et d’une destination, arrêts connus, courses directes déclarées du snapshot et options multimodales repliées. Pas de barre de recherche dédiée ni de fond de carte. |
 | **Alertes** | Information voyageur | Fil des perturbations et canaux officiels. Aucune alerte n'est affichée sans source vérifiée, et l'absence d'alerte n'est jamais présentée comme un service normal. |
-| **Paramètres** | Aide, données et informations légales | Mode d'emploi pilier par pilier, catalogue des réseaux et données publiées, conditions générales d'utilisation, historique des mises à jour, état des API locales, et console d'administration **repliée par défaut** (staging, revue, publication). |
+| **Paramètres** | Guide, informations et données | Guide d’utilisation visible ; réseaux, conditions, mises à jour et état des données dans des sections repliables ; console d’administration repliée par défaut. Pas de barre de recherche. |
 
 Règles appliquées par le code et vérifiées par les tests (`src/App.test.tsx`, bloc « structure en quatre piliers ») :
 
 - la carte Leaflet n'est **jamais montée** ailleurs que dans Explorer : sur les autres onglets elle est retirée du DOM (`is-map-hidden`), donc aucune tuile ni calcul de carte ;
 - les points choisis « sur la carte » depuis Trajet passent par Explorer puis reviennent automatiquement à Trajet, et tout arrêt reste sélectionnable par son nom sans quitter Trajet ;
-- les 23 stations BRT affichées sont celles de la séquence officielle, avec les coordonnées exactes des nœuds OpenStreetMap (`src/domain/corridors.ts`, verrouillé par `src/domain/corridors.test.ts`) ;
+- les 23 stations BRT affichées suivent la séquence de référence encodée dans `src/domain/corridors.ts` ; les positions sont associées aux identifiants OSM du projet, mais leur exactitude et leur date de vérification externe ne sont pas documentées ;
 - aucun slogan publicitaire : l'interface est réduite aux informations utiles.
 
 ## Carte et déploiement

@@ -131,6 +131,8 @@ describe('réseau de référence TER/BRT', () => {
     expect(searchCorridorStops('Guédiawaye')[0]?.id).toBe('brt-prefecture-guediawaye')
     expect(searchCorridorStops('petersen')[0]?.id).toBe('brt-petersen')
     expect(searchCorridorStops('diamniadio')[0]?.id).toBe('ter-diamniadio')
+    expect(searchCorridorStops('Keur Mbaye Fall')[0]?.id).toBe('ter-mbao')
+    expect(searchCorridorStops('Mbao')[0]?.name).toBe('Keur Mbaye Fall')
     expect(searchCorridorStops('aéroport blaise diagne')).toHaveLength(0)
   })
 

@@ -1,3 +1,5 @@
+import { NETWORK_REFERENCE_DATA, type NetworkReferenceData } from './frequencies'
+
 export type NetworkId = 'ter' | 'brt' | 'ddd' | 'aftu' | 'tata' | 'other'
 
 export type SourceConnectionStatus = 'NOT_CONNECTED' | 'CONNECTED' | 'STALE' | 'ERROR'
@@ -10,6 +12,8 @@ export interface NetworkSource {
   sourceType: 'OFFICIAL' | 'GTFS' | 'UNKNOWN'
   recordCount: number | null
   verifiedAt: string | null
+  /** Références publiées séparées de l’état de connexion du flux GTFS. */
+  referenceData?: NetworkReferenceData
 }
 
 /**
@@ -19,6 +23,7 @@ export interface NetworkSource {
 export const NETWORK_SOURCES: readonly NetworkSource[] = [
   {
     id: 'ter',
+    referenceData: NETWORK_REFERENCE_DATA.ter,
     label: 'TER',
     description: 'Réseau ferroviaire',
     status: 'NOT_CONNECTED',
@@ -28,6 +33,7 @@ export const NETWORK_SOURCES: readonly NetworkSource[] = [
   },
   {
     id: 'brt',
+    referenceData: NETWORK_REFERENCE_DATA.brt,
     label: 'BRT',
     description: 'Bus à haut niveau de service',
     status: 'NOT_CONNECTED',
@@ -37,6 +43,7 @@ export const NETWORK_SOURCES: readonly NetworkSource[] = [
   },
   {
     id: 'ddd',
+    referenceData: NETWORK_REFERENCE_DATA.ddd,
     label: 'Dakar Dem Dikk',
     description: 'Bus urbains',
     status: 'NOT_CONNECTED',
@@ -46,6 +53,7 @@ export const NETWORK_SOURCES: readonly NetworkSource[] = [
   },
   {
     id: 'aftu',
+    referenceData: NETWORK_REFERENCE_DATA.aftu,
     label: 'AFTU',
     description: 'Réseau de minibus',
     status: 'NOT_CONNECTED',

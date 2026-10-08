@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { answerAssistant, extractJourneyRequest, type AssistantContext } from './assistant'
+import { answerAssistant, extractJourneyRequest, getAssistantCountdownMinutes, type AssistantContext } from './assistant'
 
 const CONTEXT: AssistantContext = { publishedAvailable: false, adminOnline: true }
 
@@ -19,8 +19,50 @@ describe('assistant mobilité', () => {
     const answer = answerAssistant('Quel est le prochain BRT vers Guédiawaye ?', CONTEXT)
     expect(answer).toContain('Guédiawaye')
     expect(answer).toMatch(/6 min|toutes les 6/)
-    expect(answer).toContain('jamais une heure de passage inventée')
+    expect(answer).toContain('aucune heure de prochain passage fiable')
+    expect(answer).toContain('fréquence seule ne permet pas de déduire')
+    expect(answer).toContain('vérification en ligne non documentée')
     expect(answer).not.toMatch(/\bdans \d+ min\b/)
+  })
+
+  it('distingue les périodes TER et ne présente pas une référence comme un départ', () => {
+    const answer = answerAssistant('Quelle est la fréquence du TER ?', CONTEXT)
+    expect(answer).toContain('05:30–21:00 · 10 min')
+    expect(answer).toContain('21:00–22:00 · 20 min')
+    expect(answer).toContain('06:30–22:00 · 20 min')
+    expect(answer).toContain('vérification en ligne non documentée')
+    expect(answer).not.toMatch(/prochain.*dans \d+ min/i)
+  })
+
+  it('ne donne pas de fréquence uniforme ni de compte à rebours DDD/AFTU', () => {
+    const ddd = answerAssistant('Quelle est la fréquence de DDD ?', CONTEXT)
+    expect(ddd).toContain('38 lignes')
+    expect(ddd).toContain('400 bus')
+    expect(ddd.toLowerCase()).toContain('fréquences non publiées ligne par ligne')
+    expect(ddd).not.toMatch(/dans \d+ min/)
+
+    const aftu = answerAssistant('Quand passe le prochain bus AFTU ?', CONTEXT)
+    expect(aftu).toContain('72 lignes')
+    expect(aftu.replace(/\s/g, ' ')).toContain('2 300 bus')
+    expect(aftu).toContain('14 GIE')
+    expect(aftu.toLowerCase()).toContain('aucun prochain départ fiable')
+  })
+
+  it('ne calcule le délai que depuis un départ exact programmé du bon réseau', () => {
+    const now = Date.parse('2026-10-08T12:00:00Z')
+    const scheduled: AssistantContext = {
+      ...CONTEXT,
+      nextDepartureAt: { network: 'brt', status: 'SCHEDULED', nextDepartureAt: '2026-10-08T12:05:01Z' },
+    }
+    expect(getAssistantCountdownMinutes('Dans combien de temps le BRT ?', scheduled, now)).toBe(6)
+    expect(getAssistantCountdownMinutes('Dans combien de temps le TER ?', scheduled, now)).toBeNull()
+    expect(answerAssistant('Dans combien de temps le BRT ?', scheduled, now)).toContain('dans 6 min')
+    const expired: AssistantContext = {
+      ...CONTEXT,
+      nextDepartureAt: { network: 'brt', status: 'SCHEDULED', nextDepartureAt: '2026-10-08T12:00:00Z' },
+    }
+    expect(getAssistantCountdownMinutes('Dans combien de temps le BRT ?', expired, now)).toBeNull()
+    expect(answerAssistant('Dans combien de temps le BRT ?', expired, now)).not.toMatch(/dans \d+ min/)
   })
 
   it('calcule un itinéraire multimodal en langage naturel', () => {

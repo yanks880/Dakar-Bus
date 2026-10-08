@@ -1,32 +1,24 @@
 /**
  * Réseau de référence TER / BRT de la région de Dakar.
  *
- * STATUT DES DONNÉES (important) :
- * - La liste des 13 gares TER et des 23 stations BRT provient de sources
- *   publiques concordantes : sentersa.sn (plan de transport officiel),
- *   sunubrt.sn / CETUD (brochure officielle du projet BRT) et les
- *   communiqués Dakar Mobilité repris par la presse (2024-2025).
- * - Les coordonnées des 13 gares TER proviennent d'OpenStreetMap
- *   (nœuds `railway=station`, opérateur déclaré SETER), recoupées avec
- *   Nominatim ; ce sont les positions des bâtiments de gare.
- * - Les positions des 23 stations BRT sont les coordonnées EXACTES des nœuds
- *   OpenStreetMap de la relation de ligne B1 (`network=SunuBRT`, relations
- *   19961937 « Préfecture de Guédiawaye → Petersen » et 19961993 « Petersen →
- *   Préfecture de Guédiawaye »), relevées le 8 octobre 2026. Chaque station
- *   porte l'identifiant de son nœud OSM (`osmNodeId`) : aucune position n'est
- *   interpolée, estimée ou devinée. La relation contient 25 nœuds d'arrêt pour
- *   23 stations : Khar Yalla est doublé (un arrêt par sens) et le pôle de
- *   Petersen porte deux nœuds (Petersen et Papa Gueye Fall) ; un seul nœud par
- *   station est retenu, l'autre est cité en commentaire.
- * - Les tracés (polylines) relient ces arrêts dans l'ordre de desserte officiel
- *   (Petersen → Préfecture de Guédiawaye) : ce n'est pas le tracé métrique des
- *   voies, et ce n'est pas un flux GTFS publié.
+ * PROVENANCE :
+ * - Les références de réseau du dépôt citent Sen TER/sentersa.sn, CETUD/SunuBRT
+ *   et OpenStreetMap. Aucune vérification externe ni date de vérification des
+ *   positions n'est enregistrée dans ce module.
+ * - Les coordonnées des gares et stations sont des valeurs statiques associées
+ *   à des identifiants de référence, notamment `osmNodeId` pour le BRT. Le dépôt
+ *   n'atteste pas leur exactitude actuelle ; aucune position n'est interpolée
+ *   au chargement de la carte.
+ * - Les tracés relient ces arrêts dans l'ordre encodé pour cette couche de
+ *   référence ; ils ne sont ni un tracé métrique des voies, ni un flux GTFS.
  *
  * Ce module ne publie donc rien au sens du pipeline de gouvernance du dépôt :
  * il alimente une couche cartographique et un calculateur explicitement
- * étiquetés « réseau de référence ». Les horaires restent des fréquences
- * annoncées publiquement (pas de temps réel, pas de positions de véhicules).
+ * étiquetés « réseau de référence ». Les fréquences de référence restent
+ * distinctes des horaires GTFS et du temps réel (aucune position de véhicule).
  */
+
+import { FREQUENCY_SOURCES, OFFICIAL_REFERENCE_FREQUENCIES, type FrequencySource, type FrequencyStatus, type OfficialFrequency } from './frequencies'
 
 export type CorridorNetworkId = 'ter' | 'brt'
 
@@ -53,9 +45,15 @@ export interface CorridorLine {
   color: string
   /** Identifiants d'arrêts desservis, dans l'ordre de parcours. */
   stopIds: readonly string[]
-  /** Fréquence annoncée publiquement (minutes) — pas un horaire temps réel. */
+  /**
+   * Entrée technique du calculateur (attente théorique uniquement). Pour TER,
+   * utilise le headway officiel maximal, faute de date/heure dans ce plan.
+   */
   headwayMin: number
-  /** Plage de service annoncée publiquement. */
+  frequencyStatus: FrequencyStatus
+  frequencySource: FrequencySource
+  officialFrequencies: readonly OfficialFrequency[]
+  /** Synthèse lisible des périodes de service officielles. */
   serviceWindow: string
   /** Vitesse commerciale moyenne retenue pour les estimations (km/h). */
   speedKph: number
@@ -105,7 +103,7 @@ export const CORRIDOR_NETWORKS: Record<CorridorNetworkId, CorridorNetwork> = {
     operator: 'Dakar Mobilité (CETUD)',
     description: 'Bus à haut niveau de service Petersen ↔ Préfecture de Guédiawaye — 18,3 km, 23 stations.',
     provenance:
-      'Stations : liste officielle CETUD / sunubrt.sn (23 stations entre Petersen – Papa Gueye Fall et la Préfecture de Guédiawaye). Positions : coordonnées exactes des nœuds OpenStreetMap de la relation B1 (19961937/19961993, network=SunuBRT), relevées le 8 octobre 2026. Tracé : liaison des arrêts dans l’ordre de desserte, pas le tracé métrique des voies.',
+      'Stations : référence CETUD / sunubrt.sn (23 stations entre Petersen – Papa Gueye Fall et la Préfecture de Guédiawaye). Le projet consigne des coordonnées et identifiants de nœuds OpenStreetMap de la relation B1 (19961937/19961993, network=SunuBRT) ; leur date de vérification externe n’est pas documentée. Tracé : liaison des arrêts dans l’ordre de desserte, pas le tracé métrique des voies.',
   },
 }
 
@@ -120,28 +118,23 @@ export const TER_STOPS: readonly CorridorStop[] = [
   { id: 'ter-pikine', name: 'Pikine', lat: 14.7498644, lon: -17.3916937, order: 5, aliases: [], note: 'Zone 2' },
   { id: 'ter-thiaroye', name: 'Thiaroye', lat: 14.758771, lon: -17.3802989, order: 6, aliases: ['thiaroye gare'], note: 'Zone 2' },
   { id: 'ter-yeumbeul', name: 'Yeumbeul', lat: 14.764913, lon: -17.3565049, order: 7, aliases: [], note: 'Zone 2' },
-  { id: 'ter-mbao', name: 'Mbao', lat: 14.744079, lon: -17.3138934, order: 8, aliases: ['keur massar'], note: 'Zone 3' },
+  { id: 'ter-mbao', name: 'Keur Mbaye Fall', lat: 14.744079, lon: -17.3138934, order: 8, aliases: ['mbao', 'keur massar'], note: 'Zone 3' },
   { id: 'ter-pnr', name: 'PNR', lat: 14.7231692, lon: -17.2839425, order: 9, aliases: ['pole nouvelle rufisque'], note: 'Zone 3' },
   { id: 'ter-rufisque', name: 'Rufisque', lat: 14.7159649, lon: -17.2699985, order: 10, aliases: [], note: 'Zone 3' },
   { id: 'ter-bargny', name: 'Bargny', lat: 14.6981798, lon: -17.2292043, order: 11, aliases: [], note: 'Zone 3' },
   { id: 'ter-diamniadio', name: 'Diamniadio', lat: 14.7160641, lon: -17.1984512, order: 12, aliases: ['ville nouvelle'], note: 'Zone 3 · terminus' },
 ]
 
-/** Les 23 stations du BRT, Petersen – Papa Gueye Fall → Préfecture de Guédiawaye.
+/** Référence de 23 stations BRT, Petersen – Papa Gueye Fall → Préfecture de Guédiawaye.
  *
- *  Séquence : sens affiché et calculé (Plateau → Guédiawaye) de la relation
- *  OpenStreetMap B1 « Omnibus » ; l'ordre officiel de desserte est vérifié par
- *  recoupement avec la liste des 14 stations mises en service le 15 mai 2024,
- *  celle des 23 stations publiée par SunuBRT/CETUD et les 7 arrêts du service
- *  semi-express B3.
+ *  La séquence et les coordonnées sont des valeurs statiques conservées dans le
+ *  dépôt ; les identifiants OSM sont consignés comme provenance de ces données,
+ *  mais leur exactitude et leur date de vérification externe ne sont pas
+ *  attestées ici. Les positions ne sont pas interpolées par l'application.
  *
- *  Positions : coordonnées exactes des nœuds OpenStreetMap `network=SunuBRT`
- *  (osmNodeId), relevées le 8 octobre 2026 — aucune position interpolée.
- *  Deux arrêts de la relation ne sont pas des stations distinctes ici :
- *  - Khar Yalla : deux nœuds (11738664241 au nord, 11738664247 au sud), un par
- *    sens de circulation, à ~100 m l'un de l'autre ;
- *  - pôle de Petersen : deux nœuds (13376764678 « Papa Gueye Fall », retenu,
- *    et 13376764677 « Petersen » sur l'avenue Faidherbe, à ~90 m). */
+ *  Deux identifiants sont commentés comme variantes de sens ou de pôle dans les
+ *  données de référence : les éventuelles distances entre ces points ne sont
+ *  pas utilisées pour calculer des horaires ou une position véhicule. */
 export const BRT_STOPS: readonly CorridorStop[] = [
   { id: 'brt-petersen', name: 'Petersen – Papa Gueye Fall', lat: 14.6766438, lon: -17.4406354, order: 0, aliases: ['petersen', 'papa gueye fall', 'gare de petersen', 'gare routiere de petersen', 'terminal cabral', 'pem petersen'], note: 'Pôle d’échange · terminus', osmNodeId: 13376764678 },
   { id: 'brt-grande-mosquee', name: 'Grande Mosquée', lat: 14.6824846, lon: -17.4443248, order: 1, aliases: ['mosquee de dakar', 'grande mosquee'], note: undefined, osmNodeId: 13376766853 },
@@ -176,8 +169,14 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     longName: 'Dakar ↔ Diamniadio',
     color: '#2f6fb3',
     stopIds: TER_STOPS.map((stop) => stop.id),
-    headwayMin: 15,
-    serviceWindow: 'fréquence annoncée de 10 à 20 min',
+    // L'estimateur de correspondance n'a pas d'heure/jour de départ : il
+    // retient prudemment le maximum officiel (20 min), sans l'afficher comme
+    // une cadence permanente. Les fenêtres ci-dessous restent la référence.
+    headwayMin: 20,
+    frequencyStatus: 'OFFICIAL_REFERENCE',
+    frequencySource: FREQUENCY_SOURCES.ter,
+    officialFrequencies: OFFICIAL_REFERENCE_FREQUENCIES.ter,
+    serviceWindow: '05:30–22:00 selon la période : 10 min en journée, 20 min le soir et les dimanches/jours fériés',
     speedKph: 55,
   },
   {
@@ -193,7 +192,10 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     color: '#0f8f66',
     stopIds: BRT_STOPS.map((stop) => stop.id),
     headwayMin: 6,
-    serviceWindow: '6 h – 21 h, passage annoncé toutes les 6 min',
+    frequencyStatus: 'OFFICIAL_REFERENCE',
+    frequencySource: FREQUENCY_SOURCES.brt,
+    officialFrequencies: OFFICIAL_REFERENCE_FREQUENCIES.brt,
+    serviceWindow: '06:00–21:00 · fréquence officielle de référence : 6 min',
     speedKph: 25,
     // Desserte annoncée du service semi-express B3 (SunuBRT, octobre 2025),
     // remise dans l’ordre de parcours Petersen → Guédiawaye.
