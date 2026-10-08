@@ -20,6 +20,7 @@ from typing import Any
 
 try:  # Works both as `python -m scripts.publish_gtfs` and as a file script.
     from .catalog_gtfs import DATASET_ID_RE
+    from .network_graph import GraphError, graph_status, rebuild_graph
     from .publication_ledger import (
         PublicationError,
         PublicationLockTimeout,
@@ -41,6 +42,7 @@ try:  # Works both as `python -m scripts.publish_gtfs` and as a file script.
     )
 except ImportError:  # pragma: no cover - exercised by the direct CLI entry point
     from catalog_gtfs import DATASET_ID_RE
+    from network_graph import GraphError, graph_status, rebuild_graph
     from publication_ledger import (
         PublicationError,
         PublicationLockTimeout,
@@ -60,6 +62,33 @@ except ImportError:  # pragma: no cover - exercised by the direct CLI entry poin
         show_snapshot,
         verify_snapshot,
     )
+
+
+def _rebuild_graph_after_publish(published_root: Path, snapshot_id: str, *, now: datetime) -> dict[str, Any]:
+    """Keep the routing graph aligned with what is published.
+
+    A publication is valid even if the graph cannot be built: the journal is the
+    truth. The caller reports the graph state instead of hiding a failure, and
+    the API refuses to serve journeys until the graph matches the snapshot.
+    """
+    try:
+        rebuilt = rebuild_graph(published_root, snapshot_id, now=now)
+    except (GraphError, OSError, ValueError) as error:
+        return {
+            "usable": False,
+            "reason": f"Le graphe d’itinéraires n’a pas pu être reconstruit : {error}",
+            "rebuilt": False,
+        }
+    return {
+        "usable": True,
+        "rebuilt": True,
+        "built_at": rebuilt["built_at"],
+        "stats": rebuilt["stats"],
+        "capabilities": rebuilt["capabilities"],
+        "graph_sha256": rebuilt["graph_sha256"],
+        "graph_bytes": rebuilt["graph_bytes"],
+        "warnings": rebuilt["warnings"],
+    }
 
 
 PUBLICATION_NOTE = (
@@ -158,12 +187,15 @@ def publish_dataset(
         _discard_snapshot(snapshot_directory)
         raise
 
+    graph = _rebuild_graph_after_publish(root, str(built["snapshot_id"]), now=current_time)
+
     return {
         "snapshot_id": built["snapshot_id"],
         "dataset_id": dataset_id,
         "dataset_version": dataset.get("dataset_version"),
         "publication_status": "PUBLISHED",
         "realtime": False,
+        "graph": graph,
         "journal_entry": entry,
         "previous_active_snapshot": active.get("snapshot_id") if isinstance(active, dict) else None,
         "snapshot": {
@@ -242,6 +274,7 @@ def publications_summary(published_root: str | Path, *, now: datetime | None = N
         "history": state.get("history"),
         "replay_issues": state.get("replay_issues"),
         "snapshots": list_snapshots(published_root, now=current_time),
+        "graph": graph_status(published_root, now=current_time),
         "realtime": False,
     }
 
@@ -298,6 +331,9 @@ def main() -> int:
     revert_parser.add_argument("--reason", required=True)
 
     subparsers.add_parser("list", help="Lister les snapshots, leur intégrité et leur état de publication")
+    graph_parser = subparsers.add_parser("graph-rebuild", help="Reconstruire le graphe d’itinéraires depuis le snapshot actif")
+    graph_parser.add_argument("--snapshot-id", default=None, help="Snapshot à utiliser (par défaut : le snapshot actif)")
+    subparsers.add_parser("graph-status", help="Dire si le graphe d’itinéraires correspond bien au snapshot publié")
     subparsers.add_parser("journal", help="Relire le journal des publications et sa chaîne d’empreintes")
     show_parser = subparsers.add_parser("show", help="Afficher un snapshot et son état de publication")
     show_parser.add_argument("snapshot_id")
@@ -320,6 +356,13 @@ def main() -> int:
                 snapshot_id=args.snapshot_id, now=args.now,
             )
             _emit(result)
+            return 0
+        if args.command == "graph-status":
+            _emit(graph_status(args.published_root, now=args.now))
+            return 0
+        if args.command == "graph-rebuild":
+            result = rebuild_graph(args.published_root, args.snapshot_id, now=args.now)
+            _emit({**result, "graph": None, "status": graph_status(args.published_root, now=args.now)})
             return 0
         if args.command == "list":
             result = publications_summary(args.published_root, now=args.now)

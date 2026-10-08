@@ -16,11 +16,15 @@ Cette première fondation fournit :
 - un outil de staging versionné qui conserve le ZIP original, son checksum, le manifeste de provenance déclaré, les comptages et le rapport de validation, sans publication automatique ;
 - une revue humaine traçable : cinq attestations obligatoires, un relecteur nominatif, un journal append-only chaîné par empreintes et un retour arrière qui n'efface rien ;
 - une étape de publication qui gèle une version approuvée dans un snapshot daté et immuable (`network.sqlite` + manifeste haché), avec un journal append-only chaîné par empreintes et un retour arrière qui n'efface rien ;
-- une API locale en lecture seule : gouvernance du staging (`/api/pipeline`, `/api/catalog`, `/api/datasets/<id>`, `/api/publications`) et lecture publique du snapshot publié (`/api/network`, `/api/stops/search`, `/api/stops/near`, `/api/stops/<id>`, `/api/routes`, `/api/routes/<id>`) ;
+- une API locale en lecture seule : gouvernance du staging (`/api/pipeline`, `/api/catalog`, `/api/datasets/<id>`, `/api/publications`) et lecture publique du snapshot publié (`/api/network`, `/api/stops/search`, `/api/stops/near`, `/api/stops/<id>`, `/api/routes`, `/api/routes/<id>`, `/api/journeys`) ;
+- un graphe d'itinéraires dérivé du snapshot actif (`data/published/network.graph.json`) : marche par liens déclarés, courses directes déclarées, refus explicite dès qu'il ne correspond plus exactement au snapshot publié ;
+- une interface branchée sur ces routes : recherche d'arrêts, arrêts autour de vous, lignes publiées, fiche d'arrêt honnête, et recherche d'itinéraire limitée aux courses directes déclarées ;
 - un onglet Gouvernance qui affiche l'état réel du catalogue ou signale honnêtement qu'il n'est pas joignable ;
 - des règles testées pour le statut des horaires, le label LIVE, les décomptes en minutes et la publication d'objets actifs.
 
-**Aucun flux GTFS, GTFS-RT, horaire, arrêt, ligne, tracé, alerte ou donnée opérateur n'est actuellement fourni par ce dépôt.** La carte de fond représente uniquement la géographie OpenStreetMap. Le calcul d'itinéraire reste donc volontairement indisponible et l'interface l'explique au lieu de fabriquer un résultat. Un clic sur la carte choisit un point géographique, mais ne le géocode pas en nom de lieu.
+**Aucun flux GTFS, GTFS-RT, horaire, arrêt, ligne, tracé, alerte ou donnée opérateur n'est actuellement fourni par ce dépôt.** La carte de fond représente uniquement la géographie OpenStreetMap. Un clic sur la carte choisit un point géographique, mais ne le géocode pas en nom de lieu.
+
+Le calcul d'itinéraire ne répond que lorsqu'un snapshot est réellement publié localement, et il ne propose alors que ce que le flux déclare : une montée, une descente, aux heures théoriques inscrites dans `stop_times`. Aucun itinéraire à correspondance, aucune position de véhicule et aucune estimation d'arrivée ne sont produits ; sans donnée publiée, l'interface l'explique au lieu de fabriquer un résultat.
 
 ## Démarrer
 
@@ -68,6 +72,8 @@ src/
   domain/truth.test.ts    tests de non-invention
   domain/review.ts        modèle de lecture du catalogue et de la revue
   domain/review.test.ts   tests de parsing strict et de non-invention
+  domain/published.ts     modèle de lecture du snapshot publié (parsing strict)
+  domain/journeys.ts      modèle de lecture des courses directes (/api/journeys)
 scripts/
   validate_gtfs.py       validateur GTFS Static en lecture seule
   stage_gtfs.py          staging versionné, provenance à revoir
@@ -78,7 +84,8 @@ scripts/
   snapshot_gtfs.py       construction et lecture des snapshots publiés (SQLite figée)
   publish_gtfs.py        publication, vérification et retour arrière d’un snapshot
   serve_admin_api.py     API HTTP en lecture seule : gouvernance et données publiées
-  serve_read_api.py      routes publiques servies depuis le snapshot actif
+  serve_read_api.py      routes publiques servies depuis le snapshot actif, dont les itinéraires
+  network_graph.py       graphe d’itinéraires dérivé du snapshot actif, refusé s’il ne correspond plus
 public/
   manifest.webmanifest    métadonnées PWA
   sw.js                  cache de l'enveloppe applicative, jamais /api
@@ -89,6 +96,7 @@ tests/
   test_review_gtfs.py      tests d’approbation, de refus et de retour arrière
   test_publish_gtfs.py     tests de publication, de vérification et de retour arrière
   test_serve_admin_api.py  tests de l’API en lecture seule
+  test_network_graph.py    tests du graphe d’itinéraires et de /api/journeys
 ```
 
 ## Valider un flux GTFS
@@ -206,9 +214,37 @@ Les routes publiques répondent uniquement depuis le snapshot actif, en URL rela
 - `GET /api/stops/near?lat=<...>&lon=<...>&radius=<1..5000>&limit=<1..100>` — arrêts dans un rayon, avec `distance_m` calculée depuis les coordonnées déclarées ;
 - `GET /api/stops/<stop_id>` — un arrêt, les lignes qui le desservent et la plage horaire théorique déclarée (`stop_times`) ;
 - `GET /api/routes` et `GET /api/routes/<route_id>` — lignes déclarées, agence, nombre de courses et d'arrêts, présence de tracés ;
+- `GET /api/journeys` — courses directes déclarées entre deux lieux publiés (voir la section suivante) ;
 - `GET /api/publications` — journal des publications : entrées, snapshot actif, snapshots listés (`ACTIVE`, `SUPERSEDED`, `REVOKED`, `UNLISTED`).
 
 Chaque réponse porte `publication_status`, `snapshot_id`, `data_policy` et `realtime: false`. Les horaires sont des heures théoriques déclarées dans le flux : aucune position de véhicule, aucune estimation d'arrivée et aucune donnée inventée ne sont produites. Les requêtes invalides renvoient `400 INVALID_QUERY`, les identifiants inconnus `404 NOT_FOUND` et l'absence de publication `404 NOT_PUBLISHED`.
+
+## Itinéraires directs (graphe dérivé du snapshot actif)
+
+Le routage est une donnée dérivée : `data/published/network.graph.json` est reconstruit depuis le snapshot actif et enregistre le `snapshot_id` et l'empreinte `database_sha256` dont il vient. Dès que le graphe ne correspond plus au snapshot publié — ou qu'il est illisible — l'API refuse de router au lieu de répondre à partir d'un état douteux.
+
+```bash
+# reconstruit le graphe depuis le snapshot actif (fait aussi partie de toute publication réussie)
+npm run graph:build
+npm run graph:status
+```
+
+Ce que le graphe contient : les arrêts et leurs liens déclarés (lignes `transfers.txt`, stations parentes et arrêts dont les coordonnées déclarées sont à moins de 400 m), les lignes, les courses avec leurs heures théoriques et les calendriers (`calendar.txt` + `calendar_dates.txt`). Ce qu'il ne contient pas : aucune position de véhicule, aucune estimation, aucune correspondance calculée.
+
+```bash
+# depuis un lieu publié (nom ou identifiant d'arrêt) ou des coordonnées explicites
+curl "http://127.0.0.1:8787/api/journeys?origin=Gare&destination=Aéroport&at=2026-10-08T05:50:00Z"
+curl "http://127.0.0.1:8787/api/journeys?origin_lat=14.7051&origin_lon=-17.4602&destination=D6"
+```
+
+Règles appliquées :
+
+- le lieu de départ et d'arrivée est soit un arrêt publié (nom ou identifiant, résolu dans le graphe), soit une paire `origin_lat`/`origin_lon` explicite : aucun géocodage, aucun lieu deviné ;
+- la marche part des arrêts situés à moins de 400 m du point, puis suit uniquement les liens déclarés, dans la limite de `max_walk_m` (900 m par défaut) ; un lien déclaré dont les arrêts n'ont pas de coordonnées est signalé comme distance inconnue (`walk_m_known: false`), jamais comme une distance inventée ;
+- une course proposée est une course **directe** : une montée, une descente, sur le même `trip_id`, avec sa date de service explicite ; les départs déjà passés ne sont jamais présentés comme à venir ;
+- quand plus rien ne part aujourd'hui, la course du jour de service suivant est proposée avec sa date affichée (`result_date`, `exhausted_today`) ;
+- quand aucune course directe n'existe, la réponse le dit (`reason`, `message`, `next_service_date`) et rappelle que le moteur à correspondances n'est pas implémenté : aucun trajet indirect n'est fabriqué ;
+- `realtime` reste `false` et chaque résultat porte la mention « horaire théorique déclaré ».
 
 ## Console de gouvernance en lecture seule
 
@@ -219,7 +255,7 @@ Chaque réponse porte `publication_status`, `snapshot_id`, `data_policy` et `rea
 - `GET /api/catalog` — versions stagées, intégrité, validité effective, état de revue ;
 - `GET /api/datasets/<dataset_id>` — dossier de revue complet (provenance déclarée, bloqueurs, attestations attendues) ;
 - `GET /api/publications` — journal des publications et snapshots listés ;
-- les routes publiques de données (`/api/network`, `/api/stops/...`, `/api/routes...`) servies depuis le snapshot publié.
+- les routes publiques de données (`/api/network`, `/api/stops/...`, `/api/routes...`, `/api/journeys`) servies depuis le snapshot publié.
 
 L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH`, `DELETE` et `OPTIONS` renvoient `405 READ_ONLY_API`. Les identifiants sont validés avant tout accès disque, les réponses portent `Cache-Control: no-store`, et le service worker ne met jamais `/api` en cache. Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative (relaiées par Vite) ; sans API joignable, il affiche « Console hors ligne » au lieu d'inventer un catalogue.
 
@@ -247,7 +283,7 @@ Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.or
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.
 2. ~~Revue humaine traçable autour du staging/catalogue~~ — fait : journal chaîné, attestations obligatoires, retour arrière, console en lecture seule. Reste l'authentification et l'écriture depuis la console.
-3. ~~Publier une version approuvée~~ — fait côté données : snapshot SQLite daté et haché, journal append-only, retour arrière, API de lecture (`/api/network`, `/api/stops/search`, `/api/stops/near`). Reste à brancher l'interface sur ces routes et à documenter la séparation des rôles au-delà du journal.
-4. Ajouter l'API publique et un moteur de recherche géographique/routage multimodal sur des données réelles.
+3. ~~Publier une version approuvée~~ — fait : snapshot SQLite daté et haché, journal append-only, retour arrière, API de lecture et interface branchée sur ces routes. Reste à documenter la séparation des rôles au-delà du journal.
+4. ~~Routage sur les données publiées~~ — fait pour les courses directes déclarées (graphe dérivé, `/api/journeys`). Reste le moteur à correspondances, qui n'a de sens qu'avec des données réelles et un temps de correspondance déclaré, puis la recherche géographique de lieux.
 5. Connecter les alertes et un flux temps réel uniquement après obtention d'une source exploitable.
 6. Compléter les tests d'intégration, E2E, sécurité, monitoring, sauvegardes et administration.

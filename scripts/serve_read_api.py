@@ -16,6 +16,13 @@ from typing import Any, Callable
 from urllib.parse import parse_qs
 
 try:  # Works both as `python -m scripts.serve_read_api` and as a file script.
+    from .network_graph import (
+        GraphError,
+        find_direct_journeys,
+        graph_status,
+        load_graph,
+        resolve_place,
+    )
     from .publish_gtfs import publications_summary
     from .snapshot_gtfs import (
         DATA_POLICY,
@@ -29,6 +36,13 @@ try:  # Works both as `python -m scripts.serve_read_api` and as a file script.
         stops_near,
     )
 except ImportError:  # pragma: no cover - exercised by the direct CLI entry point
+    from network_graph import (
+        GraphError,
+        find_direct_journeys,
+        graph_status,
+        load_graph,
+        resolve_place,
+    )
     from publish_gtfs import publications_summary
     from snapshot_gtfs import (
         DATA_POLICY,
@@ -51,6 +65,13 @@ PUBLIC_ROUTES = (
     "/api/stops/search",
     "/api/stops/near",
     "/api/stops/<stop_id>",
+    "/api/journeys",
+)
+
+JOURNEY_LIMITATIONS = (
+    "Le moteur ne propose que des courses directes déclarées dans le flux : une seule montée, une seule descente, "
+    "et un cheminement à pied uniquement par correspondances déclarées, stations parentes ou arrêts proches. "
+    "Les itinéraires à correspondance, les positions de véhicules et les estimations temps réel ne sont pas implémentés."
 )
 
 MAX_IDENTIFIER_LENGTH = 120
@@ -153,6 +174,7 @@ def network_payload(published_root: str | Path, *, now: datetime | None = None) 
         "dataset": active.get("dataset"),
         "review": active.get("review"),
         "blocked_reason": active.get("blocked_reason"),
+        "graph": graph_status(published_root, now=now),
         "data_policy": DATA_POLICY,
         "realtime": False,
     }
@@ -290,6 +312,145 @@ def routes_payload(published_root: str | Path, parameters: dict[str, list[str]],
     }
 
 
+def _coordinates(parameters: dict[str, list[str]], prefix: str) -> tuple[float, float] | None:
+    latitude_raw = parameters.get(f"{prefix}_lat")
+    longitude_raw = parameters.get(f"{prefix}_lon")
+    if not latitude_raw and not longitude_raw:
+        return None
+    if not latitude_raw or not longitude_raw:
+        raise ApiError(400, "INVALID_QUERY", f"« {prefix}_lat » et « {prefix}_lon » doivent être fournis ensemble.")
+    latitude = _number(parameters, f"{prefix}_lat", 0.0, -90.0, 90.0)
+    longitude = _number(parameters, f"{prefix}_lon", 0.0, -180.0, 180.0)
+    return latitude, longitude
+
+
+def _parse_at(parameters: dict[str, list[str]]) -> datetime | None:
+    raw = parameters.get("at")
+    if not raw or not raw[0].strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw[0].strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise ApiError(400, "INVALID_QUERY", "Le paramètre « at » doit être une date/heure ISO 8601.") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ApiError(400, "INVALID_QUERY", "Le paramètre « at » doit inclure un fuseau horaire, par exemple +00:00.")
+    return parsed.astimezone(timezone.utc)
+
+
+def _endpoint(graph: dict[str, Any], parameters: dict[str, list[str]], prefix: str, label: str) -> dict[str, Any]:
+    """Either a place name from the feed, or explicit coordinates, never a guess."""
+    coordinates = _coordinates(parameters, prefix)
+    query = parameters.get(prefix)
+    if coordinates is None and (not query or not query[0].strip()):
+        raise ApiError(400, "INVALID_QUERY", f"Indiquez « {prefix} » (nom ou identifiant) ou « {prefix}_lat/{prefix}_lon ».")
+    if coordinates is not None:
+        return {
+            "input": f"{coordinates[0]:.5f}, {coordinates[1]:.5f}",
+            "origin": "coordinates",
+            "coordinates": {"lat": coordinates[0], "lon": coordinates[1]},
+            "place": None,
+            "alternatives": [],
+            "point": coordinates,
+        }
+    text = str(query[0]).strip()
+    if len(text) > 120:
+        raise ApiError(400, "INVALID_QUERY", f"Le paramètre « {prefix} » est limité à 120 caractères.")
+    try:
+        places = resolve_place(graph, text)
+    except GraphError as error:
+        raise ApiError(400, error.code, str(error)) from error
+    if not places:
+        raise ApiError(
+            404,
+            "PLACE_NOT_FOUND",
+            f"Aucun arrêt publié ne correspond à « {text} » ({label}). Aucun lieu n’est deviné.",
+        )
+    chosen = places[0]
+    latitude = chosen.get("lat")
+    longitude = chosen.get("lon")
+    if not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float)):
+        raise ApiError(409, "PLACE_UNUSABLE", f"Le lieu « {chosen.get('label')} » n’a pas de coordonnées déclarées.")
+    return {
+        "input": text,
+        "origin": "published-stop",
+        "coordinates": {"lat": latitude, "lon": longitude},
+        "place": {
+            "place_id": chosen.get("place_id"),
+            "label": chosen.get("label"),
+            "kind": chosen.get("kind"),
+            "stop_ids": chosen.get("stop_ids"),
+        },
+        "alternatives": [
+            {"place_id": place.get("place_id"), "label": place.get("label"), "kind": place.get("kind")}
+            for place in places[1:5]
+        ],
+        "point": (float(latitude), float(longitude)),
+    }
+
+
+def journeys_payload(published_root: str | Path, parameters: dict[str, list[str]], *, now: datetime | None = None) -> dict[str, Any]:
+    """Direct journeys between two published places, at a stated time."""
+    active = _active(published_root, now=now)
+    status = graph_status(published_root, now=now)
+    try:
+        graph = load_graph(published_root, now=now)
+    except GraphError as error:
+        raise ApiError(
+            409,
+            error.code,
+            f"{error} Reconstruire le graphe avec « npm run publish:gtfs -- graph-rebuild ».",
+        ) from error
+
+    origin = _endpoint(graph, parameters, "origin", "départ")
+    destination = _endpoint(graph, parameters, "destination", "arrivée")
+    at = _parse_at(parameters)
+    max_walk = _number(parameters, "max_walk_m", 900.0, 50.0, 2000.0)
+    if origin["point"] == destination["point"]:
+        raise ApiError(400, "INVALID_QUERY", "Le départ et l’arrivée sont au même endroit.")
+
+    journey = find_direct_journeys(
+        graph,
+        origin["point"],
+        destination["point"],
+        at=at,
+        max_walk_m=max_walk,
+    )
+    snapshot = active["snapshot"]
+    assert isinstance(snapshot, dict)
+    payload = {
+        "generated_at": _generated_at(now),
+        "snapshot_id": snapshot["snapshot_id"],
+        "publication_status": active["publication_status"],
+        "graph": {
+            "built_at": graph.get("built_at"),
+            "snapshot_id": (graph.get("snapshot") or {}).get("snapshot_id"),
+            "stats": graph.get("stats"),
+            "capabilities": graph.get("capabilities"),
+            "parameters": graph.get("parameters"),
+        },
+        "origin": {key: value for key, value in origin.items() if key != "point"},
+        "destination": {key: value for key, value in destination.items() if key != "point"},
+        "requested_at": journey["requested_at"],
+        "local_day": journey["local_day"],
+        "max_walk_m": max_walk,
+        "results": journey["results"],
+        "result_count": len(journey["results"]),
+        "result_date": journey["result_date"],
+        "exhausted_today": journey["exhausted_today"],
+        "next_service_date": journey["next_service_date"],
+        "message": journey["message"],
+        "limitations": JOURNEY_LIMITATIONS,
+        "data_policy": DATA_POLICY,
+        "realtime": False,
+    }
+    if journey["results"] and journey["results"][0].get("date") != journey["local_day"]:
+        payload["message"] = (
+            "Plus aucune course directe ne part aujourd’hui : la première course déclarée est proposée "
+            f"le {journey['results'][0]['date']}, avec sa date explicite."
+        )
+    return payload
+
+
 def resolve_public_route(path: str, query: str, published_root: str | Path) -> Callable[[], dict[str, Any]] | None:
     """Match one public route, or return None so the caller reports a 404."""
     parameters = parse_qs(query, keep_blank_values=True)
@@ -307,4 +468,6 @@ def resolve_public_route(path: str, query: str, published_root: str | Path) -> C
         return lambda: stop_payload(published_root, path[len("/api/stops/"):])
     if path.startswith("/api/routes/"):
         return lambda: route_payload(published_root, path[len("/api/routes/"):])
+    if path == "/api/journeys":
+        return lambda: journeys_payload(published_root, parameters)
     return None
