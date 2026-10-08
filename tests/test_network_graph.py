@@ -394,6 +394,9 @@ class JourneyApiTests(GraphFixtures):
             )
             self.assertEqual(payload["snapshot_id"], snapshot_id)
             self.assertEqual(payload["result_count"], 1)
+            self.assertEqual(payload["reason"], "DIRECT_RIDE_FOUND")
+            self.assertEqual(payload["start_walk_m"], 400.0)
+            self.assertEqual(payload["results"][0]["board"]["walk_m_known"], True)
             self.assertEqual(payload["origin"]["place"]["place_id"], "stop-S20")
             self.assertEqual(payload["destination"]["place"]["place_id"], "stop-S30")
             self.assertFalse(payload["realtime"])
@@ -446,6 +449,35 @@ class JourneyApiTests(GraphFixtures):
             with self.assertRaises(ApiError) as incomplete:
                 journeys_payload(published, parse_qs("origin_lat=14.7&destination=S30", keep_blank_values=True))
             self.assertEqual(incomplete.exception.code, "INVALID_QUERY")
+
+    def test_the_api_reports_why_it_proposes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, published, _, _ = self.published_feed(directory)
+            from urllib.parse import parse_qs
+
+            far_away = journeys_payload(
+                published,
+                parse_qs("origin_lat=14.9&origin_lon=-17.6&destination=S30&max_walk_m=200", keep_blank_values=True),
+            )
+            self.assertEqual(far_away["reason"], "NO_NEARBY_STOPS")
+            self.assertEqual(far_away["result_count"], 0)
+            self.assertIsNone(far_away["next_service_date"])
+            self.assertEqual(far_away["start_walk_m"], 200.0)
+            self.assertIn("aucun itinéraire n’est proposé plutôt qu’un trajet inventé", far_away["message"])
+            self.assertFalse(far_away["realtime"])
+
+            # A published stop exists nearby, but no declared departure serves the pair:
+            # the stop is walkable, so this is not a distance problem.
+            no_ride = journeys_payload(
+                published,
+                parse_qs("origin=S40&destination=S20&at=2026-10-08T05:00:00Z", keep_blank_values=True),
+            )
+            self.assertEqual(no_ride["reason"], "NO_DIRECT_SERVICE")
+            self.assertEqual(no_ride["result_count"], 0)
+            self.assertIsNone(no_ride["next_service_date"])
+            self.assertIn("Aucune course directe déclarée", str(no_ride["message"]))
+            self.assertIn("correspondances n’est pas implémenté", str(no_ride["message"]))
+            self.assertEqual(no_ride["boarding_stops"], 1)  # l’arrêt de départ est bien à portée
 
     def test_listing_publications_reports_the_graph_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
