@@ -12,14 +12,24 @@ import hashlib
 import json
 import os
 import re
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+try:  # POSIX only; on other platforms the lock degrades to a documented no-op.
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platform
+    fcntl = None  # type: ignore[assignment]
+
 LEDGER_SCHEMA_VERSION = "1.0"
 REVIEW_SUBDIR = "review"
 JOURNAL_FILENAME = "journal.jsonl"
+LOCK_FILENAME = "journal.lock"
+DEFAULT_LOCK_TIMEOUT_SECONDS = 10.0
 GENESIS_HASH = "0" * 64
 ENTRY_ID_RE = re.compile(r"^rv-[0-9]{6}$")
 REVIEWER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
@@ -90,6 +100,50 @@ def ledger_dir(dataset_dir: str | Path) -> Path:
 
 def journal_path(dataset_dir: str | Path) -> Path:
     return ledger_dir(dataset_dir) / JOURNAL_FILENAME
+
+
+class LedgerLockTimeout(RuntimeError):
+    """Another reviewer is writing; the ledger was left untouched."""
+
+
+@contextmanager
+def ledger_lock(dataset_dir: str | Path, *, timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> Iterator[Path]:
+    """Serialise writers on one dataset for the whole read-decide-append cycle.
+
+    The lock is advisory and process-wide (flock): it is released by the kernel
+    when the holder exits, so a crashed review cannot leave it stuck. Callers
+    must read the journal *inside* the lock, otherwise two approvals can both
+    compute the same sequence number and break the hash chain.
+    """
+    ledger = ledger_dir(dataset_dir)
+    ledger.mkdir(parents=True, exist_ok=True)
+    lock_path = ledger / LOCK_FILENAME
+    handle = open(lock_path, "a+b")
+    acquired = False
+    try:
+        if fcntl is None:  # pragma: no cover - non-POSIX platform
+            yield lock_path
+            return
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise LedgerLockTimeout(
+                        f"Le journal de « {Path(dataset_dir).name} » est verrouillé par une autre revue ; rien n’a été écrit."
+                    ) from None
+                time.sleep(0.02)
+        yield lock_path
+    finally:
+        if acquired and fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:  # pragma: no cover - lock already released
+                pass
+        handle.close()
 
 
 def _issue(code: str, message: str) -> dict[str, str]:

@@ -12,9 +12,10 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime, timezone
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 try:  # Works both as `python -m scripts.serve_admin_api` and as a file script.
     from .catalog_gtfs import DATASET_ID_RE, list_staged_datasets
@@ -178,7 +179,7 @@ class AdminApiHandler(BaseHTTPRequestHandler):
             },
         )
 
-    do_POST = do_PUT = do_PATCH = do_DELETE = _refuse_write  # noqa: N815 - http.server API
+    do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _refuse_write  # noqa: N815 - http.server API
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - http.server API
         if getattr(self.server, "quiet", False):

@@ -4,11 +4,14 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from scripts.review_gtfs import (
     ReviewError,
@@ -18,11 +21,14 @@ from scripts.review_gtfs import (
     reject_dataset,
     revert_decision,
     review_dossier,
+    review_journal,
 )
 from scripts.review_ledger import (
     GENESIS_HASH,
     REQUIRED_ATTESTATIONS,
+    LedgerLockTimeout,
     compute_entry_hash,
+    ledger_lock,
     read_journal,
     validate_reviewer_id,
 )
@@ -45,6 +51,15 @@ def attestations_without(*items: str) -> dict[str, dict[str, str | None]]:
         item: {**value} if item not in items else {"evidence": None, "reference": None}
         for item, value in FULL_ATTESTATIONS.items()
     }
+
+
+def _concurrent_approver(root: str, dataset_id: str, index: int, queue: Queue[tuple[str, int]]) -> None:
+    """Child process: try to approve the same dataset as its siblings."""
+    try:
+        approve_dataset(root, dataset_id, reviewer_id=f"relecteur.test{index}", attestations=FULL_ATTESTATIONS, now=NOW)
+        queue.put(("ok", index))
+    except ReviewError as error:
+        queue.put((error.code, index))
 
 
 class GTFSReviewTests(unittest.TestCase):
@@ -124,7 +139,9 @@ class GTFSReviewTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "APPROVAL_BLOCKED")
             self.assertEqual(len(caught.exception.blockers), 2)
             self.assertTrue(all("Attestation manquante" in item for item in caught.exception.blockers))
-            self.assertFalse((root / dataset_id / "review").exists())
+            # The lock file may exist (it serialises writers); no journal entry may.
+            self.assertFalse((root / dataset_id / "review" / "journal.jsonl").exists())
+            self.assertEqual(read_journal(root / dataset_id)["integrity"], "EMPTY")
 
     def test_unconfirmed_provenance_cannot_be_approved_even_with_attestations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -339,6 +356,117 @@ class GTFSReviewTests(unittest.TestCase):
             )
             self.assertEqual(corrupted.returncode, 1)
             self.assertEqual(json.loads(corrupted.stdout)[0]["ledger_integrity"], "INVALID")
+
+    def test_concurrent_approvals_record_one_decision_and_keep_the_chain_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, dataset_id = self.stage_active_feed(directory)
+            queue: Queue[tuple[str, int]] = Queue()
+            processes = [
+                Process(target=_concurrent_approver, args=(str(root), dataset_id, index, queue))
+                for index in range(6)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=60)
+
+            outcomes = sorted(queue.get(timeout=5) for _ in processes)
+            self.assertEqual([outcome for outcome, _ in outcomes].count("ok"), 1, outcomes)
+            self.assertTrue(all(code == "APPROVAL_BLOCKED" for code, _ in outcomes if code != "ok"), outcomes)
+
+            journal = read_journal(root / dataset_id)
+            self.assertEqual(journal["integrity"], "OK")
+            self.assertEqual([entry["sequence"] for entry in journal["entries"]], [1])
+            self.assertEqual([entry["action"] for entry in journal["entries"]], ["APPROVE"])
+
+    def test_ledger_lock_waits_for_the_other_reviewer_instead_of_writing_over_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, dataset_id = self.stage_active_feed(directory)
+            dataset_dir = root / dataset_id
+            holder = subprocess.Popen(
+                [
+                    sys.executable, "-c",
+                    "import sys, time; sys.path.insert(0, sys.argv[1]);"
+                    "from scripts.review_ledger import ledger_lock;"
+                    "ctx = ledger_lock(sys.argv[2], timeout=5); ctx.__enter__();"
+                    "print('held', flush=True); time.sleep(1.2)",
+                    str(Path(__file__).resolve().parents[1]),
+                    str(dataset_dir),
+                ],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "held")
+                started = time.monotonic()
+                with self.assertRaises(LedgerLockTimeout):
+                    with ledger_lock(dataset_dir, timeout=0.3):
+                        self.fail("le verrou aurait dû être tenu par l’autre processus")
+                self.assertLess(time.monotonic() - started, 5)
+            finally:
+                holder.wait(timeout=10)
+
+            # Once the other reviewer is done, the ledger is writable and untouched.
+            with ledger_lock(dataset_dir, timeout=5):
+                pass
+            self.assertEqual(read_journal(dataset_dir)["integrity"], "EMPTY")
+
+    def test_a_busy_ledger_is_reported_as_ledger_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, dataset_id = self.stage_active_feed(directory)
+
+            @contextmanager
+            def always_busy(_dataset_dir: Path, **_kwargs: Any) -> Any:
+                raise LedgerLockTimeout("Journal verrouillé par une autre revue.")
+                yield  # pragma: no cover - unreachable, keeps the generator shape
+
+            with patch("scripts.review_gtfs.ledger_lock", always_busy):
+                with self.assertRaises(ReviewError) as caught:
+                    approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            self.assertEqual(caught.exception.code, "LEDGER_LOCKED")
+            self.assertEqual(read_journal(root / dataset_id)["integrity"], "EMPTY")
+
+
+    def test_journal_dumps_the_verified_chain_and_fails_when_it_is_tampered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, dataset_id = self.stage_active_feed(directory)
+            approval = approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            revert_decision(
+                root, dataset_id, reviewer_id="ousmane.fall", entry_id=str(approval["entry_id"]),
+                reason="Licence annoncée mais jamais confirmée par l’éditeur.", now=NOW,
+            )
+
+            journal = review_journal(root, dataset_id)
+            self.assertEqual(journal["ledger_integrity"], "OK")
+            self.assertEqual(journal["entry_count"], 2)
+            self.assertEqual([entry["action"] for entry in journal["entries"]], ["APPROVE", "REVERT"])
+            self.assertEqual(journal["entries"][1]["reverted_entry_id"], approval["entry_id"])
+            self.assertEqual(journal["review_status"], "PENDING_REVIEW")
+            self.assertEqual(journal["publication_status"], "NOT_PUBLISHED")
+
+            script = Path(__file__).resolve().parents[1] / "scripts" / "review_gtfs.py"
+            intact = subprocess.run(
+                [sys.executable, str(script), "--root", str(root), "journal", dataset_id],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(intact.returncode, 0, intact.stderr)
+            self.assertEqual(json.loads(intact.stdout)["ledger_integrity"], "OK")
+
+            journal_file = root / dataset_id / "review" / "journal.jsonl"
+            lines = journal_file.read_text(encoding="utf-8").strip().splitlines()
+            first = json.loads(lines[0])
+            first["note"] = "Note réécrite après coup pour masquer un doute."
+            journal_file.write_text(json.dumps(first, ensure_ascii=False) + "\n" + lines[1] + "\n", encoding="utf-8")
+
+            tampered = subprocess.run(
+                [sys.executable, str(script), "--root", str(root), "journal", dataset_id],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(tampered.returncode, 1)
+            payload = json.loads(tampered.stdout)
+            self.assertEqual(payload["ledger_integrity"], "INVALID")
+            self.assertEqual(payload["ledger_issue"]["code"], "JOURNAL_HASH_MISMATCH")
+            self.assertEqual(payload["review_status"], "UNKNOWN")
 
 
 if __name__ == "__main__":

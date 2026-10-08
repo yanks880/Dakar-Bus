@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,9 +23,12 @@ try:  # Works both as `python -m scripts.review_gtfs` and as a file script.
     from .review_ledger import (
         GENESIS_HASH,
         REQUIRED_ATTESTATIONS,
+        LedgerLockTimeout,
         append_entry,
         build_entry,
         current_review_state,
+        effective_review,
+        ledger_lock,
         read_journal,
         validate_reference,
         validate_reviewer_id,
@@ -34,9 +39,12 @@ except ImportError:  # pragma: no cover - exercised by the direct CLI entry poin
     from review_ledger import (
         GENESIS_HASH,
         REQUIRED_ATTESTATIONS,
+        LedgerLockTimeout,
         append_entry,
         build_entry,
         current_review_state,
+        effective_review,
+        ledger_lock,
         read_journal,
         validate_reference,
         validate_reviewer_id,
@@ -195,6 +203,25 @@ def review_dossier(root: str | Path, dataset_id: str, *, now: datetime | None = 
     }
 
 
+def review_journal(root: str | Path, dataset_id: str) -> dict[str, Any]:
+    """Dump the whole verified chain: every entry, hash-checked, nothing hidden."""
+    dataset_dir = _dataset_directory(root, dataset_id)
+    journal = read_journal(dataset_dir)
+    state = effective_review(journal["entries"]) if journal["integrity"] != "INVALID" else None
+    return {
+        "dataset_id": dataset_id,
+        "ledger_integrity": journal["integrity"],
+        "ledger_issue": journal["issue"],
+        "journal_path": journal["path"],
+        "review_status": state["status"] if state else "UNKNOWN",
+        "reverted_entry_ids": state["reverted_entry_ids"] if state else [],
+        "entry_count": len(journal["entries"]),
+        "entries": journal["entries"],
+        "publication_status": "NOT_PUBLISHED",
+        "publication_ready": False,
+    }
+
+
 def pending_datasets(root: str | Path, *, now: datetime | None = None) -> list[dict[str, Any]]:
     """Datasets waiting for a human decision, in catalog order."""
     queue: list[dict[str, Any]] = []
@@ -218,17 +245,28 @@ def pending_datasets(root: str | Path, *, now: datetime | None = None) -> list[d
     return queue
 
 
-def _open_journal(root: str | Path, dataset_id: str) -> tuple[Path, dict[str, Any], list[dict[str, Any]], str]:
+@contextmanager
+def _locked_journal(root: str | Path, dataset_id: str) -> Iterator[tuple[Path, dict[str, Any], list[dict[str, Any]], str]]:
+    """Hold the exclusive ledger lock across a whole read-decide-append cycle.
+
+    Reading the journal outside the lock would let two reviewers compute the
+    same sequence number and break the hash chain.
+    """
     dataset_dir = _dataset_directory(root, dataset_id)
-    journal = read_journal(dataset_dir)
-    if journal["integrity"] == "INVALID":
-        raise ReviewError(
-            str(journal["issue"]["code"]),
-            "Le journal de revue est invalide ; aucune écriture n’est ajoutée tant qu’il n’est pas restauré.",
-            [f"{journal['issue']['code']}: {journal['issue']['message']}"],
-        )
-    previous_hash = journal["entries"][-1]["entry_hash"] if journal["entries"] else GENESIS_HASH
-    return dataset_dir, journal, journal["entries"], previous_hash
+    try:
+        with ledger_lock(dataset_dir):
+            journal = read_journal(dataset_dir)
+            if journal["integrity"] == "INVALID":
+                raise ReviewError(
+                    str(journal["issue"]["code"]),
+                    "Le journal de revue est invalide ; aucune écriture n’est ajoutée tant qu’il n’est pas restauré.",
+                    [f"{journal['issue']['code']}: {journal['issue']['message']}"],
+                )
+            entries = journal["entries"]
+            previous_hash = entries[-1]["entry_hash"] if entries else GENESIS_HASH
+            yield dataset_dir, journal, entries, previous_hash
+    except LedgerLockTimeout as error:
+        raise ReviewError("LEDGER_LOCKED", str(error)) from error
 
 
 def approve_dataset(
@@ -245,43 +283,44 @@ def approve_dataset(
     reviewer = validate_reviewer_id(reviewer_id)
     inspection = inspect_staged_dataset(_dataset_directory(root, dataset_id), now=current_time)
     manifest, checksum = _require_intact_dataset(inspection)
-    dataset_dir, journal, entries, previous_hash = _open_journal(root, dataset_id)
-    review = current_review_state(dataset_dir)
 
-    blockers = approval_blockers(
-        manifest,
-        integrity=inspection["integrity"],
-        validity_status=inspection["effective_validity_status"],
-        review_status=review["review_status"],
-        ledger_integrity=journal["integrity"],
-        attestations=attestations,
-    )
-    if blockers:
-        raise ReviewError(
-            "APPROVAL_BLOCKED",
-            "L’approbation est refusée : des vérifications obligatoires ne sont pas attestées.",
-            blockers,
+    with _locked_journal(root, dataset_id) as (dataset_dir, journal, entries, previous_hash):
+        review = current_review_state(dataset_dir)
+        blockers = approval_blockers(
+            manifest,
+            integrity=inspection["integrity"],
+            validity_status=inspection["effective_validity_status"],
+            review_status=review["review_status"],
+            ledger_integrity=journal["integrity"],
+            attestations=attestations,
         )
+        if blockers:
+            raise ReviewError(
+                "APPROVAL_BLOCKED",
+                "L’approbation est refusée : des vérifications obligatoires ne sont pas attestées.",
+                blockers,
+            )
 
-    entry = build_entry(
-        sequence=len(entries) + 1,
-        action="APPROVE",
-        dataset_id=dataset_id,
-        dataset_sha256=checksum,
-        reviewer_id=reviewer,
-        recorded_at=current_time,
-        note=_clean_text(note, "note") if note else "Approvation après vérification des attestations obligatoires.",
-        previous_hash=previous_hash,
-        attestations=attestations,
-        decision_basis={
-            "source_type": manifest.get("source_type"),
-            "service_status": manifest.get("service_status"),
-            "validity_status": inspection["effective_validity_status"],
-            "archive_sha256": checksum,
-            "validator": manifest.get("validation", {}).get("validator") if isinstance(manifest.get("validation"), dict) else None,
-        },
-    )
-    append_entry(dataset_dir, entry)
+        entry = build_entry(
+            sequence=len(entries) + 1,
+            action="APPROVE",
+            dataset_id=dataset_id,
+            dataset_sha256=checksum,
+            reviewer_id=reviewer,
+            recorded_at=current_time,
+            note=_clean_text(note, "note") if note else "Approbation après vérification des attestations obligatoires.",
+            previous_hash=previous_hash,
+            attestations=attestations,
+            decision_basis={
+                "source_type": manifest.get("source_type"),
+                "service_status": manifest.get("service_status"),
+                "validity_status": inspection["effective_validity_status"],
+                "archive_sha256": checksum,
+                "validator": manifest.get("validation", {}).get("validator") if isinstance(manifest.get("validation"), dict) else None,
+            },
+        )
+        append_entry(dataset_dir, entry)
+
     return {
         "recorded": True,
         "action": "APPROVE",
@@ -310,28 +349,30 @@ def reject_dataset(
     reviewer = validate_reviewer_id(reviewer_id)
     inspection = inspect_staged_dataset(_dataset_directory(root, dataset_id), now=current_time)
     _manifest, checksum = _require_intact_dataset(inspection)
-    dataset_dir, _journal, entries, previous_hash = _open_journal(root, dataset_id)
-    review = current_review_state(dataset_dir)
-    if review["review_status"] == "APPROVED":
-        raise ReviewError(
-            "APPROVAL_ALREADY_RECORDED",
-            "La version est déjà approuvée ; utiliser revert avant d’enregistrer un refus.",
-        )
-    if review["review_status"] == "REJECTED":
-        raise ReviewError("ALREADY_REJECTED", "Un refus est déjà enregistré pour cette version.")
 
-    entry = build_entry(
-        sequence=len(entries) + 1,
-        action="REJECT",
-        dataset_id=dataset_id,
-        dataset_sha256=checksum,
-        reviewer_id=reviewer,
-        recorded_at=current_time,
-        note=_clean_text(reason, "motif de refus"),
-        previous_hash=previous_hash,
-        decision_basis={"archive_sha256": checksum},
-    )
-    append_entry(dataset_dir, entry)
+    with _locked_journal(root, dataset_id) as (dataset_dir, _journal, entries, previous_hash):
+        review = current_review_state(dataset_dir)
+        if review["review_status"] == "APPROVED":
+            raise ReviewError(
+                "APPROVAL_ALREADY_RECORDED",
+                "La version est déjà approuvée ; utiliser revert avant d’enregistrer un refus.",
+            )
+        if review["review_status"] == "REJECTED":
+            raise ReviewError("ALREADY_REJECTED", "Un refus est déjà enregistré pour cette version.")
+
+        entry = build_entry(
+            sequence=len(entries) + 1,
+            action="REJECT",
+            dataset_id=dataset_id,
+            dataset_sha256=checksum,
+            reviewer_id=reviewer,
+            recorded_at=current_time,
+            note=_clean_text(reason, "motif de refus"),
+            previous_hash=previous_hash,
+            decision_basis={"archive_sha256": checksum},
+        )
+        append_entry(dataset_dir, entry)
+
     return {
         "recorded": True,
         "action": "REJECT",
@@ -360,31 +401,33 @@ def revert_decision(
     reviewer = validate_reviewer_id(reviewer_id)
     inspection = inspect_staged_dataset(_dataset_directory(root, dataset_id), now=current_time)
     _manifest, checksum = _require_intact_dataset(inspection)
-    dataset_dir, _journal, entries, previous_hash = _open_journal(root, dataset_id)
-    review = current_review_state(dataset_dir)
-    decision = review.get("decision")
-    if not isinstance(decision, dict):
-        raise ReviewError("NO_ACTIVE_DECISION", "Aucune décision active à annuler pour cette version.")
-    if decision.get("entry_id") != entry_id:
-        raise ReviewError(
-            "REVERT_TARGET_MISMATCH",
-            "Seule la dernière décision active peut être annulée ; le journal reste inchangé.",
-            [f"Décision active : {decision.get('entry_id')} ; demandé : {entry_id}"],
-        )
 
-    entry = build_entry(
-        sequence=len(entries) + 1,
-        action="REVERT",
-        dataset_id=dataset_id,
-        dataset_sha256=checksum,
-        reviewer_id=reviewer,
-        recorded_at=current_time,
-        note=_clean_text(reason, "motif d’annulation"),
-        previous_hash=previous_hash,
-        reverted_entry_id=str(entry_id),
-        decision_basis={"reverted_action": decision.get("action"), "archive_sha256": checksum},
-    )
-    append_entry(dataset_dir, entry)
+    with _locked_journal(root, dataset_id) as (dataset_dir, _journal, entries, previous_hash):
+        review = current_review_state(dataset_dir)
+        decision = review.get("decision")
+        if not isinstance(decision, dict):
+            raise ReviewError("NO_ACTIVE_DECISION", "Aucune décision active à annuler pour cette version.")
+        if decision.get("entry_id") != entry_id:
+            raise ReviewError(
+                "REVERT_TARGET_MISMATCH",
+                "Seule la dernière décision active peut être annulée ; le journal reste inchangé.",
+                [f"Décision active : {decision.get('entry_id')} ; demandé : {entry_id}"],
+            )
+
+        entry = build_entry(
+            sequence=len(entries) + 1,
+            action="REVERT",
+            dataset_id=dataset_id,
+            dataset_sha256=checksum,
+            reviewer_id=reviewer,
+            recorded_at=current_time,
+            note=_clean_text(reason, "motif d’annulation"),
+            previous_hash=previous_hash,
+            reverted_entry_id=str(entry_id),
+            decision_basis={"reverted_action": decision.get("action"), "archive_sha256": checksum},
+        )
+        append_entry(dataset_dir, entry)
+
     return {
         "recorded": True,
         "action": "REVERT",
@@ -422,6 +465,8 @@ def main() -> int:
     subparsers.add_parser("pending", help="Lister la file d’attente de revue")
     show_parser = subparsers.add_parser("show", help="Afficher le dossier de revue d’une version")
     show_parser.add_argument("dataset_id")
+    journal_parser = subparsers.add_parser("journal", help="Afficher la chaîne de décisions vérifiée")
+    journal_parser.add_argument("dataset_id")
 
     approve_parser = subparsers.add_parser("approve", help="Approuver une version avec attestations nominatives")
     approve_parser.add_argument("dataset_id")
@@ -451,6 +496,10 @@ def main() -> int:
         if args.command == "show":
             _emit(review_dossier(args.root, args.dataset_id))
             return 0
+        if args.command == "journal":
+            journal = review_journal(args.root, args.dataset_id)
+            _emit(journal)
+            return 0 if journal["ledger_integrity"] != "INVALID" else 1
         if args.command == "approve":
             attestations = parse_attestations(args.attest, args.reference)
             result = approve_dataset(

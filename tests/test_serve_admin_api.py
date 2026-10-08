@@ -7,7 +7,6 @@ import unittest
 import urllib.error
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
 from http.client import HTTPResponse
 from pathlib import Path
 from typing import Any

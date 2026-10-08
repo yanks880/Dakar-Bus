@@ -68,7 +68,7 @@ scripts/
   validate_gtfs.py       validateur GTFS Static en lecture seule
   stage_gtfs.py          staging versionné, provenance à revoir
   catalog_gtfs.py        catalogue local en lecture seule, état de revue inclus
-  review_ledger.py       journal append-only chaîné par empreintes
+  review_ledger.py       journal append-only chaîné par empreintes, verrou exclusif
   review_gtfs.py         revue humaine : approbation, refus, retour arrière
   serve_admin_api.py     API HTTP en lecture seule pour la console
 public/
@@ -136,6 +136,7 @@ La revue est la deuxième porte. Elle ne publie rien : elle enregistre une déci
 ```bash
 npm run review:gtfs -- pending
 npm run review:gtfs -- show <dataset_id>
+npm run review:gtfs -- journal <dataset_id>   # chaîne complète, empreintes revérifiées
 
 npm run review:gtfs -- approve <dataset_id> \
   --reviewer prenom.nom \
@@ -157,6 +158,7 @@ Règles appliquées par l'outil :
 - les comptes génériques (`admin`, `test`, `anonymous`, …) sont refusés : la décision doit nommer une personne ;
 - l'approbation est refusée si l'archive est altérée, si le journal est corrompu, si la validité effective n'est pas `CURRENT`, si le type de source est `UNKNOWN`, si l'opérateur n'est pas confirmé ou si le statut déclaré n'est pas `ACTIVE` ;
 - `revert` ajoute une entrée : la décision annulée reste lisible dans le journal ;
+- chaque décision prend un verrou exclusif (`review/journal.lock`, `flock`) le temps du cycle lecture → décision → écriture : deux relecteurs simultanés ne peuvent pas produire deux entrées de même séquence, le second attend puis constate la décision déjà enregistrée. Le verrou est libéré par le noyau si le processus meurt ;
 - une version refusée doit être réouverte par `revert` avant toute nouvelle décision ;
 - la sortie reste `publication_status: NOT_PUBLISHED` et `publication_ready: false`, y compris après approbation.
 
@@ -169,7 +171,7 @@ Règles appliquées par l'outil :
 - `GET /api/catalog` — versions stagées, intégrité, validité effective, état de revue ;
 - `GET /api/datasets/<dataset_id>` — dossier de revue complet (provenance déclarée, bloqueurs, attestations attendues).
 
-L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH` et `DELETE` renvoient `405 READ_ONLY_API`. Les identifiants sont validés avant tout accès disque, les réponses portent `Cache-Control: no-store`, et le service worker ne met jamais `/api` en cache. Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative (relaiées par Vite) ; sans API joignable, il affiche « Console hors ligne » au lieu d'inventer un catalogue.
+L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH`, `DELETE` et `OPTIONS` renvoient `405 READ_ONLY_API`. Les identifiants sont validés avant tout accès disque, les réponses portent `Cache-Control: no-store`, et le service worker ne met jamais `/api` en cache. Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative (relaiées par Vite) ; sans API joignable, il affiche « Console hors ligne » au lieu d'inventer un catalogue.
 
 ## Gouvernance de l'information
 
