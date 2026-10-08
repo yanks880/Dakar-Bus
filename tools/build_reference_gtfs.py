@@ -4,9 +4,9 @@
 Objet : alimenter le pipeline de gouvernance local (staging → revue →
 publication) avec les corridors de référence déjà utilisés par l'interface
 (`src/domain/corridors.ts`) : 13 gares TER (positions OpenStreetMap/SETER,
-liste sentersa.sn) et 23 stations BRT (liste CETUD/SunuBRT ; positions =
-coordonnées exactes des nœuds OpenStreetMap de la relation B1, network=SunuBRT,
-relevées le 8 octobre 2026).
+liste sentersa.sn) et 23 stations BRT (liste CETUD/SunuBRT ; positions associées
+aux nœuds OpenStreetMap de la relation B1, network=SunuBRT ; leur date de
+vérification externe n'est pas documentée dans le dépôt).
 
 HONNÊTETÉ : ce GTFS est une SYNTHÈSE locale à but de démonstration du
 pipeline — horaires cadencés déduits des fréquences annoncées publiquement,
@@ -57,7 +57,7 @@ TER_STOPS = [
     Stop("TER-06", "Pikine", 14.7498644, -17.3916937),
     Stop("TER-07", "Thiaroye", 14.758771, -17.3802989),
     Stop("TER-08", "Yeumbeul", 14.764913, -17.3565049),
-    Stop("TER-09", "Mbao", 14.744079, -17.3138934),
+    Stop("TER-09", "Keur Mbaye Fall", 14.744079, -17.3138934),
     Stop("TER-10", "PNR", 14.7231692, -17.2839425),
     Stop("TER-11", "Rufisque", 14.7159649, -17.2699985),
     Stop("TER-12", "Bargny", 14.6981798, -17.2292043),
@@ -68,8 +68,8 @@ TER_STOPS = [
 # Ordre de desserte verrouillé sur la relation OpenStreetMap B1 « Omnibus »
 # (relations 19961937 sens Guédiawaye → Petersen et 19961993 sens inverse,
 # network=SunuBRT), parcourue ici dans le sens Plateau → Guédiawaye.
-# Coordonnées = positions exactes des nœuds `stop_position` OSM relevées le
-# 8 octobre 2026 (osmNodeId en commentaire) — aucune interpolation.
+# Coordonnées associées aux nœuds `stop_position` OSM indiqués en commentaire ;
+# la date de vérification externe n'est pas documentée — aucune interpolation.
 BRT_STOPS = [
     Stop("BRT-01", "Petersen – Papa Gueye Fall", 14.6766438, -17.4406354),  # 13376764678
     Stop("BRT-02", "Grande Mosquée", 14.6824846, -17.4443248),  # 13376766853

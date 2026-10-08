@@ -13,6 +13,17 @@ describe('initial transport catalogue', () => {
     expect(VERIFIED_ALERTS).toHaveLength(0)
   })
 
+  it('records official DDD and AFTU network counts without inventing line frequencies', () => {
+    const ddd = NETWORK_SOURCES.find((network) => network.id === 'ddd')
+    const aftu = NETWORK_SOURCES.find((network) => network.id === 'aftu')
+    expect(ddd?.referenceData).toMatchObject({ lineCount: 38, vehicleCount: 400, frequencyStatus: 'UNKNOWN' })
+    expect(aftu?.referenceData).toMatchObject({ lineCount: 72, vehicleCount: 2300, gieCount: 14, frequencyStatus: 'UNKNOWN' })
+    expect(ddd?.status).toBe('NOT_CONNECTED')
+    expect(aftu?.status).toBe('NOT_CONNECTED')
+    expect(ddd?.referenceData?.officialFrequencies).toEqual([])
+    expect(aftu?.referenceData?.officialFrequencies).toEqual([])
+  })
+
   it('keeps TATA separate from AFTU', () => {
     const aftu = NETWORK_SOURCES.find((network) => network.id === 'aftu')
     const tata = NETWORK_SOURCES.find((network) => network.id === 'tata')

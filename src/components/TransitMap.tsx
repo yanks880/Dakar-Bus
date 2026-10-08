@@ -3,6 +3,7 @@ import { Circle, CircleMarker, MapContainer, Marker, Polyline, Rectangle, TileLa
 import L, { type DivIcon } from 'leaflet'
 import type { PublishedStop, SnapshotBounds } from '../domain/published'
 import type { CorridorLine, CorridorStop } from '../domain/corridors'
+import { formatFrequencyPeriod, formatSourceVerification } from '../domain/frequencies'
 
 export interface Coordinates {
   lat: number
@@ -184,28 +185,61 @@ export function TransitMap({
           pathOptions={{ color: line.color, weight: 4, opacity: 0.95 }}
         >
           <Tooltip direction="center" sticky opacity={0.95} className="stop-tooltip">
-            {`${line.shortName} — ${line.longName} (réseau de référence)`}
+            <div className="map-frequency-tooltip">
+              <strong>{line.shortName} — {line.longName}</strong>
+              {line.officialFrequencies.map((frequency, index) => (
+                <span key={`${frequency.serviceStart}-${frequency.serviceEnd}-${index}`}>{formatFrequencyPeriod(frequency)}</span>
+              ))}
+              <small>
+                {line.frequencyStatus === 'OFFICIAL_REFERENCE' ? 'Fréquence officielle de référence' : 'Fréquence inconnue'}
+                {' · '}{formatSourceVerification(line.frequencySource)}
+              </small>
+              <a className="map-frequency-source" href={line.frequencySource.sourceUrl} target="_blank" rel="noreferrer">
+                Source : {line.frequencySource.authority}
+              </a>
+              <span className="map-frequency-disclaimer">Fréquence de service uniquement · pas un prochain passage.</span>
+            </div>
           </Tooltip>
         </Polyline>
       ))}
-      {corridorStops.map((stop) => (
-        <CircleMarker
-          key={`corridor-stop-${stop.id}`}
-          center={[stop.lat, stop.lon]}
-          radius={6}
-          pathOptions={{
-            color: '#ffffff',
-            weight: 2,
-            fillColor: stop.id.startsWith('ter') ? '#2f6fb3' : '#0f8f66',
-            fillOpacity: 0.95,
-          }}
-          eventHandlers={onSelectCorridorStop ? { click: () => onSelectCorridorStop(stop) } : undefined}
-        >
-          <Tooltip direction="top" offset={[0, -6]} opacity={1} className="stop-tooltip">
-            {`${stop.name}${stop.note ? ` · ${stop.note}` : ''} (référence)`}
-          </Tooltip>
-        </CircleMarker>
-      ))}
+      {corridorStops.map((stop) => {
+        const line = corridorLines.find((candidate) => candidate.stopIds.includes(stop.id))
+        return (
+          <CircleMarker
+            key={`corridor-stop-${stop.id}`}
+            center={[stop.lat, stop.lon]}
+            radius={6}
+            pathOptions={{
+              color: '#ffffff',
+              weight: 2,
+              fillColor: stop.id.startsWith('ter') ? '#2f6fb3' : '#0f8f66',
+              fillOpacity: 0.95,
+            }}
+            eventHandlers={onSelectCorridorStop ? { click: () => onSelectCorridorStop(stop) } : undefined}
+          >
+            <Tooltip direction="top" offset={[0, -6]} opacity={1} className="stop-tooltip">
+              <div className="map-frequency-tooltip">
+                <strong>{stop.name}{stop.note ? ` · ${stop.note}` : ''}</strong>
+                {line?.officialFrequencies.map((frequency, index) => (
+                  <span key={`${frequency.serviceStart}-${frequency.serviceEnd}-${index}`}>{formatFrequencyPeriod(frequency)}</span>
+                ))}
+                {line && (
+                  <small>
+                    {line.frequencyStatus === 'OFFICIAL_REFERENCE' ? 'Fréquence officielle de référence' : 'Fréquence inconnue'}
+                    {' · '}{formatSourceVerification(line.frequencySource)}
+                  </small>
+                )}
+                {line && (
+                  <a className="map-frequency-source" href={line.frequencySource.sourceUrl} target="_blank" rel="noreferrer">
+                    Source : {line.frequencySource.authority}
+                  </a>
+                )}
+                {line && <span className="map-frequency-disclaimer">Fréquence de service uniquement · pas un prochain passage.</span>}
+              </div>
+            </Tooltip>
+          </CircleMarker>
+        )
+      })}
 
       {coverage && showCoverage && (
         <Rectangle

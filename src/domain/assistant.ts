@@ -10,12 +10,13 @@
 
 import {
   BRT_STOPS,
-  CORRIDOR_LINES,
   CORRIDOR_NETWORKS,
   TER_STOPS,
   linesServingStop,
   searchCorridorStops,
 } from './corridors'
+import { NETWORK_REFERENCE_DATA, OFFICIAL_REFERENCE_FREQUENCIES, formatFrequencyPeriod, formatSourceVerification } from './frequencies'
+import { getRemainingMinutes } from './truth'
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint } from './planner'
 
 export interface AssistantContext {
@@ -23,12 +24,22 @@ export interface AssistantContext {
   publishedAvailable: boolean
   /** L'API d'administration locale répond. */
   adminOnline: boolean
+  /** Départ exact issu d'un horaire GTFS publié ; absent pour les seules fréquences de référence. */
+  nextDepartureAt?: {
+    network: 'brt' | 'ter'
+    status: 'SCHEDULED'
+    nextDepartureAt: string
+    /** Provenance text for an exact trip selected from the published schedule. */
+    routeDescription?: string
+  } | null
 }
 
 export interface AssistantMessage {
   id: number
   role: 'user' | 'assistant'
   text: string
+  /** Only set for a valid, positive countdown calculated from a scheduled departure. */
+  countdownMinutes?: number
 }
 
 function normalize(value: string): string {
@@ -45,11 +56,55 @@ function includesAny(haystack: string, needles: readonly string[]): boolean {
   return needles.some((needle) => haystack.includes(needle))
 }
 
+function requestedFrequencyNetwork(text: string): 'brt' | 'ter' | null {
+  const wantsBrt = includesAny(text, ['brt', 'b1', 'b2', 'b3', 'sunubrt', 'bus rapide'])
+  const wantsTer = includesAny(text, ['ter', 'train', 'gare', 'express regional'])
+  if (wantsBrt === wantsTer) return null
+  return wantsBrt ? 'brt' : 'ter'
+}
+
+/** Countdown only when an exact scheduled departure was supplied by the caller. */
+function scheduledRouteDescription(context: AssistantContext): string | null {
+  const description = context.nextDepartureAt?.routeDescription?.trim()
+  return description || null
+}
+
+export function getAssistantCountdownMinutes(question: string, context: AssistantContext, now = Date.now()): number | null {
+  const text = normalize(question)
+  if (!includesAny(text, ['dans combien', 'combien de temps', 'arrive', 'arriver', 'prochain', 'prochaine'])) return null
+  const requestedNetwork = requestedFrequencyNetwork(text)
+  const scheduled = context.nextDepartureAt
+  if (!requestedNetwork || !scheduled || scheduled.network !== requestedNetwork || scheduled.status !== 'SCHEDULED') return null
+  return getRemainingMinutes(scheduled.nextDepartureAt, now)
+}
+
+function officialFrequencyAnswer(network: 'brt' | 'ter'): string {
+  const reference = NETWORK_REFERENCE_DATA[network]
+  const source = network === 'brt' ? 'CETUD / SunuBRT' : 'TER / SETER'
+  const verification = formatSourceVerification(reference.source)
+  const information = reference.officialFrequencies.map(formatFrequencyPeriod).join('; ')
+  if (network === 'brt') {
+    const frequency = reference.officialFrequencies[0]
+    return `Le BRT circule selon une fréquence officielle de référence de ${frequency.headwayMinutes} minutes entre ${frequency.serviceStart} et ${frequency.serviceEnd}. Source : ${source} (${reference.source.sourceUrl}). ${verification}. Cette information décrit une fréquence de service de référence, pas la position en temps réel d’un bus.`
+  }
+  return `Le TER fonctionne selon des fréquences officielles de référence selon la période : ${information}. Source : ${source} (${reference.source.sourceUrl}). ${verification}. Il ne s’agit pas d’une information temps réel.`
+}
+
+function noReliableDepartureAnswer(network: 'brt' | 'ter'): string {
+  const reference = NETWORK_REFERENCE_DATA[network]
+  const source = network === 'brt' ? 'CETUD / SunuBRT' : 'TER / SETER'
+  const verification = formatSourceVerification(reference.source)
+  const frequency = network === 'brt'
+    ? 'la fréquence officielle de référence du BRT (6 minutes)'
+    : 'les fréquences officielles de référence du TER, qui varient selon la période'
+  return `Je connais ${frequency}, mais je ne dispose actuellement d’aucune heure de prochain passage fiable. Source : ${source} (${reference.source.sourceUrl}). ${verification}. Une fréquence seule ne permet pas de déduire un départ imminent.`
+}
+
 const OFFICIAL_CHANNELS =
   'Canaux officiels d’information voyageurs : Sen TER (sentersa.sn, centre d’appels SETER), SunuBRT (sunubrt.sn, Dakar Mobilité) et le CETUD (cetud.sn). Aucune de ces sources n’est connectée en temps réel à cette application pour l’instant.'
 
 const HONEST_LIMIT =
-  'Je raisonne sur le réseau de référence (13 gares TER, 23 stations BRT) et sur les fréquences annoncées publiquement : pas de temps réel, pas de positions de véhicules, pas de réseaux DDD/AFTU/TATA (aucune donnée vérifiée).'
+  'Je raisonne sur les références officielles TER/BRT et les horaires GTFS publiés lorsqu’ils existent : aucune position de véhicule ni donnée temps réel. Pour DDD et AFTU, le catalogue ne contient que des repères de réseau ; aucune fréquence par ligne n’est disponible.'
 
 /** Extrait un couple (origine, destination) d'une question d'itinéraire. */
 export function extractJourneyRequest(question: string): { origin: PlannerEndpoint; destination: PlannerEndpoint } | null {
@@ -70,7 +125,7 @@ export function extractJourneyRequest(question: string): { origin: PlannerEndpoi
   }
 }
 
-export function answerAssistant(question: string, context: AssistantContext): string {
+export function answerAssistant(question: string, context: AssistantContext, now = Date.now()): string {
   const text = normalize(question)
   if (!text) return 'Posez-moi une question sur les transports de Dakar : arrêts BRT, gares TER, itinéraires, fréquences ou perturbations.'
 
@@ -99,24 +154,51 @@ ${steps}
 ${outcome.limitation}`
   }
 
-  // 3) Prochain départ / fréquences.
+  // 3) Prochain départ / fréquence officielle de référence.
   const wantsBrt = includesAny(text, ['brt', 'b1', 'b2', 'b3', 'sunubrt', 'bus rapide'])
   const wantsTer = includesAny(text, ['ter', 'train', 'gare', 'express regional'])
-  if (includesAny(text, ['prochain', 'prochaine', 'bientot', 'attente', 'frequence', 'passage', 'cadence'])) {
+  const asksFrequency = includesAny(text, ['prochain', 'prochaine', 'bientot', 'attente', 'frequence', 'passage', 'passe', 'cadence', 'dans combien', 'combien de temps', 'arrive'])
+  if (asksFrequency) {
     const destinationStops = searchCorridorStops(question.replace(/.*?(vers|pour|a|à|jusqu'a|jusqu à)\s+/i, ''))
     const target = destinationStops[0]
     const serving = target ? linesServingStop(target.id) : []
-    const lines = serving.length > 0 ? serving : CORRIDOR_LINES
-    const detail = lines
-      .map((line) => `• ${line.shortName} (${line.longName}) : ${line.serviceWindow}.`)
-      .join('\n')
     const targetLine = target && serving.length > 0 ? `${target.name} est desservi par ${serving.map((line) => line.shortName).join(' et ')}. ` : ''
-    const published = context.publishedAvailable
-      ? ' Un snapshot GTFS est publié : l’onglet Trajet calcule aussi les courses directes déclarées.'
-      : ' Aucun horaire publié n’est servi par l’API pour l’instant : je donne les fréquences de référence, jamais une heure de passage inventée.'
-    return `${targetLine}Fréquences annoncées publiquement :
-${detail}
-${published}${published ? '' : ' '}`.trim()
+    const requestedNetwork = requestedFrequencyNetwork(text)
+    const unknownFrequencyNetwork = includesAny(text, ['ddd', 'dakar dem dikk'])
+      ? NETWORK_REFERENCE_DATA.ddd
+      : includesAny(text, ['aftu']) ? NETWORK_REFERENCE_DATA.aftu : null
+    if (unknownFrequencyNetwork) {
+      const counts = unknownFrequencyNetwork.id === 'ddd'
+        ? `${unknownFrequencyNetwork.lineCount} lignes et ${unknownFrequencyNetwork.vehicleCount} bus`
+        : `${unknownFrequencyNetwork.lineCount} lignes, ${unknownFrequencyNetwork.vehicleCount?.toLocaleString('fr-FR')} bus et ${unknownFrequencyNetwork.gieCount} GIE`
+      return `${unknownFrequencyNetwork.operator} : ${counts}, service ${unknownFrequencyNetwork.serviceStart}–${unknownFrequencyNetwork.serviceEnd}. ${unknownFrequencyNetwork.frequencyLabel}. Aucun prochain départ fiable ou horaire par ligne n’est disponible : je ne peux pas donner de compte à rebours. Source : CETUD (${unknownFrequencyNetwork.source.sourceUrl}). ${formatSourceVerification(unknownFrequencyNetwork.source)}.`
+    }
+    if (requestedNetwork) {
+      const wantsNext = includesAny(text, ['prochain', 'prochaine', 'dans combien', 'combien de temps', 'arrive', 'arriver', 'attente'])
+      if (wantsNext) {
+        const minutes = getAssistantCountdownMinutes(question, context, now)
+        if (minutes !== null) {
+          const label = requestedNetwork === 'brt' ? 'BRT' : 'TER'
+          const departure = scheduledRouteDescription(context)
+          const trip = departure ? `La course ${departure} est programmée` : `Le prochain ${label} est prévu`
+          return `${targetLine}${trip} dans ${minutes} min selon un horaire théorique déclaré. Ce n’est pas une information temps réel.`
+        }
+        return `${targetLine}${noReliableDepartureAnswer(requestedNetwork)}`
+      }
+      return `${targetLine}${officialFrequencyAnswer(requestedNetwork)}`
+    }
+
+    const frequencies = [
+      officialFrequencyAnswer('brt'),
+      officialFrequencyAnswer('ter'),
+    ].join('\n')
+    const ddd = NETWORK_REFERENCE_DATA.ddd
+    const aftu = NETWORK_REFERENCE_DATA.aftu
+    const unknownFrequencyNetworks = [
+      `• DDD : ${ddd.lineCount} lignes, ${ddd.vehicleCount} bus, ${ddd.serviceStart}–${ddd.serviceEnd} ; fréquences non publiées ligne par ligne. Source CETUD (${ddd.source.sourceUrl}) · ${formatSourceVerification(ddd.source)}.`,
+      `• AFTU : ${aftu.lineCount} lignes, ${aftu.vehicleCount?.toLocaleString('fr-FR')} bus, ${aftu.gieCount} GIE, ${aftu.serviceStart}–${aftu.serviceEnd} ; fréquences non publiées ligne par ligne. Source CETUD (${aftu.source.sourceUrl}) · ${formatSourceVerification(aftu.source)}.`,
+    ].join('\n')
+    return `${frequencies}\n${unknownFrequencyNetworks}\nAucune heure de prochain passage n’est disponible sans horaire fiable.`
   }
 
   // 4) Desserte d'un lieu.
@@ -128,7 +210,7 @@ ${published}${published ? '' : ' '}`.trim()
       const lines = linesServingStop(stop.id)
       return `${stop.name} est desservi par ${lines.map((line) => `${line.shortName} (${CORRIDOR_NETWORKS[line.network].label})`).join(', ')}${stop.note ? ` — ${stop.note}` : ''}. Position et correspondances sont visibles sur l’onglet Explorer (couche « Réseau de référence »).`
     }
-    return 'Ce lieu n’est ni une gare TER ni une station BRT du réseau de référence. Les réseaux DDD, AFTU et TATA n’ont pas encore de données vérifiées : je préfère le dire plutôt que deviner.'
+    return 'Ce lieu n’est ni une gare TER ni une station BRT du réseau de référence. Le catalogue DDD/AFTU ne contient pas d’arrêts ni de fréquences par ligne vérifiés ; je préfère le dire plutôt que deviner.'
   }
 
   // 5) Listes et comptes.
@@ -136,12 +218,20 @@ ${published}${published ? '' : ' '}`.trim()
     if (wantsBrt && !wantsTer) {
       return `Les 23 stations du BRT, de Petersen à la Préfecture de Guédiawaye :
 ${BRT_STOPS.map((stop, index) => `${index + 1}. ${stop.name}`).join('\n')}
-(Séquence officielle ; positions exactes des nœuds OpenStreetMap de la ligne B1, relevées le 8 octobre 2026 ; corridor de 18,3 km.)`
+(Séquence de référence B1 ; le projet consigne des coordonnées liées aux nœuds OpenStreetMap, sans date de vérification externe documentée ; corridor de 18,3 km.)`
+    }
+    if (includesAny(text, ['ddd', 'dakar dem dikk'])) {
+      const reference = NETWORK_REFERENCE_DATA.ddd
+      return `${reference.operator} (${reference.shortName}) : ${reference.lineCount} lignes, ${reference.vehicleCount} bus, service ${reference.serviceStart}–${reference.serviceEnd}. ${reference.frequencyLabel} : aucune fréquence uniforme n’est attribuée aux lignes. Source : CETUD (${reference.source.sourceUrl}). ${formatSourceVerification(reference.source)}.`
+    }
+    if (includesAny(text, ['aftu'])) {
+      const reference = NETWORK_REFERENCE_DATA.aftu
+      return `${reference.operator} : ${reference.lineCount} lignes, ${reference.vehicleCount?.toLocaleString('fr-FR')} bus, ${reference.gieCount} GIE, service ${reference.serviceStart}–${reference.serviceEnd}. ${reference.frequencyLabel} : aucune fréquence uniforme n’est attribuée aux lignes. Source : CETUD (${reference.source.sourceUrl}). ${formatSourceVerification(reference.source)}.`
     }
     if (wantsTer && !wantsBrt) {
       return `Les 13 gares et haltes du TER, de Dakar à Diamniadio :
 ${TER_STOPS.map((stop, index) => `${index + 1}. ${stop.name}${stop.note ? ` — ${stop.note}` : ''}`).join('\n')}
-(Source : plan de transport Sen TER ; 36 km, fréquence annoncée de 10 à 20 min.)`
+Fréquences officielles de référence : ${OFFICIAL_REFERENCE_FREQUENCIES.ter.map(formatFrequencyPeriod).join('; ')}. Source : TER / SETER (${NETWORK_REFERENCE_DATA.ter.source.sourceUrl}). ${formatSourceVerification(NETWORK_REFERENCE_DATA.ter.source)}.`
     }
     return `Le réseau de référence couvre :
 • TER — ${TER_STOPS.length} gares, Dakar ↔ Diamniadio (${CORRIDOR_NETWORKS.ter.operator}) ;
@@ -159,10 +249,10 @@ Ce ne sont pas des données publiées par le pipeline de gouvernance de l’appl
 
   // 7) Horaires / amplitude.
   if (includesAny(text, ['horaire', 'heure', 'ouvre', 'ferme', 'amplitude', 'matin', 'soir', 'nuit'])) {
-    return `Amplitudes et fréquences annoncées publiquement :
-• BRT : 6 h – 21 h, passage toutes les 6 min environ ;
-• TER : fréquence de 10 à 20 min selon l’heure ; première gare Dakar, terminus Diamniadio (l’aéroport AIBD n’est pas encore desservi, phase 2 annoncée).
-Aucun horaire minuté n’est publié ici : pas de temps réel, pas d’estimation de passage inventée.`
+    return `Amplitudes et fréquences officielles de référence :
+• BRT : 06:00–21:00, fréquence de référence de 6 min ; source CETUD / SunuBRT (${NETWORK_REFERENCE_DATA.brt.source.sourceUrl}). ${formatSourceVerification(NETWORK_REFERENCE_DATA.brt.source)}.
+• TER : ${OFFICIAL_REFERENCE_FREQUENCIES.ter.map(formatFrequencyPeriod).join('; ')} ; source TER / SETER (${NETWORK_REFERENCE_DATA.ter.source.sourceUrl}). ${formatSourceVerification(NETWORK_REFERENCE_DATA.ter.source)}.
+Une fréquence ne donne pas l’heure du prochain passage : aucun départ individuel ni temps réel n’est déduit de ces références.`
   }
 
   // 8) Perturbations / alertes.

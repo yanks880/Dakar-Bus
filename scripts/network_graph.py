@@ -955,6 +955,22 @@ def _local_day(graph: dict[str, Any], moment: datetime) -> tuple[date, int]:
     return moment.date(), moment.hour * 3600 + moment.minute * 60 + moment.second
 
 
+def _scheduled_departure_at(graph: dict[str, Any], service_day: date, departure_seconds: int) -> str | None:
+    """Return a UTC instant only when the feed declares its timezone."""
+    timezone_name = graph.get("timezone")
+    if not isinstance(timezone_name, str) or not timezone_name:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        agency_timezone = ZoneInfo(timezone_name)
+    except (KeyError, ValueError, OSError):
+        return None
+    service_midnight = datetime.combine(service_day, datetime.min.time(), tzinfo=agency_timezone)
+    departure = service_midnight + timedelta(seconds=departure_seconds)
+    return departure.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def find_direct_journeys(
     graph: dict[str, Any],
     origin: tuple[float, float],
@@ -1024,8 +1040,8 @@ def find_direct_journeys(
                     departure_seconds = departure if isinstance(departure, int) else arrival
                     if departure_seconds is None:
                         continue
-                    if after_seconds is not None and departure_seconds < after_seconds:
-                        continue  # already gone: never offered as a future departure
+                    if after_seconds is not None and departure_seconds <= after_seconds:
+                        continue  # at or before now: already gone, never offered as a future departure
                     boarding = {"stop_id": stop_id, "departure": departure_seconds}
                     continue
                 if boarding is not None and stop_id in reachable_alighting:
@@ -1039,6 +1055,7 @@ def find_direct_journeys(
             route = routes.get(str(trip.get("route_id"))) or {}
             boarding_walk = departures[boarding["stop_id"]]
             alighting_walk = arrivals[alighting["stop_id"]]
+            next_departure_at = _scheduled_departure_at(graph, candidate_day, boarding["departure"])
             found.append(
                 {
                     "kind": "direct",
@@ -1066,6 +1083,8 @@ def find_direct_journeys(
                     "arrival_seconds": alighting["arrival"],
                     "duration_min": max(0, round((alighting["arrival"] - boarding["departure"]) / 60)),
                     "date": candidate_day.isoformat(),
+                    "next_departure_at": next_departure_at,
+                    "departure_status": "SCHEDULED" if next_departure_at else "UNKNOWN",
                     "note": "Horaire théorique déclaré dans le flux GTFS Static ; ni position ni estimation temps réel.",
                 }
             )

@@ -8,6 +8,7 @@
  * theoretical declared timetables.
  */
 
+import type { FrequencyStatus } from './frequencies'
 import type { ParseResult } from './published'
 
 export interface JourneyLeg {
@@ -21,6 +22,8 @@ export interface JourneyLeg {
   walkPath: string[]
 }
 
+export type JourneyDepartureStatus = Extract<FrequencyStatus, 'SCHEDULED' | 'UNKNOWN'>
+
 export interface Journey {
   tripId: string | null
   serviceId: string | null
@@ -33,6 +36,9 @@ export interface Journey {
   durationMin: number
   /** Service day of the trip (`YYYY-MM-DD`), usually the requested local day. */
   date: string
+  /** Exact UTC departure instant, only for a timezone-qualified GTFS schedule. */
+  nextDepartureAt: string | null
+  departureStatus: JourneyDepartureStatus
   note: string
 }
 
@@ -60,6 +66,7 @@ export type JourneyReason =
   | 'UNKNOWN'
 
 const REASONS: readonly JourneyReason[] = ['DIRECT_RIDE_FOUND', 'NO_DIRECT_SERVICE', 'NO_NEARBY_STOPS']
+const JOURNEY_DEPARTURE_STATUSES: readonly JourneyDepartureStatus[] = ['SCHEDULED', 'UNKNOWN']
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -67,6 +74,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
+}
+
+function absoluteTimestamp(value: string | null): number | null {
+  if (!value || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value.trim())) return null
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? timestamp : null
 }
 
 function optionalNumber(value: unknown): number | null {
@@ -123,6 +136,15 @@ function parseJourney(value: unknown): Journey | null {
   const note = optionalString(value.note)
   const route = isRecord(value.route) ? value.route : null
   const routeId = route ? optionalString(route.route_id) : null
+  const rawStatus = value.departure_status === undefined ? 'UNKNOWN' : optionalString(value.departure_status)
+  if (!rawStatus || !(JOURNEY_DEPARTURE_STATUSES as readonly string[]).includes(rawStatus)) return null
+  const departureStatus = rawStatus as JourneyDepartureStatus
+  const nextDepartureAt = optionalString(value.next_departure_at)
+  if (departureStatus === 'SCHEDULED') {
+    if (absoluteTimestamp(nextDepartureAt) === null) return null
+  } else if (nextDepartureAt !== null) {
+    return null
+  }
   if (!departure || !arrival || durationMin === null || !date || !note || !routeId || !route) return null
   return {
     tripId: optionalString(value.trip_id),
@@ -135,6 +157,8 @@ function parseJourney(value: unknown): Journey | null {
     arrival,
     durationMin,
     date,
+    nextDepartureAt,
+    departureStatus,
     note,
   }
 }
@@ -145,9 +169,10 @@ export function parseJourneysPayload(payload: unknown): ParseResult<JourneySearc
     return { ok: false, reason: 'La réponse prétend au temps réel : elle est refusée.' }
   }
   const requestedAt = optionalString(payload.requested_at)
+  const requestedAtMs = absoluteTimestamp(requestedAt)
   const localDay = optionalString(payload.local_day)
-  if (!requestedAt || !localDay) {
-    return { ok: false, reason: 'Réponse d’itinéraires sans heure ni jour de référence.' }
+  if (!requestedAt || requestedAtMs === null || !localDay) {
+    return { ok: false, reason: 'Réponse d’itinéraires sans heure absolue ni jour de référence.' }
   }
   if (!Array.isArray(payload.results)) {
     return { ok: false, reason: 'Réponse d’itinéraires sans liste de résultats.' }
@@ -158,6 +183,10 @@ export function parseJourneysPayload(payload: unknown): ParseResult<JourneySearc
     const journey = parseJourney(raw)
     if (!journey) {
       return { ok: false, reason: 'Une course proposée est incomplète : elle n’est pas affichée.' }
+    }
+    const nextDepartureAtMs = absoluteTimestamp(journey.nextDepartureAt)
+    if (journey.departureStatus === 'SCHEDULED' && (nextDepartureAtMs === null || nextDepartureAtMs <= requestedAtMs)) {
+      return { ok: false, reason: 'Une course déclarée est déjà passée à l’heure de recherche : la réponse est refusée.' }
     }
     results.push(journey)
   }

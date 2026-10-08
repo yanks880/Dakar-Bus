@@ -30,15 +30,17 @@ const RESULT = {
   arrival_seconds: 25500,
   duration_min: 65,
   date: '2026-10-08',
+  next_departure_at: '2026-10-08T06:00:00Z',
+  departure_status: 'SCHEDULED',
   note: 'Horaire théorique déclaré dans le flux GTFS Static ; ni position ni estimation temps réel.',
 }
 
 const PAYLOAD = {
-  generated_at: '2026-10-08T13:47:47+00:00',
+  generated_at: '2026-10-08T05:47:47+00:00',
   snapshot_id: 'snap-20261008t131934z-d-monstration-locale-donn-es-synth-tique',
   publication_status: 'PUBLISHED',
   graph: {
-    built_at: '2026-10-08T13:45:53+00:00',
+    built_at: '2026-10-08T05:45:53+00:00',
     snapshot_id: 'snap-20261008t131934z-d-monstration-locale-donn-es-synth-tique',
     stats: { stops: 8, places: 8, trips: 5, edges: 0 },
     capabilities: { network_walk: true, direct_rides: true, transfers_itinerary: false, realtime: false },
@@ -46,7 +48,7 @@ const PAYLOAD = {
   },
   origin: { input: 'Démo — Plateau Nord', origin: 'published-stop', coordinates: { lat: 14.674, lon: -17.438 } },
   destination: { input: 'Démo — Yoff Aéroport', origin: 'published-stop', coordinates: { lat: 14.748, lon: -17.49 } },
-  requested_at: '2026-10-08T13:47:47+00:00',
+  requested_at: '2026-10-08T05:47:47+00:00',
   local_day: '2026-10-08',
   max_walk_m: 900.0,
   start_walk_m: 400.0,
@@ -72,12 +74,14 @@ describe('parseJourneysPayload', () => {
     expect(journey.arrival.declaredTime).toBe('07:05:00')
     expect(journey.durationMin).toBe(65)
     expect(journey.date).toBe('2026-10-08')
+    expect(journey.nextDepartureAt).toBe('2026-10-08T06:00:00Z')
+    expect(journey.departureStatus).toBe('SCHEDULED')
     expect(journey.routeShortName).toBe('L1')
     expect(journeyRouteLabel(journey)).toBe('L1')
     expect(parsed.value.reason).toBe('DIRECT_RIDE_FOUND')
     expect(parsed.value.localDay).toBe('2026-10-08')
     expect(parsed.value.graphStats.stops).toBe(8)
-    expect(parsed.value.graphBuiltAt).toBe('2026-10-08T13:45:53+00:00')
+    expect(parsed.value.graphBuiltAt).toBe('2026-10-08T05:45:53+00:00')
   })
 
   it('lit un refus sans inventer de résultat', () => {
@@ -114,6 +118,34 @@ describe('parseJourneysPayload', () => {
     expect(parsed.reason).toMatch(/incomplète/i)
   })
 
+  it('n’accepte un compte à rebours que pour un instant exact explicitement programmé', () => {
+    expect(parseJourneysPayload({
+      ...PAYLOAD,
+      results: [{ ...RESULT, next_departure_at: null, departure_status: 'SCHEDULED' }],
+    }).ok).toBe(false)
+    expect(parseJourneysPayload({
+      ...PAYLOAD,
+      results: [{ ...RESULT, departure_status: 'UNKNOWN' }],
+    }).ok).toBe(false)
+
+    const estimated = parseJourneysPayload({
+      ...PAYLOAD,
+      results: [{ ...RESULT, next_departure_at: null, departure_status: 'ESTIMATED' }],
+    })
+    const officialReferenceAsDeparture = parseJourneysPayload({
+      ...PAYLOAD,
+      results: [{ ...RESULT, next_departure_at: null, departure_status: 'OFFICIAL_REFERENCE' }],
+    })
+    expect(estimated.ok).toBe(false)
+    expect(officialReferenceAsDeparture.ok).toBe(false)
+
+    const alreadyDeparted = parseJourneysPayload({
+      ...PAYLOAD,
+      results: [{ ...RESULT, next_departure_at: PAYLOAD.requested_at }],
+    })
+    expect(alreadyDeparted.ok).toBe(false)
+  })
+
   it('refuse une course qui porterait une correspondance', () => {
     const parsed = parseJourneysPayload({ ...PAYLOAD, results: [{ ...RESULT, transfers: 1 }] })
     expect(parsed.ok).toBe(false)
@@ -129,6 +161,7 @@ describe('parseJourneysPayload', () => {
 
   it('refuse une réponse sans heure de référence ou sans liste de résultats', () => {
     expect(parseJourneysPayload({ ...PAYLOAD, requested_at: null }).ok).toBe(false)
+    expect(parseJourneysPayload({ ...PAYLOAD, requested_at: '2026-10-08T05:47:47' }).ok).toBe(false)
     expect(parseJourneysPayload({ ...PAYLOAD, results: undefined }).ok).toBe(false)
     expect(parseJourneysPayload('pas un objet').ok).toBe(false)
   })

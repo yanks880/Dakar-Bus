@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, cleanup } from '@testing-library/react'
+import { act, fireEvent, render, screen, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
@@ -151,6 +151,8 @@ const JOURNEYS_PAYLOAD = {
       arrival_seconds: 24120,
       duration_min: 42,
       date: '2026-10-08',
+      next_departure_at: null,
+      departure_status: 'UNKNOWN',
       note: 'Horaire théorique déclaré dans le flux GTFS Static ; ni position ni estimation temps réel.',
     },
   ],
@@ -193,12 +195,14 @@ function publishedApi() {
 }
 
 beforeEach(() => {
+  window.localStorage.clear()
   stubGeolocation()
 })
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -206,6 +210,7 @@ afterEach(() => {
  *  l’onglet Paramètres, le seul centre d’état des API et d’aide. */
 async function openReadApiState() {
   fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+  fireEvent.click(screen.getByText(/^état des données$/i))
   return screen.findByText(/snapshot publié servi|affichage vérifié/i)
 }
 
@@ -266,13 +271,16 @@ describe('Dakar Bus experience safety', () => {
     expect(screen.queryByText(/démo — yoff aéroport/i)).toBeNull()
   })
 
-  it('does not claim normal service when the alert source is missing', async () => {
+  it('keeps alert details tucked away and does not claim normal service', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
     fireEvent.click(screen.getByRole('tab', { name: /alertes/i }))
 
-    expect(screen.getByText(/source d’alertes non connectée/i)).toBeTruthy()
-    expect(screen.getByText(/l’absence d’alerte reçue ne signifie pas que le service est normal/i)).toBeTruthy()
+    expect(screen.getByText(/aucune alerte vérifiée pour le moment/i)).toBeTruthy()
+    expect(screen.queryByText(/l’absence d’alerte ne garantit pas un service normal/i)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /voir les canaux officiels/i }))
+    expect(screen.getByText(/l’absence d’alerte ne garantit pas un service normal/i)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'sentersa.sn' })).toBeTruthy()
   })
 })
 
@@ -333,6 +341,7 @@ describe('isolation de la vue carte', () => {
     expect(screen.queryByText(/api de lecture/i)).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    fireEvent.click(screen.getByText(/^état des données$/i))
     expect(await screen.findByText(/affichage vérifié/i)).toBeTruthy()
     expect(screen.getByText(/api de lecture · snapshot publié/i)).toBeTruthy()
   })
@@ -353,6 +362,21 @@ describe('isolation de la vue carte', () => {
 })
 
 describe('structure en quatre piliers', () => {
+  it('affiche les fiches réseau sans les faire passer pour des horaires', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    expect(screen.getByRole('region', { name: 'Fréquences et services de référence' })).toBeTruthy()
+    expect(screen.getByText('6 min')).toBeTruthy()
+    expect(screen.getByText(/lun\.–sam\. \(hors jours fériés\) · 05:30–21:00 · 10 min/)).toBeTruthy()
+    expect(screen.getByText(/38 lignes · 400 bus/)).toBeTruthy()
+    expect(screen.getByText(/72 lignes · 2\s?300 bus · 14 GIE/)).toBeTruthy()
+    expect(screen.getAllByText(/vérification en ligne non documentée/).length).toBeGreaterThanOrEqual(4)
+    expect(screen.getByText(/pas temps réel/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'TER / SETER' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'CETUD / SunuBRT' })).toBeTruthy()
+  })
+
   it('expose exactement quatre onglets, avec leurs rôles exclusifs', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
@@ -365,69 +389,74 @@ describe('structure en quatre piliers', () => {
     expect(screen.queryByRole('tab', { name: /gouvernance/i })).toBeNull()
   })
 
-  it('réserve la carte, le GPS et le flux des mobilités à l’onglet Explorer', async () => {
+  it('shows the map and destination guide only in Explorer', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
 
     expect(screen.getByLabelText('Carte de test')).toBeTruthy()
-    expect(screen.getByText(/rayon de 5 km autour de votre position/i)).toBeTruthy()
-    expect(screen.getByText(/flux des mobilités à proximité/i)).toBeTruthy()
-    for (const network of ['TER', 'BRT (SunuBRT)', 'Dakar Dem Dikk', 'AFTU', 'TATA']) {
-      expect(screen.getAllByText(network).length).toBeGreaterThan(0)
+    expect(screen.getByPlaceholderText('On va où ?')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /définir la maison sur la carte/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /définir le boulot sur la carte/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /définir une adresse sur la carte/i })).toBeTruthy()
+
+    for (const tab of [/trajet/i, /alertes/i, /paramètres/i]) {
+      fireEvent.click(screen.getByRole('tab', { name: tab }))
+      expect(screen.queryByLabelText('Carte de test')).toBeNull()
+      expect(screen.queryByPlaceholderText('On va où ?')).toBeNull()
+      expect(screen.queryByRole('search')).toBeNull()
     }
-    expect(screen.getByText(/passage annoncé toutes les 6 min/i)).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
-    expect(screen.queryByText(/flux des mobilités à proximité/i)).toBeNull()
-    expect(screen.queryByText(/rayon de 5 km autour de votre position/i)).toBeNull()
   })
 
-  it('réserve la recherche universelle et le calculateur à l’onglet Trajet', async () => {
+  it('keeps Trajet focused on the route form and hides the Explorer search field', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
-    render(<App />)
+    const { container } = render(<App />)
 
-    expect(screen.queryByText(/recherche universelle/i)).toBeNull()
+    expect(screen.queryByText(/résultats de recherche/i)).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
 
-    expect(await screen.findByText(/recherche universelle · assistant/i)).toBeTruthy()
-    expect(screen.getByText(/réseaux pris en charge/i)).toBeTruthy()
-    expect(screen.getByText(/23 stations · tracé officiel/i)).toBeTruthy()
-    expect(screen.getAllByText(/aucune donnée vérifiée/i).length).toBeGreaterThanOrEqual(3)
-    // Le calculateur multimodal reste dans Trajet, jamais dans Explorer.
+    expect(screen.getByRole('heading', { name: /préparer un trajet/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.queryByRole('search')).toBeNull()
+    expect(screen.queryByText(/réseaux pris en charge/i)).toBeNull()
+    expect(container.querySelector('.advanced-planner')?.hasAttribute('open')).toBe(false)
+
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
-    expect(screen.queryByText(/recherche universelle · assistant/i)).toBeNull()
+    expect(screen.getByPlaceholderText('On va où ?')).toBeTruthy()
   })
 
-  it('répond à une question posée dans la recherche universelle, sans quitter Trajet', async () => {
+  it('answers a question from the Explorer search and opens results in Trajet', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
 
-    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i), {
-      target: { value: 'liste des stations BRT' },
-    })
-    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i).closest('form')!)
+    const search = screen.getByLabelText(/rechercher un arrêt, une station ou une destination/i)
+    fireEvent.change(search, { target: { value: 'liste des stations BRT' } })
+    fireEvent.submit(search.closest('form')!)
 
     expect(await screen.findByText(/assistant mobilité/i)).toBeTruthy()
     // L’assistant énumère les 23 stations officielles, dans l’ordre.
     expect(screen.getByText(/1\. Petersen – Papa Gueye Fall/)).toBeTruthy()
     expect(screen.getByText(/23\. Préfecture de Guédiawaye/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.queryByRole('search')).toBeNull()
   })
 
   it('range l’aide, les CGU, l’historique et la console technique dans Paramètres', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
 
-    for (const hidden of [/mode d’emploi/i, /conditions d’utilisation/i, /mises à jour/i, /console d’administration locale/i]) {
-      expect(screen.queryByText(hidden)).toBeNull()
-    }
+    expect(screen.queryByText(/mode d’emploi/i)).toBeNull()
+    expect(screen.queryByRole('heading', { name: /conditions d’utilisation/i })).toBeNull()
+    expect(screen.queryByRole('heading', { name: /mises à jour/i })).toBeNull()
+    expect(screen.queryByText(/console d’administration locale/i)).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
     expect((await screen.findAllByText(/mode d’emploi/i)).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByText(/^conditions d’utilisation$/i))
     expect(screen.getByRole('heading', { name: /conditions d’utilisation/i })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: /mises à jour/i })).toBeTruthy()
     expect(screen.getByText(/aucune donnée temps réel \(position de véhicule, retard constaté\)/i)).toBeTruthy()
     expect(screen.getByText(/jamais transmise à un tiers/i)).toBeTruthy()
+    fireEvent.click(screen.getByText(/^mises à jour$/i))
+    expect(screen.getByRole('heading', { name: /mises à jour/i })).toBeTruthy()
     // La console technique est repliée : le catalogue n’est pas interrogé tant
     // que l’utilisateur ne l’ouvre pas.
     expect(screen.queryByText(/catalogue local vérifié/i)).toBeNull()
@@ -448,8 +477,9 @@ describe('published snapshot in the app', () => {
     expect(screen.queryByText(/aucune source de transport n’est encore reliée/i)).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
-    expect(await screen.findByText(/2 lignes publiées/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText('On va où ?')).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    fireEvent.click(screen.getByText(/^réseaux et données$/i))
     expect(await screen.findByText(/^L1 · Démo — Plateau ↔ Yoff$/)).toBeTruthy()
     expect(screen.getByText(/démo — médina ↔ guédiawaye/i)).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
@@ -464,10 +494,11 @@ describe('published snapshot in the app', () => {
     publishedApi()
     render(<App />)
     await openReadApiState()
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
 
-    fireEvent.click(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i))
-    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i), { target: { value: 'yoff' } })
-    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i).closest('form')!)
+    const search = screen.getByLabelText(/rechercher un arrêt, une station ou une destination/i)
+    fireEvent.change(search, { target: { value: 'yoff' } })
+    fireEvent.submit(search.closest('form')!)
 
     expect(await screen.findByText('Démo — Yoff Aéroport')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /démo — yoff aéroport/i }))
@@ -496,9 +527,10 @@ describe('published snapshot in the app', () => {
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
     expect(await screen.findByText('14.7051, -17.4602')).toBeTruthy()
 
-    fireEvent.click(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i))
-    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i), { target: { value: 'yoff' } })
-    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i).closest('form')!)
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
+    const search = screen.getByLabelText(/rechercher un arrêt, une station ou une destination/i)
+    fireEvent.change(search, { target: { value: 'yoff' } })
+    fireEvent.submit(search.closest('form')!)
     fireEvent.click(await screen.findByRole('button', { name: /démo — yoff aéroport/i }))
     fireEvent.click(await screen.findByRole('button', { name: /aller ici/i }))
 
@@ -525,6 +557,50 @@ describe('published snapshot in the app', () => {
     expect(query.get('destination')).toBe('D6')
     expect(query.get('at')).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(query.get('max_walk_m')).toBe('900')
+  })
+
+  it('actualise le compte à rebours programmé sans recharger et nettoie son timer', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-08T12:00:00.000Z'))
+    const scheduledPayload = {
+      ...JOURNEYS_PAYLOAD,
+      requested_at: '2026-10-08T12:00:00.000Z',
+      results: [{
+        ...JOURNEYS_PAYLOAD.results[0],
+        board: { ...JOURNEYS_PAYLOAD.results[0].board, departure: '12:05:01' },
+        alight: { ...JOURNEYS_PAYLOAD.results[0].alight, arrival: '12:47:01' },
+        next_departure_at: '2026-10-08T12:05:01Z',
+        departure_status: 'SCHEDULED',
+      }],
+    }
+    stubApi([
+      { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
+      { match: '/api/journeys', respond: () => jsonResponse(scheduledPayload) },
+    ])
+    const view = render(<App />)
+
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
+    fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choisir un point sur la carte/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText(/Départ programmé dans 6 min/)).toBeTruthy()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000)
+    })
+    expect(screen.getByText(/Départ programmé dans 5 min/)).toBeTruthy()
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('explains the absence of a direct ride without proposing a detour', async () => {
@@ -610,6 +686,7 @@ describe('published snapshot in the app', () => {
     expect(screen.getByText(/^période dépassée$/i)).toBeTruthy()
     expect(screen.queryByText(/démo — plateau sud/i)).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    fireEvent.click(screen.getByText(/^réseaux et données$/i))
     expect(screen.getByText(/aucune donnée publiée à explorer/i)).toBeTruthy()
   })
 
@@ -637,6 +714,7 @@ describe('published snapshot in the app', () => {
     // instead of keeping a snapshot that is no longer served.
     published = false
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    fireEvent.click(screen.getByText(/^état des données$/i))
     fireEvent.click(screen.getByRole('button', { name: /actualiser l’état de publication/i }))
 
     expect(await screen.findByText(/aucune source de transport n’est encore reliée/i)).toBeTruthy()
@@ -644,19 +722,34 @@ describe('published snapshot in the app', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
     expect(screen.getByTestId('mapped-stops').textContent).toBe('')
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    fireEvent.click(screen.getByText(/^réseaux et données$/i))
     expect(screen.getByText(/aucune donnée publiée à explorer/i)).toBeTruthy()
   })
 
-  it('keeps the layout switch explicit and remembers the choice', async () => {
-    publishedApi()
+  it('keeps the map at the top and makes saved destinations useful for routing', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     const { container } = render(<App />)
-    await openReadApiState()
-    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
 
-    expect(container.querySelector('.app-shell')?.className).toContain('layout-map')
-    fireEvent.click(screen.getByRole('button', { name: /passer au panneau latéral/i }))
-    expect(container.querySelector('.app-shell')?.className).toContain('layout-split')
-    expect(window.localStorage.getItem('dakar-bus:layout')).toBe('split')
+    expect(container.querySelector('.app-shell')?.className).toContain('tab-explore')
+    expect(container.querySelector('.map-stage')).toBeTruthy()
+    expect(container.querySelector('.destination-shortcuts-row')?.children).toHaveLength(3)
+    expect(screen.getByPlaceholderText('On va où ?')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /définir la maison sur la carte/i }))
+    expect(container.querySelector('.map-pick-banner')?.textContent).toMatch(/touchez la carte pour définir maison/i)
+    fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
+
+    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByText('Maison')).toBeTruthy()
+    expect(JSON.parse(window.localStorage.getItem('dakar-bus:destinations') ?? '{}').home).toMatchObject({
+      lat: 14.7001,
+      lng: -17.4502,
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rentrer à la maison/i }))
+    expect(screen.getByRole('tab', { name: /^trajet$/i }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByText('Maison')).toBeTruthy()
   })
 })
 
