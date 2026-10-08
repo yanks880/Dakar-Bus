@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react'
-import { Circle, CircleMarker, MapContainer, Marker, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Marker, Polyline, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L, { type DivIcon } from 'leaflet'
 import type { PublishedStop, SnapshotBounds } from '../domain/published'
+import type { CorridorLine, CorridorStop } from '../domain/corridors'
 
 export interface Coordinates {
   lat: number
@@ -20,6 +21,13 @@ export interface MappableStop extends Coordinates {
   stopName: string
 }
 
+export interface RegionBounds {
+  minLat: number
+  minLon: number
+  maxLat: number
+  maxLon: number
+}
+
 interface TransitMapProps {
   location: UserLocation | null
   routePoints: Partial<Record<RoutePointKey, Coordinates>>
@@ -32,6 +40,13 @@ interface TransitMapProps {
   coverage?: SnapshotBounds | null
   showCoverage?: boolean
   onSelectStop?: (stop: PublishedStop) => void
+  /** Enveloppe à cadrer au chargement (Almadies → Rufisque/Bargny + terminus). */
+  initialBounds?: RegionBounds | null
+  /** Lignes de référence à tracer (TER/BRT), déjà filtrées par couche. */
+  corridorLines?: readonly CorridorLine[]
+  /** Arrêts de référence à afficher, déjà filtrés par couche. */
+  corridorStops?: readonly CorridorStop[]
+  onSelectCorridorStop?: (stop: CorridorStop) => void
 }
 
 const DAKAR_CENTER: [number, number] = [14.7167, -17.4677]
@@ -73,6 +88,24 @@ function MapController({ recenterTo, zoomAction }: Pick<TransitMapProps, 'recent
   return null
 }
 
+/** Cadrage initial : englobe toute la région utile au chargement de la carte. */
+function MapInitialFit({ bounds }: { bounds: RegionBounds | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!bounds) return
+    map.fitBounds(
+      [
+        [bounds.minLat, bounds.minLon],
+        [bounds.maxLat, bounds.maxLon],
+      ],
+      { padding: [16, 16], animate: false },
+    )
+    // Appliqué une seule fois au montage : le centrage manuel prime ensuite.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map])
+  return null
+}
+
 function makeMarker(className: string, label: string, color: string): DivIcon {
   return L.divIcon({
     className: 'dakar-marker-shell',
@@ -94,11 +127,26 @@ export function TransitMap({
   coverage = null,
   showCoverage = true,
   onSelectStop,
+  initialBounds = null,
+  corridorLines = [],
+  corridorStops = [],
+  onSelectCorridorStop,
 }: TransitMapProps) {
   const userIcon = useMemo(() => makeMarker('map-user-marker', 'Votre position', '#10865b'), [])
   const originIcon = useMemo(() => makeMarker('map-route-marker map-route-marker-origin', 'Départ sélectionné', '#126d4b'), [])
   const destinationIcon = useMemo(() => makeMarker('map-route-marker map-route-marker-destination', 'Destination sélectionnée', '#d78a32'), [])
   const stops = useMemo(() => mappableStops(publishedStops), [publishedStops])
+  const corridorLineStops = useMemo(
+    () =>
+      corridorLines.map((line) => ({
+        line,
+        positions: line.stopIds
+          .map((stopId) => corridorStops.find((stop) => stop.id === stopId))
+          .filter((stop): stop is CorridorStop => stop !== undefined)
+          .map((stop) => [stop.lat, stop.lon] as [number, number]),
+      })),
+    [corridorLines, corridorStops],
+  )
 
   return (
     <MapContainer
@@ -119,6 +167,45 @@ export function TransitMap({
       />
       <MapClickHandler pickingPoint={pickingPoint} onChoosePoint={onChoosePoint} />
       <MapController recenterTo={recenterTo} zoomAction={zoomAction} />
+      <MapInitialFit bounds={initialBounds} />
+
+      {/* Réseau de référence TER/BRT : superposé au fond OpenStreetMap, sans le modifier. */}
+      {corridorLineStops.map(({ line, positions }) => (
+        <Polyline
+          key={`corridor-halo-${line.id}`}
+          positions={positions}
+          pathOptions={{ color: '#ffffff', weight: 7, opacity: 0.85 }}
+        />
+      ))}
+      {corridorLineStops.map(({ line, positions }) => (
+        <Polyline
+          key={`corridor-${line.id}`}
+          positions={positions}
+          pathOptions={{ color: line.color, weight: 4, opacity: 0.95 }}
+        >
+          <Tooltip direction="center" sticky opacity={0.95} className="stop-tooltip">
+            {`${line.shortName} — ${line.longName} (réseau de référence)`}
+          </Tooltip>
+        </Polyline>
+      ))}
+      {corridorStops.map((stop) => (
+        <CircleMarker
+          key={`corridor-stop-${stop.id}`}
+          center={[stop.lat, stop.lon]}
+          radius={6}
+          pathOptions={{
+            color: '#ffffff',
+            weight: 2,
+            fillColor: stop.id.startsWith('ter') ? '#2f6fb3' : '#0f8f66',
+            fillOpacity: 0.95,
+          }}
+          eventHandlers={onSelectCorridorStop ? { click: () => onSelectCorridorStop(stop) } : undefined}
+        >
+          <Tooltip direction="top" offset={[0, -6]} opacity={1} className="stop-tooltip">
+            {`${stop.name}${stop.note ? ` · ${stop.note}` : ''} (référence)`}
+          </Tooltip>
+        </CircleMarker>
+      ))}
 
       {coverage && showCoverage && (
         <Rectangle

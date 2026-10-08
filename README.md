@@ -29,6 +29,30 @@ Le calcul d'itinéraire ne répond que lorsqu'un snapshot est réellement publi�
 
 Aucune décision n'est anonyme : approuver, refuser, annuler ou publier exige un compte local dont le secret n'est stocké que haché (scrypt + sel, fichier `0600`). Les comptes génériques (`admin`, `ci`, `anonymous`, …) sont refusés, la personne qui approuve une version ne peut pas la publier elle-même, une révocation invalide les jetons et sessions déjà émis, et chaque décision enregistre l'acteur, la méthode d'authentification et l'horodatage.
 
+## Réseau de référence TER/BRT, assistant et calculateur (ajouts 2026-10)
+
+Une couche **réseau de référence** distincte du pipeline de publication a été ajoutée, sans modifier l’UI existante :
+
+- **Cadrage de la carte** : la carte englobe désormais toute la région utile (Almadies → Rufisque/Bargny, jusqu’aux terminus Diamniadio et Guédiawaye) via `fitBounds` au chargement.
+- **Tracés TER et BRT** : les 13 gares du TER (liste Sen TER, positions OpenStreetMap/SETER) et les 23 stations du BRT (liste CETUD/SunuBRT, positions de référence **approximatives**) sont tracées en superposition du fond OpenStreetMap, avec arrêts cliquables. Ce sont des géométries de référence simplifiées, explicitement étiquetées — pas un flux opérateur validé. Les interrupteurs de couche TER/BRT pilotent cet affichage.
+- **Assistant IA** : bouton flottant en bas à gauche de la carte. Moteur local à règles (aucun service externe) branché sur le réseau de référence, le calculateur et l’état réel des API : listes d’arrêts, desserte d’un lieu, fréquences annoncées, itinéraires, tarif de référence, état des perturbations (aucune alerte inventée).
+- **Calculateur de correspondances** : dans l’onglet Itinéraire, un module calcule le meilleur enchaînement TER + BRT entre deux points (arrêts de référence ou points de la carte), avec temps de marche, d’attente (demi-cadence annoncée) et de parcours estimés. DDD/AFTU/TATA ne sont pas inventés : le calculateur le dit.
+- **Onglet Explorer** : bloc « Réseau de référence » filtrable (TER/BRT), à côté des données publiées.
+- **Onglet Alertes** : canaux officiels d’information (Sen TER, SunuBRT, CETUD) affichés tant qu’aucun flux d’alertes vérifiable n’est connecté.
+
+Un jeu **GTFS de référence** (`npm run reference:gtfs`, générateur `tools/build_reference_gtfs.py`) peut être stagé pour démontrer le pipeline de bout en bout (`npm run stage:gtfs …`). Sa fiche de staging porte une provenance et une confiance fidèles (`source_type UNKNOWN`, confiance 0,4) : **le script ne publie rien** — l’approbation exige les cinq attestations humaines (identité de la source vérifiée auprès de l’éditeur, droits de réutilisation, opérateur confirmé, service exploité, fraîcheur confirmée) puis une publication séparée par un compte distinct.
+
+Nouveaux fichiers :
+
+```text
+src/domain/corridors.ts        données de référence TER/BRT + provenance déclarée
+src/domain/planner.ts          calculateur multimodal (Dijkstra, réseau de référence)
+src/domain/assistant.ts        cerveau local de l’assistant (règles, zéro invention)
+src/components/AssistantChat   widget de chat flottant (bas gauche de la carte)
+src/components/MultimodalPlanner  calculatrice de correspondances (onglet Itinéraire)
+tools/build_reference_gtfs.py  générateur du GTFS de référence (démonstration pipeline)
+```
+
 ## Démarrer
 
 Prérequis : Node.js 22.12+ et npm. Python 3.10+ est requis uniquement pour l’auditeur GTFS et ses tests.

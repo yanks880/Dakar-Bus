@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:data": "python3 -m unittest discover -s tests -v",
     "test:all": "npm test && npm run test:data",
+    "reference:gtfs": "python3 tools/build_reference_gtfs.py --out data/reference/dakar-bus-reference.zip",
     "validate:gtfs": "python3 scripts/validate_gtfs.py",
     "stage:gtfs": "python3 scripts/stage_gtfs.py",
     "catalog:gtfs": "python3 scripts/catalog_gtfs.py",

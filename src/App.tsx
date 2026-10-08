@@ -30,6 +30,17 @@ import {
   X,
 } from 'lucide-react'
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
+import { AssistantChat } from './components/AssistantChat'
+import { MultimodalPlanner } from './components/MultimodalPlanner'
+import {
+  BRT_STOPS,
+  CORRIDOR_LINES,
+  CORRIDOR_NETWORKS,
+  DAKAR_REGION_BOUNDS,
+  TER_STOPS,
+  linesServingStop,
+  type CorridorStop,
+} from './domain/corridors'
 import {
   declaredClockLabel,
   formatJourneyDate,
@@ -244,6 +255,23 @@ function App() {
   const network = published.network
   const dataAvailable = network !== null && isCurrentSnapshot(network)
   const mappablePublishedStops = dataAvailable ? nearby.stops : []
+
+  // Réseau de référence TER/BRT : tracés et arrêts superposés au fond OSM,
+  // pilotés par les interrupteurs de couche existants.
+  const visibleCorridorLines = CORRIDOR_LINES.filter((line) => networkLayers[line.network])
+  const visibleCorridorStops: CorridorStop[] = [
+    ...(networkLayers.ter ? TER_STOPS : []),
+    ...(networkLayers.brt ? BRT_STOPS : []),
+  ]
+
+  function handleSelectCorridorStop(stop: CorridorStop) {
+    setRecenterTo({ lat: stop.lat, lng: stop.lon })
+    const lines = linesServingStop(stop.id)
+    announce(
+      `${stop.name} — ${CORRIDOR_NETWORKS[stop.id.startsWith('ter') ? 'ter' : 'brt'].label} (réseau de référence)` +
+        (lines.length > 0 ? ` · ligne${lines.length > 1 ? 's' : ''} ${lines.map((line) => line.shortName).join(', ')}` : ''),
+    )
+  }
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
 
@@ -630,6 +658,10 @@ function App() {
           coverage={dataAvailable ? network?.snapshot?.bounds ?? null : null}
           showCoverage={showCoverage}
           onSelectStop={(stop) => void openStop(stop)}
+          initialBounds={DAKAR_REGION_BOUNDS}
+          corridorLines={visibleCorridorLines}
+          corridorStops={visibleCorridorStops}
+          onSelectCorridorStop={handleSelectCorridorStop}
         />
 
         <div className="map-heading-overlay">
@@ -675,14 +707,18 @@ function App() {
                 <div><span className="eyebrow">AFFICHAGE</span><strong>Couches du réseau</strong></div>
                 <button type="button" className="icon-button popover-close" aria-label="Fermer les couches" onClick={() => setLayersOpen(false)}><X size={17} /></button>
               </div>
-              <p className="popover-note">Les catégories restent vides tant qu’une source fiable n’est pas intégrée.</p>
+              <p className="popover-note">TER et BRT affichent le réseau de référence (tracés et arrêts de source publique) ; les autres catégories restent vides tant qu’une source fiable n’est pas intégrée.</p>
               <div className="layer-options">
                 {NETWORK_SOURCES.map((network) => (
                   <label className="layer-option" key={network.id}>
                     <input type="checkbox" checked={networkLayers[network.id]} onChange={() => toggleNetwork(network.id)} />
                     <span className={`layer-icon layer-icon-${network.id}`}><NetworkIcon id={network.id} size={16} /></span>
                     <span className="layer-label">{network.label}</span>
-                    <span className="layer-empty">sans données</span>
+                    <span className="layer-empty">
+                      {network.id === 'ter' ? `${TER_STOPS.length} gares (référence)`
+                        : network.id === 'brt' ? `${BRT_STOPS.length} stations (référence)`
+                        : 'sans données'}
+                    </span>
                   </label>
                 ))}
               </div>
@@ -710,11 +746,11 @@ function App() {
         <div className={`map-transport-note${dataAvailable ? ' is-published' : ''}`}>
           <div className="transport-note-icon"><ShieldCheck size={17} /></div>
           <div>
-            <strong>{dataAvailable ? 'Arrêts du snapshot publié affichés' : 'La carte ne montre que le territoire'}</strong>
+            <strong>{dataAvailable ? 'Arrêts du snapshot publié affichés' : 'Territoire + réseau de référence TER/BRT'}</strong>
             <span>
               {dataAvailable
                 ? network?.message ?? 'Horaires théoriques déclarés dans le flux ; aucune position de véhicule.'
-                : 'Les lignes et arrêts apparaîtront après validation des sources.'}
+                : 'Tracés de référence TER (13 gares) et BRT (23 stations) issus de sources publiques — pas un flux opérateur validé. Le réseau publié s’affichera après validation des sources.'}
             </span>
           </div>
         </div>
@@ -737,6 +773,9 @@ function App() {
         <div className="map-attribution-note">
           <span className="map-attribution-dot" /> Fond cartographique OpenStreetMap
         </div>
+
+        {/* Assistant IA : bouton flottant en bas à gauche de la carte. */}
+        <AssistantChat context={{ publishedAvailable: dataAvailable, adminOnline: governance.status === 'ready' }} />
       </section>
 
       <aside className="sidebar" aria-label="Dakar Bus">
@@ -832,18 +871,22 @@ function App() {
           )}
 
           {activeTab === 'route' && (
-            <RoutePanel
-              routePoints={routePoints}
-              pickingPoint={pickingPoint}
-              routeAttempted={routeAttempted}
-              onSelectPoint={startPointSelection}
-              onUseLocation={() => requestLocation('origin')}
-              onSwap={swapRoutePoints}
-              onClear={() => { setRoutePoints({}); setRouteAttempted(false); setPickingPoint(null); setJourney(IDLE_JOURNEY) }}
-              onSubmit={submitRoute}
-              dataAvailable={dataAvailable}
-              journey={journey}
-            />
+            <>
+              <RoutePanel
+                routePoints={routePoints}
+                pickingPoint={pickingPoint}
+                routeAttempted={routeAttempted}
+                onSelectPoint={startPointSelection}
+                onUseLocation={() => requestLocation('origin')}
+                onSwap={swapRoutePoints}
+                onClear={() => { setRoutePoints({}); setRouteAttempted(false); setPickingPoint(null); setJourney(IDLE_JOURNEY) }}
+                onSubmit={submitRoute}
+                dataAvailable={dataAvailable}
+                journey={journey}
+              />
+              {/* Ajout : calculatrice de correspondances multimodale (réseau de référence). */}
+              <MultimodalPlanner mapOrigin={routePoints.origin} mapDestination={routePoints.destination} />
+            </>
           )}
 
           {activeTab === 'explore' && (
@@ -860,6 +903,7 @@ function App() {
               search={stopSearch}
               onSelectStop={(stop) => void openStop(stop)}
               onRetrySearch={() => void runStopSearch(stopSearch.query)}
+              onFocusReferenceStop={(stop) => { setActiveTab('map'); handleSelectCorridorStop(stop) }}
             />
           )}
 
@@ -1389,6 +1433,7 @@ function ExplorePanel({
   search,
   onSelectStop,
   onRetrySearch,
+  onFocusReferenceStop,
 }: {
   filter: NetworkId | 'all'
   query: string
@@ -1402,6 +1447,7 @@ function ExplorePanel({
   search: StopSearchState
   onSelectStop: (stop: PublishedStop) => void
   onRetrySearch: () => void
+  onFocusReferenceStop: (stop: CorridorStop) => void
 }) {
   const filters: { id: NetworkId | 'all'; label: string }[] = [
     { id: 'all', label: 'Tout' },
@@ -1496,8 +1542,42 @@ function ExplorePanel({
           <span className="nearby-empty-icon"><Database size={18} /></span>
           <div>
             <strong>Aucune donnée publiée à explorer</strong>
-            <span>Les arrêts et lignes apparaîtront ici dès qu’un snapshot vérifié sera publié via <code>npm run publish:gtfs</code>.</span>
+            <span>Les arrêts et lignes publiés apparaîtront ici dès qu’un snapshot vérifié sera publié via <code>npm run publish:gtfs</code>. En attendant, le réseau de référence ci-dessous reste consultable.</span>
           </div>
+        </div>
+      )}
+
+      {(filter === 'all' || filter === 'ter' || filter === 'brt') && (
+        <div className="reference-network-block">
+          <div className="source-list-heading">
+            <span>RÉSEAU DE RÉFÉRENCE {filter === 'all' ? '· TER + BRT' : `· ${filter.toUpperCase()}`}</span>
+            <span className="source-count">
+              {(filter === 'ter' ? TER_STOPS : filter === 'brt' ? BRT_STOPS : [...TER_STOPS, ...BRT_STOPS]).length} arrêts
+            </span>
+          </div>
+          <p className="reference-provenance">
+            {(filter === 'ter' || filter === 'all') && CORRIDOR_NETWORKS.ter.provenance}{' '}
+            {(filter === 'brt' || filter === 'all') && CORRIDOR_NETWORKS.brt.provenance}
+          </p>
+          <ul className="reference-stop-list">
+            {(filter === 'ter' ? TER_STOPS : filter === 'brt' ? BRT_STOPS : [...TER_STOPS, ...BRT_STOPS]).map((stop) => {
+              const serving = linesServingStop(stop.id)
+              const isTer = stop.id.startsWith('ter')
+              const Icon = isTer ? TrainFront : BusFront
+              return (
+                <li key={stop.id}>
+                  <button type="button" className="published-stop-row" onClick={() => onFocusReferenceStop(stop)}>
+                    <span className={`stop-row-icon reference-icon-${isTer ? 'ter' : 'brt'}`}><Icon size={15} /></span>
+                    <span className="stop-row-copy">
+                      <strong>{stop.name}</strong>
+                      <small>{serving.map((line) => line.shortName).join(', ')}{stop.note ? ` · ${stop.note}` : ''} · référence</small>
+                    </span>
+                    <ArrowRight size={14} />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
 
@@ -1571,6 +1651,29 @@ function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleIn
         {infoOpen && (
           <div className="alert-explainer"><ShieldCheck size={15} /><span>Chaque alerte devra inclure une source, un opérateur, une période de validité et l’heure de vérification.</span></div>
         )}
+      </div>
+
+      <div className="alert-channels-card">
+        <span className="eyebrow">CANAUX OFFICIELS D’INFORMATION VOYAGEUR</span>
+        <p className="alert-channels-intro">
+          En attendant la connexion d’un flux d’alertes, voici les canaux publiés par les autorités organisatrices et exploitants.
+          Cette application ne relaie aucune perturbation qu’elle ne peut pas vérifier.
+        </p>
+        <ul className="alert-channels-list">
+          <li>
+            <strong>TER (Sen TER / SETER)</strong>
+            <span>sentersa.sn — plan de transport, horaires et informations voyageurs ; centre d’appels SETER.</span>
+          </li>
+          <li>
+            <strong>BRT (Dakar Mobilité / SunuBRT)</strong>
+            <span>sunubrt.sn — communiqués de service et fermetures de stations ; annonces CETUD.</span>
+          </li>
+          <li>
+            <strong>CETUD</strong>
+            <span>cetud.sn — autorité organisatrice : projets, perturbations majeures et communiqués officiels.</span>
+          </li>
+        </ul>
+        <p className="alert-channels-note"><Info size={13} /> Relier l’un de ces canaux exige une source exploitable (flux ou API), une vérification horodatée et une période de validité — les mêmes règles que pour toute donnée publiée ici.</p>
       </div>
 
       <div className="alert-severity-legend">
