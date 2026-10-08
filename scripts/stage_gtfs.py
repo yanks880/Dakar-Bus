@@ -212,7 +212,7 @@ def stage_gtfs_archive(
         "schema_version": "1.0",
         "dataset_id": dataset_id,
         "dataset_version": normalized["dataset_version"],
-        "ingested_at": now_utc.isoformat(timespec="seconds"),
+        "ingested_at": now_utc.isoformat(),
         "operator": normalized["operator"],
         "source": normalized["source"],
         "source_type": normalized["source_type"],

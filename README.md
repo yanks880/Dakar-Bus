@@ -56,12 +56,14 @@ src/
 scripts/
   validate_gtfs.py       validateur GTFS Static en lecture seule
   stage_gtfs.py          staging versionné, provenance à revoir
+  catalog_gtfs.py        catalogue local en lecture seule
 public/
   manifest.webmanifest    métadonnées PWA
   sw.js                  cache de l'enveloppe applicative, sans données de transport
 tests/
   test_validate_gtfs.py   tests de validation de flux GTFS
   test_stage_gtfs.py      tests de versionnage et de staging
+  test_catalog_gtfs.py    tests d’intégrité et de comparaison catalogue
 ```
 
 ## Valider un flux GTFS
@@ -99,6 +101,18 @@ npm run stage:gtfs -- \
 
 Le staging conserve l’archive originale, son SHA-256, les comptages, le rapport de validation et un manifeste versionné. Une version identique n’est pas écrasée. **Le statut reste `PENDING_REVIEW` et `NOT_PUBLISHED`**, même si l’importateur déclare le service actif : il faut encore vérifier la source, les droits, l’opérateur et l’état opérationnel.
 
+## Catalogue local des versions
+
+Le catalogue est en lecture seule : il revérifie le checksum de chaque archive, recalcule la fraîcheur effective à la date de consultation et compare les comptages GTFS entre deux versions.
+
+```bash
+npm run catalog:gtfs -- list
+npm run catalog:gtfs -- show <dataset_id>
+npm run catalog:gtfs -- compare <ancienne_version> <nouvelle_version>
+```
+
+`compare` compare les comptages et métadonnées, pas les lignes une à une ni les géométries. Le catalogue ne modifie jamais l’état de revue et ne publie aucune version.
+
 ## Gouvernance de l'information
 
 - `NETWORK_SOURCES` décrit des connecteurs à mettre en place, pas des preuves de service.
@@ -117,7 +131,7 @@ Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.or
 ## Prochaines étapes de la feuille de route
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.
-2. Relier le staging local à un catalogue d’administration avec revue humaine, comparaison de versions et procédure de retour arrière.
+2. Construire une console d’administration authentifiée autour du staging/catalogue CLI, avec revue humaine, approbation traçable et retour arrière.
 3. Normaliser les tables GTFS vers un stockage de données, puis alimenter les couches carte uniquement après validation de provenance et du statut opérationnel.
 4. Ajouter l'API et un moteur de recherche géographique/routage multimodal sur des données réelles.
 5. Connecter les alertes et un flux temps réel uniquement après obtention d'une source exploitable.
