@@ -13,6 +13,7 @@ Cette première fondation fournit :
 - un catalogue de sources prévu pour TER, BRT, Dakar Dem Dikk, AFTU et TATA, sans prétendre qu'un jeu de données est déjà intégré ;
 - une PWA installable et un cache hors connexion limité à l'enveloppe de l'application ;
 - un auditeur GTFS Static en lecture seule, sans extraction de l’archive, avec rapport JSON, contrôle des tables essentielles, relations, coordonnées, horaires, calendriers, tracés, fréquences et transferts ;
+- un outil de staging versionné qui conserve le ZIP original, son checksum, le manifeste de provenance déclaré, les comptages et le rapport de validation, sans publication automatique ;
 - des règles testées pour le statut des horaires, le label LIVE, les décomptes en minutes et la publication d'objets actifs.
 
 **Aucun flux GTFS, GTFS-RT, horaire, arrêt, ligne, tracé, alerte ou donnée opérateur n'est actuellement fourni par ce dépôt.** La carte de fond représente uniquement la géographie OpenStreetMap. Le calcul d'itinéraire reste donc volontairement indisponible et l'interface l'explique au lieu de fabriquer un résultat. Un clic sur la carte choisit un point géographique, mais ne le géocode pas en nom de lieu.
@@ -54,11 +55,13 @@ src/
   domain/truth.test.ts    tests de non-invention
 scripts/
   validate_gtfs.py       validateur GTFS Static en lecture seule
+  stage_gtfs.py          staging versionné, provenance à revoir
 public/
   manifest.webmanifest    métadonnées PWA
   sw.js                  cache de l'enveloppe applicative, sans données de transport
 tests/
   test_validate_gtfs.py   tests de validation de flux GTFS
+  test_stage_gtfs.py      tests de versionnage et de staging
 ```
 
 ## Valider un flux GTFS
@@ -72,6 +75,29 @@ npm run validate:gtfs -- ./chemin/vers/feed.zip
 La commande écrit un rapport JSON sur la sortie standard et retourne un code non nul si la structure ou les références contrôlées sont invalides. Elle ne décompresse pas l’archive sur disque et impose par défaut des limites de taille et de nombre de lignes. Les tables GTFS facultatives non encore contrôlées sont signalées comme avertissements.
 
 `structure_valid: true` signifie uniquement que les contrôles structurels implémentés sont passés. Le rapport garde toujours `production_ready: false` : la légalité de réutilisation, l’identité de l’opérateur, le statut réellement exploité, la fraîcheur métier et la validation éditoriale restent à confirmer séparément.
+
+## Stager une version avec provenance
+
+Après validation, le flux peut être copié dans un répertoire de staging local et ignoré par Git. Toutes les métadonnées de provenance sont requises ; elles sont enregistrées comme **déclarées par l’importateur**, pas comme vérifiées par Dakar Bus.
+
+```bash
+npm run stage:gtfs -- \
+  --archive "$GTFS_ARCHIVE" \
+  --output-dir ./data/staging \
+  --source "$GTFS_SOURCE_NAME" \
+  --source-type "$GTFS_SOURCE_TYPE" \
+  --source-url "$GTFS_SOURCE_URL" \
+  --operator "$GTFS_OPERATOR" \
+  --dataset-version "$GTFS_DATASET_VERSION" \
+  --date-source "$GTFS_SOURCE_DATE" \
+  --verified-at "$GTFS_VERIFIED_AT" \
+  --valid-from "$GTFS_VALID_FROM" \
+  --valid-until "$GTFS_VALID_UNTIL" \
+  --confidence "$GTFS_CONFIDENCE" \
+  --service-status UNKNOWN
+```
+
+Le staging conserve l’archive originale, son SHA-256, les comptages, le rapport de validation et un manifeste versionné. Une version identique n’est pas écrasée. **Le statut reste `PENDING_REVIEW` et `NOT_PUBLISHED`**, même si l’importateur déclare le service actif : il faut encore vérifier la source, les droits, l’opérateur et l’état opérationnel.
 
 ## Gouvernance de l'information
 
@@ -91,8 +117,8 @@ Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.or
 ## Prochaines étapes de la feuille de route
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.
-2. Intégrer l’auditeur GTFS à un pipeline d’import versionné avec catalogue de provenance et procédure de revue humaine.
-3. Alimenter les couches carte avec des géométries et objets validés ; distinguer actif, planifié, suspendu et inconnu.
+2. Relier le staging local à un catalogue d’administration avec revue humaine, comparaison de versions et procédure de retour arrière.
+3. Normaliser les tables GTFS vers un stockage de données, puis alimenter les couches carte uniquement après validation de provenance et du statut opérationnel.
 4. Ajouter l'API et un moteur de recherche géographique/routage multimodal sur des données réelles.
 5. Connecter les alertes et un flux temps réel uniquement après obtention d'une source exploitable.
 6. Compléter les tests d'intégration, E2E, sécurité, monitoring, sauvegardes et administration.

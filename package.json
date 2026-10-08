@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:data": "python3 -m unittest discover -s tests -v",
     "test:all": "npm test && npm run test:data",
-    "validate:gtfs": "python3 scripts/validate_gtfs.py"
+    "validate:gtfs": "python3 scripts/validate_gtfs.py",
+    "stage:gtfs": "python3 scripts/stage_gtfs.py"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
