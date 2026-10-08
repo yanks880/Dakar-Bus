@@ -231,13 +231,13 @@ describe('Dakar Bus experience safety', () => {
     expect(screen.getByText(/aucun arrêt, horaire ou tracé n’est simulé/i)).toBeTruthy()
     expect(screen.getByText(/^en attente$/i)).toBeTruthy()
     expect(screen.queryByText(/\bLIVE\b/i)).toBeNull()
-    expect(screen.queryByText(/0 min/i)).toBeNull()
+    expect(screen.queryByText(/^0 min$/i)).toBeNull()
   })
 
-  it('lets the user select map points but refuses to invent an itinerary without GTFS', async () => {
+  it('does not invent a reference route when the selected points are identical', async () => {
     stubApi([
       { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
-      { match: '/api/journeys', respond: () => errorResponse(409, 'NOT_PUBLISHED') },
+      { match: '/api/journeys', respond: () => errorResponse(404, 'NOT_PUBLISHED') },
     ])
     render(<App />)
     await openReadApiState()
@@ -246,19 +246,34 @@ describe('Dakar Bus experience safety', () => {
     const pointButtons = screen.getAllByRole('button', { name: /choisir un point sur la carte/i })
     fireEvent.click(pointButtons[0])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-
     fireEvent.click(screen.getByRole('button', { name: /choisir un point sur la carte/i }))
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
 
-    const searchRoute = screen.getByRole('button', { name: /rechercher un itinéraire/i })
-    expect((searchRoute as HTMLButtonElement).disabled).toBe(false)
-    fireEvent.click(searchRoute)
-
-    expect(await screen.findByText(/itinéraire impossible pour le moment/i)).toBeTruthy()
-    // Le message apparaît aussi dans la région d’annonce : on compte au lieu d’exiger un seul nœud.
+    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    expect(await screen.findByText(/aucun trajet ter\/brt de référence trouvé/i)).toBeTruthy()
     expect(screen.getAllByText(/aucun jeu de transport publié/i).length).toBeGreaterThan(0)
-    expect(screen.getByText(/aucun trajet n’est inventé/i)).toBeTruthy()
-    expect(screen.queryByText(/^\d+ min$/)).toBeNull()
+    expect(screen.getAllByText(/départ et la destination sont identiques/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/^≈ \d+ min$/)).toBeNull()
+  })
+
+  it('uses the local TER/BRT planner on GitHub Pages when no journey API server exists', async () => {
+    stubApi([
+      { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
+      { match: '/api/journeys', respond: () => ({ ok: false, status: 404, json: async () => { throw new Error('Pages 404 HTML') } }) },
+    ])
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    fireEvent.change(screen.getByLabelText(/départ parmi les arrêts connus/i), { target: { value: 'ref:brt-petersen' } })
+    fireEvent.change(screen.getByLabelText(/destination parmi les arrêts connus/i), { target: { value: 'ref:ter-mbao' } })
+    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+
+    expect(await screen.findByRole('region', { name: 'Estimation de trajet TER/BRT' })).toBeTruthy()
+    expect(screen.getByText(/serveur d’horaires est indisponible/i)).toBeTruthy()
+    expect(screen.getByText(/≈ \d+ min/)).toBeTruthy()
+    const estimate = screen.getByRole('region', { name: 'Estimation de trajet TER/BRT' })
+    expect(estimate.textContent).toContain('Petersen')
+    expect(estimate.textContent).toContain('Keur Mbaye Fall')
+    expect(estimate.textContent).toMatch(/ce n’est ni un horaire, ni du temps réel/i)
   })
 
   it('says the read API is unreachable instead of falling back to fabricated data', async () => {
@@ -362,17 +377,28 @@ describe('isolation de la vue carte', () => {
 })
 
 describe('structure en quatre piliers', () => {
-  it('affiche les fiches réseau sans les faire passer pour des horaires', () => {
+  it('garde Explorer compact et déplace les détails techniques dans Paramètres', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
 
-    expect(screen.getByRole('region', { name: 'Fréquences et services de référence' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Réseaux de référence' })).toBeTruthy()
+    expect(screen.getByText('10–20 min')).toBeTruthy()
     expect(screen.getByText('6 min')).toBeTruthy()
+    expect(screen.getAllByText('Fréquence de référence')).toHaveLength(2)
+    expect(screen.getByText('Référence catalogue')).toBeTruthy()
+    expect(document.querySelectorAll('.network-summary-dot.is-referenced')).toHaveLength(5)
+    expect(screen.queryByText(/prochain passage|temps réel/i)).toBeNull()
+    expect(screen.queryByText(/vérification en ligne non documentée/i)).toBeNull()
+    expect(screen.queryByText(/validité calendaire/i)).toBeNull()
+    expect(screen.queryByText(/38 lignes · 400 bus/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    fireEvent.click(screen.getByText(/^état des données$/i))
+    expect(screen.getByRole('region', { name: 'Fréquences et services de référence' })).toBeTruthy()
     expect(screen.getByText(/lun\.–sam\. \(hors jours fériés\) · 05:30–21:00 · 10 min/)).toBeTruthy()
     expect(screen.getByText(/38 lignes · 400 bus/)).toBeTruthy()
     expect(screen.getByText(/72 lignes · 2\s?300 bus · 14 GIE/)).toBeTruthy()
     expect(screen.getAllByText(/vérification en ligne non documentée/).length).toBeGreaterThanOrEqual(4)
-    expect(screen.getByText(/pas temps réel/)).toBeTruthy()
     expect(screen.getByRole('link', { name: 'TER / SETER' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'CETUD / SunuBRT' })).toBeTruthy()
   })
@@ -479,7 +505,7 @@ describe('published snapshot in the app', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
     expect(screen.getByPlaceholderText('On va où ?')).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
-    fireEvent.click(screen.getByText(/^réseaux et données$/i))
+    fireEvent.click(screen.getByText(/^état des données$/i))
     expect(await screen.findByText(/^L1 · Démo — Plateau ↔ Yoff$/)).toBeTruthy()
     expect(screen.getByText(/démo — médina ↔ guédiawaye/i)).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
@@ -686,7 +712,7 @@ describe('published snapshot in the app', () => {
     expect(screen.getByText(/^période dépassée$/i)).toBeTruthy()
     expect(screen.queryByText(/démo — plateau sud/i)).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
-    fireEvent.click(screen.getByText(/^réseaux et données$/i))
+    fireEvent.click(screen.getByText(/^état des données$/i))
     expect(screen.getByText(/aucune donnée publiée à explorer/i)).toBeTruthy()
   })
 
@@ -722,7 +748,7 @@ describe('published snapshot in the app', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
     expect(screen.getByTestId('mapped-stops').textContent).toBe('')
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
-    fireEvent.click(screen.getByText(/^réseaux et données$/i))
+    fireEvent.click(screen.getByText(/^état des données$/i))
     expect(screen.getByText(/aucune donnée publiée à explorer/i)).toBeTruthy()
   })
 

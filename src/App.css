@@ -838,6 +838,11 @@ button:disabled { cursor: not-allowed; }
 .journey-results { display: grid; margin-top: 16px; gap: 10px; }
 .journey-results-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .journey-count-chip { padding: 3px 9px; border-radius: 999px; background: #e8f4ec; color: #126e4b; font-size: 9px; font-weight: 700; }
+.reference-journey-notice { margin: 0; padding: 8px 10px; border: 1px solid #dfece3; border-radius: 10px; background: #f6fbf8; color: #587164; font-size: 10px; line-height: 1.5; }
+.reference-journey-points { display: flex; align-items: center; margin: 0; padding: 8px 10px; border: 1px solid #e5ebe6; border-radius: 10px; background: #fff; color: #24483a; font-size: 11px; gap: 7px; }
+.reference-journey-points strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-journey-points svg { flex: 0 0 auto; color: #82948a; }
+.reference-journey-results .planner-summary { margin-top: 0; }
 .journey-later-day { margin: 0; padding: 8px 10px; border: 1px solid #f0e7d7; border-radius: 10px; background: #fcfaf6; color: #7b5d31; font-size: 9px; line-height: 1.5; }
 .journey-list { display: grid; margin: 0; padding: 0; list-style: none; gap: 9px; }
 .journey-card { display: grid; padding: 11px; border: 1px solid #e5ebe6; border-radius: 13px; background: #fff; gap: 9px; }
@@ -1071,6 +1076,16 @@ button:disabled { cursor: not-allowed; }
 .explore-nearby .stop-row-copy strong { font-size: 14px; }
 .explore-stop-distance { flex: 0 0 auto; color: #718379; font-size: 12px; }
 .explore-nearby > p { margin: 0; color: var(--guide-copy); font-size: 14px; }
+.network-summary-section { display: grid; gap: 6px; }
+.network-summary-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.network-summary-heading strong { color: #254338; font-size: 15px; font-weight: 780; }
+.network-summary-list { display: grid; margin: 0; padding: 0; overflow: hidden; border: 1px solid #e3ebe5; border-radius: 13px; background: #fff; list-style: none; }
+.network-summary-list li { display: grid; min-height: 38px; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 0 11px; border-bottom: 1px solid #eef2ef; }
+.network-summary-list li:last-child { border-bottom: 0; }
+.network-summary-dot { width: 8px; height: 8px; border-radius: 50%; background: #b9c5bd; }
+.network-summary-dot.is-referenced { background: #149467; box-shadow: 0 0 0 3px rgba(20, 148, 103, 0.1); }
+.network-summary-name { color: #284638; font-size: 13px; font-weight: 760; }
+.network-summary-list li > strong { color: #0c6749; font-size: 13px; font-weight: 760; text-align: right; }
 .network-reference-cards-section { display: grid; gap: 8px; }
 .network-reference-cards-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .network-reference-cards-heading strong { color: #254338; font-size: 14px; font-weight: 780; }
