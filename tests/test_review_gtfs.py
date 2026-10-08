@@ -34,6 +34,7 @@ from scripts.review_ledger import (
 )
 from scripts.stage_gtfs import IngestMetadata, stage_gtfs_archive
 from test_stage_gtfs import NOW, VALID_METADATA, VALID_TABLES
+from auth_helpers import actor_token, proof
 
 
 FULL_ATTESTATIONS: dict[str, dict[str, str | None]] = {
@@ -56,7 +57,7 @@ def attestations_without(*items: str) -> dict[str, dict[str, str | None]]:
 def _concurrent_approver(root: str, dataset_id: str, index: int, queue: Queue[tuple[str, int]]) -> None:
     """Child process: try to approve the same dataset as its siblings."""
     try:
-        approve_dataset(root, dataset_id, reviewer_id=f"relecteur.test{index}", attestations=FULL_ATTESTATIONS, now=NOW)
+        approve_dataset(root, dataset_id, proof=proof(f"relecteur.test{index}", "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
         queue.put(("ok", index))
     except ReviewError as error:
         queue.put((error.code, index))
@@ -102,7 +103,7 @@ class GTFSReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
             result = approve_dataset(
-                root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW
+                root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW
             )
 
             self.assertTrue(result["recorded"])
@@ -132,7 +133,7 @@ class GTFSReviewTests(unittest.TestCase):
                 approve_dataset(
                     root,
                     dataset_id,
-                    reviewer_id=REVIEWER,
+                    proof=proof(REVIEWER, "reviewer"),
                     attestations=attestations_without("reuse_rights", "freshness_confirmed"),
                     now=NOW,
                 )
@@ -147,7 +148,7 @@ class GTFSReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory, source_type="UNKNOWN", operator="UNKNOWN")
             with self.assertRaises(ReviewError) as caught:
-                approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertIn("Le type de source déclaré est UNKNOWN.", caught.exception.blockers)
             self.assertIn("L’opérateur n’est pas confirmé.", caught.exception.blockers)
 
@@ -155,14 +156,14 @@ class GTFSReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root, planned = self.stage_active_feed(directory, version="review-planned", service_status="PLANNED")
             with self.assertRaises(ReviewError) as caught:
-                approve_dataset(root, planned, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                approve_dataset(root, planned, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertIn("Le statut de service déclaré n’est pas ACTIVE.", caught.exception.blockers)
 
             root_expired, expired = self.stage_active_feed(
                 directory, version="review-expired", valid_until="2026-10-07T23:59:59Z"
             )
             with self.assertRaises(ReviewError) as caught_expired:
-                approve_dataset(root_expired, expired, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                approve_dataset(root_expired, expired, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertTrue(
                 any("STALE" in blocker for blocker in caught_expired.exception.blockers),
                 caught_expired.exception.blockers,
@@ -174,7 +175,7 @@ class GTFSReviewTests(unittest.TestCase):
             with (root / dataset_id / "feed.zip").open("ab") as archive:
                 archive.write(b"tampered")
             with self.assertRaises(ReviewError) as caught:
-                approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertEqual(caught.exception.code, "DATASET_INTEGRITY_INVALID")
 
     def test_generic_reviewer_accounts_are_refused(self) -> None:
@@ -186,12 +187,12 @@ class GTFSReviewTests(unittest.TestCase):
     def test_revert_is_an_appended_rollback_that_keeps_the_original_decision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
-            approval = approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approval = approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
 
             revert = revert_decision(
                 root,
                 dataset_id,
-                reviewer_id="ousmane.fall",
+                proof=proof("ousmane.fall", "reviewer"),
                 entry_id=str(approval["entry_id"]),
                 reason="Licence annoncée mais non confirmée par l’éditeur.",
                 now=NOW,
@@ -206,7 +207,7 @@ class GTFSReviewTests(unittest.TestCase):
 
             # A second approval is allowed after a revert and stays unpublished.
             second = approve_dataset(
-                root, dataset_id, reviewer_id="ousmane.fall", attestations=FULL_ATTESTATIONS, now=NOW
+                root, dataset_id, proof=proof("ousmane.fall", "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW
             )
             self.assertEqual(second["entry_id"], "rv-000003")
             self.assertEqual(second["publication_status"], "NOT_PUBLISHED")
@@ -216,14 +217,14 @@ class GTFSReviewTests(unittest.TestCase):
             root, dataset_id = self.stage_active_feed(directory)
             with self.assertRaises(ReviewError) as caught:
                 revert_decision(
-                    root, dataset_id, reviewer_id=REVIEWER, entry_id="rv-000001", reason="Aucune décision encore active.", now=NOW
+                    root, dataset_id, proof=proof(REVIEWER, "reviewer"), entry_id="rv-000001", reason="Aucune décision encore active.", now=NOW
                 )
             self.assertEqual(caught.exception.code, "NO_ACTIVE_DECISION")
 
-            approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             with self.assertRaises(ReviewError) as mismatch:
                 revert_decision(
-                    root, dataset_id, reviewer_id=REVIEWER, entry_id="rv-000009", reason="Mauvais identifiant de décision.", now=NOW
+                    root, dataset_id, proof=proof(REVIEWER, "reviewer"), entry_id="rv-000009", reason="Mauvais identifiant de décision.", now=NOW
                 )
             self.assertEqual(mismatch.exception.code, "REVERT_TARGET_MISMATCH")
 
@@ -231,27 +232,27 @@ class GTFSReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
             result = reject_dataset(
-                root, dataset_id, reviewer_id=REVIEWER, reason="Source non identifiée auprès de l’éditeur.", now=NOW
+                root, dataset_id, proof=proof(REVIEWER, "reviewer"), reason="Source non identifiée auprès de l’éditeur.", now=NOW
             )
             self.assertEqual(result["review_status"], "REJECTED")
             with self.assertRaises(ReviewError) as caught:
-                reject_dataset(root, dataset_id, reviewer_id=REVIEWER, reason="Refus déjà enregistré pour cette version.", now=NOW)
+                reject_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), reason="Refus déjà enregistré pour cette version.", now=NOW)
             self.assertEqual(caught.exception.code, "ALREADY_REJECTED")
             with self.assertRaises(ReviewError) as approval:
-                approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertEqual(approval.exception.code, "APPROVAL_BLOCKED")
 
     def test_corrupted_ledger_blocks_new_decisions_and_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
-            approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             journal_file = root / dataset_id / "review" / "journal.jsonl"
             tampered = json.loads(journal_file.read_text(encoding="utf-8").strip())
             tampered["note"] = "Approbation modifiée après coup, sans nouvelle signature."
             journal_file.write_text(json.dumps(tampered, ensure_ascii=False) + "\n", encoding="utf-8")
 
             with self.assertRaises(ReviewError) as caught:
-                approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertEqual(caught.exception.code, "JOURNAL_HASH_MISMATCH")
 
             dossier = review_dossier(root, dataset_id, now=NOW)
@@ -292,10 +293,28 @@ class GTFSReviewTests(unittest.TestCase):
     def test_cli_records_an_approval_and_reports_blockers_as_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
+            actors_root = Path(directory) / "actors"
+            reviewer_token = actor_token(actors_root, REVIEWER, "reviewer")
             script = Path(__file__).resolve().parents[1] / "scripts" / "review_gtfs.py"
+            base = [sys.executable, str(script), "--root", str(root), "--actors-root", str(actors_root)]
+
+            # Un nom tapé à la main n’authentifie plus rien : le jeton est obligatoire.
+            without_token = subprocess.run(
+                [*base, "approve", dataset_id], capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(without_token.returncode, 2, without_token.stderr)
+            self.assertIn("--token", without_token.stderr)
+
+            # Un jeton fabriqué est refusé.
+            forged = subprocess.run(
+                [*base, "approve", dataset_id, "--token", "dkr1.faux.jeton"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(forged.returncode, 1, forged.stderr)
+            self.assertEqual(json.loads(forged.stdout)["error"], "TOKEN_INVALID")
 
             blocked = subprocess.run(
-                [sys.executable, str(script), "--root", str(root), "approve", dataset_id, "--reviewer", REVIEWER],
+                [*base, "approve", dataset_id, "--token", reviewer_token],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -306,7 +325,10 @@ class GTFSReviewTests(unittest.TestCase):
             self.assertEqual(blocked_result["error"], "APPROVAL_BLOCKED")
             self.assertEqual(len(blocked_result["blockers"]), len(REQUIRED_ATTESTATIONS))
 
-            command = [sys.executable, str(script), "--root", str(root), "approve", dataset_id, "--reviewer", REVIEWER]
+            # Le jeton peut venir d'un fichier : il ne traîne ni dans l'historique ni dans ps.
+            token_file = Path(directory) / "relecteur.token"
+            token_file.write_text(f"{reviewer_token}\n", encoding="utf-8")
+            command = [*base, "approve", dataset_id, "--token-file", str(token_file)]
             for item, value in FULL_ATTESTATIONS.items():
                 command += ["--attest", f"{item}={value['evidence']}"]
                 if value["reference"]:
@@ -316,12 +338,21 @@ class GTFSReviewTests(unittest.TestCase):
             approved_result = json.loads(approved.stdout)
             self.assertEqual(approved_result["review_status"], "APPROVED")
             self.assertEqual(approved_result["publication_status"], "NOT_PUBLISHED")
+            self.assertEqual(approved_result["reviewer_id"], REVIEWER)
+            self.assertEqual(approved_result["authentication"]["method"], "cli-token")
+            self.assertEqual(approved_result["entry"]["authentication"]["actor_id"], REVIEWER)
+
+            # Un jeton de publieur ne peut pas approuver une version.
+            publisher_token = actor_token(actors_root, "ousmane.fall", "publisher")
+            wrong_role = subprocess.run(
+                [*base, "reject", dataset_id, "--token", publisher_token, "--reason", "Refus avec le mauvais rôle."],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(wrong_role.returncode, 1, wrong_role.stderr)
+            self.assertEqual(json.loads(wrong_role.stdout)["error"], "ROLE_FORBIDDEN")
 
             pending = subprocess.run(
-                [sys.executable, str(script), "--root", str(root), "pending"],
-                capture_output=True,
-                text=True,
-                check=False,
+                [*base, "pending"], capture_output=True, text=True, check=False,
             )
             self.assertEqual(pending.returncode, 0, pending.stderr)
             self.assertEqual(json.loads(pending.stdout)["pending"][0]["review_status"], "APPROVED")
@@ -329,7 +360,7 @@ class GTFSReviewTests(unittest.TestCase):
     def test_catalog_surfaces_review_state_without_publishing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
-            approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
 
             script = Path(__file__).resolve().parents[1] / "scripts" / "catalog_gtfs.py"
             completed = subprocess.run(
@@ -422,7 +453,7 @@ class GTFSReviewTests(unittest.TestCase):
 
             with patch("scripts.review_gtfs.ledger_lock", always_busy):
                 with self.assertRaises(ReviewError) as caught:
-                    approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+                    approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             self.assertEqual(caught.exception.code, "LEDGER_LOCKED")
             self.assertEqual(read_journal(root / dataset_id)["integrity"], "EMPTY")
 
@@ -430,9 +461,9 @@ class GTFSReviewTests(unittest.TestCase):
     def test_journal_dumps_the_verified_chain_and_fails_when_it_is_tampered(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, dataset_id = self.stage_active_feed(directory)
-            approval = approve_dataset(root, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approval = approve_dataset(root, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             revert_decision(
-                root, dataset_id, reviewer_id="ousmane.fall", entry_id=str(approval["entry_id"]),
+                root, dataset_id, proof=proof("ousmane.fall", "reviewer"), entry_id=str(approval["entry_id"]),
                 reason="Licence annoncée mais jamais confirmée par l’éditeur.", now=NOW,
             )
 

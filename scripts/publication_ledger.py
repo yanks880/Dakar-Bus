@@ -260,6 +260,7 @@ def build_publication_entry(
     reviewer_id: str | None = None,
     record_count: dict[str, int] | None = None,
     reverted_entry_id: str | None = None,
+    authentication: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one hashed journal entry; nothing is written here."""
     if action not in PUBLICATION_ACTIONS:
@@ -296,6 +297,7 @@ def build_publication_entry(
             "separation_of_duties": reviewer != publisher,
             "record_count": record_count or {},
             "note": cleaned_note,
+            "authentication": authentication,
             "reverted_entry_id": None,
             "recorded_at": recorded_at.astimezone(timezone.utc).isoformat(),
             "publication_status": "PUBLISHED",
@@ -320,6 +322,7 @@ def build_publication_entry(
             "separation_of_duties": None,
             "record_count": {},
             "note": cleaned_note,
+            "authentication": authentication,
             "reverted_entry_id": _clean_identifier(reverted_entry_id or "", "reverted_entry_id"),
             "recorded_at": recorded_at.astimezone(timezone.utc).isoformat(),
             "publication_status": "NOT_PUBLISHED",

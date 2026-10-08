@@ -40,6 +40,7 @@ import {
   type JourneySearch,
 } from './domain/journeys'
 import { NETWORK_SOURCES, getConnectedNetworkCount, type NetworkId, type NetworkSource } from './domain/network'
+import { ConsolePanel } from './Console'
 import {
   describeRouteType,
   formatDistance,
@@ -1608,8 +1609,8 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
           <>
             <span className="governance-status-icon is-online"><Lock size={15} /></span>
             <div>
-              <strong>Console en lecture seule</strong>
-              <span>Catalogue local lu à {formatTimestamp(state.pipeline?.generatedAt ?? null)} · aucune écriture possible depuis le navigateur.</span>
+              <strong>Catalogue local vérifié</strong>
+              <span>Catalogue local lu à {formatTimestamp(state.pipeline?.generatedAt ?? null)} · les écritures exigent un compte local authentifié, ci-dessous ou en CLI.</span>
             </div>
             <button type="button" className="governance-refresh" onClick={onReload} aria-label="Recharger le catalogue"><RefreshCw size={14} /></button>
           </>
@@ -1633,7 +1634,7 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
         {state.status === 'idle' && (
           <>
             <span className="governance-status-icon"><Database size={15} /></span>
-            <div><strong>Catalogue non chargé</strong><span>Ouvrir cet onglet interroge l’API locale en lecture seule.</span></div>
+            <div><strong>Catalogue non chargé</strong><span>Ouvrir cet onglet interroge l’API locale : lecture publique, décisions authentifiées.</span></div>
           </>
         )}
       </div>
@@ -1696,9 +1697,11 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
         </ul>
       </div>
 
+      {state.status === 'ready' && <ConsolePanel datasets={state.datasets} onChanged={onReload} />}
+
       <div className="source-governance-note">
         <ShieldCheck size={16} />
-        <p><strong>Une approbation ne publie rien.</strong> Les décisions sont enregistrées sur la CLI par un relecteur nominatif dans un journal chaîné ; la publication est une étape séparée qui gèle un snapshot daté et haché, et un retour arrière ajoute une entrée sans rien effacer.</p>
+        <p><strong>Une approbation ne publie rien.</strong> Les décisions sont enregistrées par un acteur authentifié — console connectée ou CLI — dans un journal chaîné ; la publication est une étape séparée qui gèle un snapshot daté et haché, et un retour en arrière ajoute une entrée sans rien effacer.</p>
       </div>
     </section>
   )

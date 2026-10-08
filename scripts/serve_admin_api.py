@@ -1,45 +1,180 @@
 #!/usr/bin/env python3
-"""Read-only HTTP API: governance on the staging side, published data on the other.
+"""HTTP API: public read routes, governance console, and the decisions it records.
 
-The governance routes describe staged versions and their review state; the
-public routes serve the active published snapshot, and nothing else. This
-server never writes: approvals stay on the review CLI, publications on the
-publish CLI. Both route groups are GET-only and report honestly when the store
-or the journal is unusable.
+Two things live here.
+
+*Read*: the public routes serve the active published snapshot and nothing else,
+and the governance routes describe staged versions and their review state. Both
+are GET-only and report honestly when the store or a journal is unusable.
+
+*Decide*: the console authenticates a local account, then records approvals,
+refusals, reversals and publications. A decision always goes through the same
+functions as the command line (`approve_dataset`, `reject_dataset`,
+`revert_decision`, `publish_dataset`, `revert_publication`), so the rules —
+attestations, separation of duties between reviewer and publisher, journal
+chaining — are enforced in one place whichever entry point is used.
+
+Authentication is a local account, never a free-text name: the console gets a
+session cookie (`HttpOnly`, `SameSite=Strict`, `Path=/api`) plus a CSRF token it
+must echo in `X-Dakar-CSRF`, and the command line uses a short-lived bearer
+token. Sessions live in memory only, so restarting this server disconnects
+everyone and nothing about a session is ever written to disk.
 """
 
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
-from datetime import datetime, timezone
+import re
 from collections.abc import Callable
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 try:  # Works both as `python -m scripts.serve_admin_api` and as a file script.
+    from .actor_registry import (
+        MAX_LOGIN_FAILURES,
+        REGISTRY_DIRECTORY,
+        SESSION_COOKIE,
+        SESSION_TTL_SECONDS,
+        ActorError,
+        Session,
+        SessionStore,
+        require_active_actor,
+        registry_summary,
+        verify_secret,
+    )
     from .catalog_gtfs import DATASET_ID_RE, list_staged_datasets
-    from .publication_ledger import current_publication_state
-    from .review_gtfs import review_dossier
+    from .publication_ledger import PublicationError, current_publication_state
+    from .review_ledger import LedgerLockTimeout
+    from .publish_gtfs import publish_dataset, revert_publication
+    from .review_gtfs import (
+        ReviewError,
+        approve_dataset,
+        parse_attestations,
+        reject_dataset,
+        review_dossier,
+        revert_decision,
+    )
     from .review_ledger import current_review_state
     from .serve_read_api import PUBLIC_ROUTES, ApiError, resolve_public_route
-    from .snapshot_gtfs import DATA_POLICY, list_snapshots
+    from .snapshot_gtfs import DATA_POLICY, SnapshotError, list_snapshots
 except ImportError:  # pragma: no cover - exercised by the direct CLI entry point
+    from actor_registry import (
+        MAX_LOGIN_FAILURES,
+        REGISTRY_DIRECTORY,
+        SESSION_COOKIE,
+        SESSION_TTL_SECONDS,
+        ActorError,
+        Session,
+        SessionStore,
+        require_active_actor,
+        registry_summary,
+        verify_secret,
+    )
     from catalog_gtfs import DATASET_ID_RE, list_staged_datasets
-    from publication_ledger import current_publication_state
-    from review_gtfs import review_dossier
+    from publication_ledger import PublicationError, current_publication_state
+    from review_ledger import LedgerLockTimeout
+    from publish_gtfs import publish_dataset, revert_publication
+    from review_gtfs import (
+        ReviewError,
+        approve_dataset,
+        parse_attestations,
+        reject_dataset,
+        review_dossier,
+        revert_decision,
+    )
     from review_ledger import current_review_state
     from serve_read_api import PUBLIC_ROUTES, ApiError, resolve_public_route
-    from snapshot_gtfs import DATA_POLICY, list_snapshots
+    from snapshot_gtfs import DATA_POLICY, SnapshotError, list_snapshots
 
 
 API_PREFIX = "/api"
 DATASET_ROUTE_PREFIX = f"{API_PREFIX}/datasets/"
-GOVERNANCE_ROUTES = ("/healthz", "/api/pipeline", "/api/catalog", "/api/datasets/<dataset_id>")
+GOVERNANCE_ROUTES = (
+    "/healthz",
+    f"{API_PREFIX}/pipeline",
+    f"{API_PREFIX}/catalog",
+    f"{API_PREFIX}/datasets/<dataset_id>",
+    f"{API_PREFIX}/session",
+    f"{API_PREFIX}/actors",
+    f"{API_PREFIX}/datasets/<dataset_id>/decision",
+    f"{API_PREFIX}/datasets/<dataset_id>/revert",
+    f"{API_PREFIX}/datasets/<dataset_id>/publication",
+    f"{API_PREFIX}/publication/revert",
+)
 
 # Kept for callers that imported the older name.
 AdminApiError = ApiError
+
+CSRF_HEADER = "X-Dakar-CSRF"
+MAX_BODY_BYTES = 256 * 1024
+DATASET_ACTION_RE = re.compile(
+    rf"^{re.escape(API_PREFIX)}/datasets/(?P<dataset_id>[^/]+)/(?P<action>decision|revert|publication)$"
+)
+PUBLICATION_REVERT_PATH = f"{API_PREFIX}/publication/revert"
+DECISIONS = ("approve", "reject")
+
+# Refusals are categorised so the console can tell "you may not" from "not yet":
+# 401 nobody is authenticated, 403 authenticated but not allowed, 404 unknown
+# resource, 409 the current state forbids it, 422 the request itself is incomplete.
+TOO_MANY_ATTEMPTS = 429
+
+UNAUTHENTICATED_CODES = {
+    "AUTHENTICATION_REQUIRED",
+    "AUTHENTICATION_FAILED",
+    "SESSION_REQUIRED",
+    "SESSION_UNKNOWN",
+    "TOKEN_REQUIRED",
+}
+FORBIDDEN_CODES = {
+    "ACTOR_REVOKED",
+    "ACTOR_UNKNOWN",
+    "AUTHENTICATION_INVALID",
+    "CROSS_ORIGIN_REFUSED",
+    "CSRF_INVALID",
+    "CSRF_REQUIRED",
+    "GENERIC_ACTOR_ID",
+    "INVALID_PUBLISHER",
+    "ROLE_CHANGED",
+    "ROLE_FORBIDDEN",
+    "SEPARATION_OF_DUTIES",
+}
+CONFLICT_CODES = {
+    "ALREADY_REJECTED",
+    "APPROVAL_BLOCKED",
+    "APPROVAL_ALREADY_RECORDED",
+    "DATASET_INTEGRITY_INVALID",
+    "DATASET_NOT_PUBLISHABLE",
+    "LEDGER_LOCKED",
+    "NO_ACTIVE_DECISION",
+    "NOTHING_PUBLISHED",
+    "REVERT_TARGET_MISMATCH",
+    "SNAPSHOT_UNKNOWN",
+}
+MISSING_CODES = {
+    "DATASET_UNKNOWN",
+    "MANIFEST_MISSING",
+    "SNAPSHOT_MISSING",
+    "UNSAFE_PUBLISHED_ROOT",
+}
+UNPROCESSABLE_CODES = {
+    "ATTESTATION_FORMAT",
+    "ATTESTATION_INVALID",
+    "ATTESTATION_UNKNOWN",
+    "CHECKSUM_UNAVAILABLE",
+    "INVALID_ACTION",
+    "INVALID_CHECKSUM",
+    "INVALID_DATASET_ID",
+    "INVALID_NOTE",
+    "INVALID_REFERENCE",
+    "INVALID_REVERT",
+    "INVALID_TIMESTAMP",
+    "WEAK_SECRET",
+}
 
 
 def _known_routes() -> str:
@@ -48,6 +183,30 @@ def _known_routes() -> str:
 
 def _not_found(message: str) -> ApiError:
     return ApiError(404, "NOT_FOUND", message)
+
+
+def status_for_code(code: str) -> int:
+    """Map a domain refusal onto an HTTP status the console can act on."""
+    if code == "TOO_MANY_ATTEMPTS":
+        return TOO_MANY_ATTEMPTS
+    if code in UNAUTHENTICATED_CODES:
+        return 401
+    if code in FORBIDDEN_CODES:
+        return 403
+    if code in CONFLICT_CODES:
+        return 409
+    if code in MISSING_CODES:
+        return 404
+    if code in UNPROCESSABLE_CODES:
+        return 422
+    return 400
+
+
+def refusal(code: str, message: str, blockers: list[str] | None = None) -> ApiError:
+    """One refusal, with its blockers, ready to be sent as JSON."""
+    error = ApiError(status_for_code(code), code, message)
+    error.blockers = list(blockers or [])  # type: ignore[attr-defined]
+    return error
 
 
 def _publication_overview(published_root: str | Path, *, now: datetime | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -187,8 +346,11 @@ def make_router(root: Path, published_root: Path) -> dict[str, Callable[[], dict
     return {
         "/healthz": lambda: {
             "status": "ok",
-            "service": "dakar-bus-read-api",
-            "mode": "read-only",
+            "service": "dakar-bus-admin-api",
+            "mode": "governance-console",
+            "read_only_public_data": True,
+            "decisions": "compte local authentifié (session console ou jeton CLI)",
+            "authentication": "sessions en mémoire + jeton Bearer pour le CLI ; aucune décision anonyme",
             "governance_root": str(root),
             "published_root": str(published_root),
         },
@@ -197,11 +359,36 @@ def make_router(root: Path, published_root: Path) -> dict[str, Callable[[], dict
     }
 
 
+def _cookie_value(header: str | None, name: str) -> str | None:
+    """Read one cookie from the request header without trusting the rest of it."""
+    for chunk in (header or "").split(";"):
+        key, separator, value = chunk.strip().partition("=")
+        if separator and key == name:
+            return value.strip() or None
+    return None
+
+
+def session_cookie(session: Session, *, ttl_seconds: int) -> str:
+    """`HttpOnly` + `SameSite=Strict` + `Path=/api`: the browser cannot read it back to JS."""
+    return (
+        f"{SESSION_COOKIE}={session.session_id}; Path={API_PREFIX}; HttpOnly; "
+        f"SameSite=Strict; Max-Age={int(ttl_seconds)}"
+    )
+
+
+def cleared_session_cookie() -> str:
+    return f"{SESSION_COOKIE}=; Path={API_PREFIX}; HttpOnly; SameSite=Strict; Max-Age=0"
+
+
 class AdminApiHandler(BaseHTTPRequestHandler):
-    server_version = "DakarBusReadApi/1.1"
+    server_version = "DakarBusAdminApi/2.0"
     root: Path
     published_root: Path
+    actors_root: Path
+    sessions: SessionStore
     base_router: dict[str, Callable[[], dict[str, Any]]]
+
+    # ------------------------------------------------------------------ read #
 
     def _publication_status(self) -> str:
         try:
@@ -209,7 +396,7 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         except (ValueError, OSError):  # pragma: no cover - unreadable store
             return "UNKNOWN"
 
-    def _send(self, status: int, payload: dict[str, Any]) -> None:
+    def _send(self, status: int, payload: dict[str, Any], *, cookies: list[str] | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -217,20 +404,38 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        for cookie in cookies or []:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _send_refusal(self, error: ApiError) -> None:
+        payload: dict[str, Any] = {
+            "error": error.code,
+            "message": error.message,
+            "publication_status": self._publication_status(),
+        }
+        blockers = getattr(error, "blockers", None)
+        if blockers:
+            payload["blockers"] = list(blockers)
+        self._send(error.status, payload)
 
     def _resolve(self, path: str, query: str) -> dict[str, Any]:
         route = self.base_router.get(path)
         if route is not None:
             return route()
+        if path == f"{API_PREFIX}/session":
+            return self._session_view()
+        if path == f"{API_PREFIX}/actors":
+            self._require_session()
+            return dict(registry_summary(root=self.actors_root), sessions=self.sessions.count())
         if path.startswith(DATASET_ROUTE_PREFIX):
             return dataset_loader(self.root, path[len(DATASET_ROUTE_PREFIX):])()
         public = resolve_public_route(path, query, self.published_root)
         if public is not None:
             return public()
-        raise _not_found(f"Ressource inconnue ; l’API en lecture seule expose : {_known_routes()}.")
+        raise _not_found(f"Ressource inconnue ; cette API expose : {_known_routes()}.")
 
     def _handle(self) -> None:
         raw_path, _, query = self.path.partition("?")
@@ -238,10 +443,7 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         try:
             self._send(200, self._resolve(path, query))
         except ApiError as error:
-            self._send(
-                error.status,
-                {"error": error.code, "message": error.message, "publication_status": self._publication_status()},
-            )
+            self._send_refusal(error)
         except ValueError as error:
             self._send(
                 500,
@@ -254,20 +456,362 @@ class AdminApiHandler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:  # noqa: N802 - http.server API
         self._handle()
 
+    # ----------------------------------------------------------------- write #
+
     def _refuse_write(self) -> None:
         self._send(
             405,
             {
                 "error": "READ_ONLY_API",
                 "message": (
-                    "Cette API est en lecture seule ; les décisions de revue passent par scripts/review_gtfs.py "
-                    "et les publications par scripts/publish_gtfs.py."
+                    "Cette route est en lecture seule. Les décisions passent par "
+                    f"POST {API_PREFIX}/datasets/<dataset_id>/decision|revert|publication avec une session "
+                    "console authentifiée, ou par scripts/review_gtfs.py et scripts/publish_gtfs.py avec un jeton."
                 ),
                 "publication_status": self._publication_status(),
             },
         )
 
-    do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _refuse_write  # noqa: N815 - http.server API
+    def _read_json(self) -> dict[str, Any]:
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type and content_type != "application/json":
+            raise ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Le corps de la requête doit être du JSON (application/json).")
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as error:
+            raise ApiError(400, "INVALID_REQUEST", "En-tête Content-Length illisible.") from error
+        if length < 0 or length > MAX_BODY_BYTES:
+            raise ApiError(413, "REQUEST_TOO_LARGE", f"Corps de requête trop volumineux (maximum {MAX_BODY_BYTES} octets).")
+        if length == 0:
+            return {}
+        raw = self.rfile.read(length)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ApiError(400, "INVALID_REQUEST", "Le corps de la requête n’est pas un JSON valide.") from error
+        if not isinstance(payload, dict):
+            raise ApiError(400, "INVALID_REQUEST", "Le corps de la requête doit être un objet JSON.")
+        return payload
+
+    def _current_session(self) -> Session | None:
+        return self.sessions.get(_cookie_value(self.headers.get("Cookie"), SESSION_COOKIE))
+
+    def _session_view(self) -> dict[str, Any]:
+        session = self._current_session()
+        if session is None:
+            return {
+                "authenticated": False,
+                "actor": None,
+                "csrf_token": None,
+                "expires_at": None,
+                "sessions": self.sessions.count(),
+                "realtime": False,
+            }
+        try:
+            actor = require_active_actor(session.actor_id, role=session.role, root=self.actors_root)
+        except ActorError as error:
+            self.sessions.close(session.session_id)
+            raise refusal(error.code, error.message, error.blockers) from error
+        return {
+            "authenticated": True,
+            "actor": {
+                "actor_id": session.actor_id,
+                "display_name": actor.get("display_name"),
+                "role": session.role,
+            },
+            "csrf_token": session.csrf_token,
+            "expires_at": session.expires_at.isoformat(),
+            "sessions": self.sessions.count(),
+            "realtime": False,
+        }
+
+    def _csrf_proof(self, session: Session) -> None:
+        """A write must carry the session's CSRF token and come from this origin."""
+        origin = self.headers.get("Origin")
+        if origin:
+            host = (self.headers.get("Host") or "").strip()
+            if not host or urlparse(origin).netloc.lower() != host.lower():
+                raise ApiError(
+                    403,
+                    "CROSS_ORIGIN_REFUSED",
+                    f"Écriture refusée : origine « {origin} » différente de l’hôte « {host} ».",
+                )
+        supplied = self.headers.get(CSRF_HEADER) or ""
+        if not supplied:
+            raise refusal(
+                "CSRF_REQUIRED",
+                f"Écriture refusée : l’en-tête {CSRF_HEADER} est exigé pour toute action authentifiée.",
+            )
+        if not hmac.compare_digest(supplied, session.csrf_token):
+            raise refusal("CSRF_INVALID", "Écriture refusée : le jeton CSRF ne correspond pas à la session.")
+
+    def _require_session(self, *, role: str | None = None, write: bool = False) -> Session:
+        session = self._current_session()
+        if session is None:
+            raise refusal(
+                "AUTHENTICATION_REQUIRED",
+                "Aucune session console active. Connectez-vous avec un compte local, ou utilisez un jeton de la CLI.",
+                [
+                    "Créez un compte : npm run actors -- create <identifiant> --name \"<nom>\" --role reviewer|publisher --created-by <autre.acteur>",
+                    "Émettez un jeton court : npm run actors -- token <identifiant> --ttl 3600",
+                    "Console : POST /api/session avec { actor_id, secret }.",
+                ],
+            )
+        if write:
+            self._csrf_proof(session)
+        try:
+            require_active_actor(session.actor_id, role=session.role, root=self.actors_root)
+        except ActorError as error:
+            self.sessions.close(session.session_id)
+            raise refusal(error.code, error.message, error.blockers) from error
+        if role is not None and session.role != role:
+            raise refusal(
+                "ROLE_FORBIDDEN",
+                f"Rôle « {session.role} » insuffisant : cette action exige le rôle « {role} ».",
+            )
+        return session
+
+    def _login(self) -> dict[str, Any]:
+        payload = self._read_json()
+        actor_id = str(payload.get("actor_id") or "").strip().casefold()
+        secret = payload.get("secret")
+        if not actor_id or not isinstance(secret, str) or not secret:
+            raise ApiError(400, "INVALID_REQUEST", "Identifiant et secret sont exigés pour ouvrir une session.")
+        if self.sessions.failures(actor_id) >= MAX_LOGIN_FAILURES:
+            raise refusal(
+                "TOO_MANY_ATTEMPTS",
+                f"Trop de tentatives pour « {actor_id} » : réessayez dans quelques minutes.",
+            )
+        try:
+            actor = verify_secret(actor_id, secret, root=self.actors_root)
+        except ActorError as error:
+            if error.code in {"AUTHENTICATION_FAILED", "INVALID_ACTOR_ID", "ACTOR_UNKNOWN"}:
+                self.sessions.register_failure(actor_id)
+            raise refusal(error.code, error.message, error.blockers) from error
+        self.sessions.clear_failures(actor_id)
+        session = self.sessions.open(str(actor["actor_id"]), str(actor["role"]))
+        self._send(
+            200,
+            {
+                "authenticated": True,
+                "actor": {
+                    "actor_id": session.actor_id,
+                    "display_name": actor.get("display_name"),
+                    "role": session.role,
+                },
+                "csrf_token": session.csrf_token,
+                "sessions": self.sessions.count(),
+                "realtime": False,
+                "session": {
+                    "actor_id": session.actor_id,
+                    "display_name": actor.get("display_name"),
+                    "role": session.role,
+                    "role_label": actor.get("role_label"),
+                    "opened_at": session.created_at.isoformat(),
+                    "expires_at": session.expires_at.isoformat(),
+                },
+                "method": "console-session",
+                "secret_stored": "hash scrypt uniquement (aucun secret en clair sur le disque)",
+            },
+            cookies=[session_cookie(session, ttl_seconds=self.sessions.ttl_seconds)],
+        )
+        return {}
+
+    def _logout(self) -> dict[str, Any]:
+        session = self._require_session(write=True)
+        closed = self.sessions.close(session.session_id)
+        self._send(
+            200,
+            {
+                "authenticated": False,
+                "closed": closed,
+                "actor_id": session.actor_id,
+                "message": "Session fermée ; le cookie a été effacé.",
+                "realtime": False,
+            },
+            cookies=[cleared_session_cookie()],
+        )
+        return {}
+
+    def _dataset_action(self, path: str, match: re.Match[str]) -> dict[str, Any]:
+        dataset_id = unquote(match.group("dataset_id"))
+        action = match.group("action")
+        if not DATASET_ID_RE.fullmatch(dataset_id):
+            raise _not_found("Identifiant de dataset invalide.")
+        payload = self._read_json()
+        if action == "decision":
+            return self._record_decision(dataset_id, payload)
+        if action == "revert":
+            return self._revert_decision(dataset_id, payload)
+        return self._publish(dataset_id, payload)
+
+    def _require_dataset(self, dataset_id: str) -> None:
+        """Refuse a version that does not exist, exactly like the read routes do.
+
+        A staged version that is present but damaged is not the same thing: the
+        decision functions report that themselves, with their own blockers.
+        """
+        dataset_loader(self.root, dataset_id)()
+
+    def _record_decision(self, dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        decision = str(payload.get("decision") or "").strip().lower()
+        if decision not in DECISIONS:
+            raise ApiError(400, "INVALID_REQUEST", "Le champ « decision » doit valoir « approve » ou « reject ».")
+        session = self._require_session(role="reviewer", write=True)
+        self._require_dataset(dataset_id)
+        proof = session.as_authentication().as_proof()
+        try:
+            if decision == "approve":
+                attestations = self._attestations_from_payload(payload.get("attestations"))
+                result = approve_dataset(
+                    self.root,
+                    dataset_id,
+                    proof=proof,
+                    attestations=attestations,
+                    note=self._optional_text(payload.get("note"), "note", 400),
+                )
+                return self._settle(result, "APPROVE")
+            return self._settle(
+                reject_dataset(
+                    self.root,
+                    dataset_id,
+                    proof=proof,
+                    reason=self._required_text(payload.get("reason"), "reason", 12, 400),
+                ),
+                "REJECT",
+            )
+        except ReviewError as error:
+            raise refusal(error.code, error.message, error.blockers) from error
+
+    def _revert_decision(self, dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(role="reviewer", write=True)
+        self._require_dataset(dataset_id)
+        try:
+            result = revert_decision(
+                self.root,
+                dataset_id,
+                proof=session.as_authentication().as_proof(),
+                entry_id=self._required_text(payload.get("entry_id"), "entry_id", 3, 64),
+                reason=self._required_text(payload.get("reason"), "reason", 12, 400),
+            )
+        except ReviewError as error:
+            raise refusal(error.code, error.message, error.blockers) from error
+        return self._settle(result, "REVERT_DECISION")
+
+    def _publish(self, dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(role="publisher", write=True)
+        self._require_dataset(dataset_id)
+        try:
+            result = publish_dataset(
+                self.root,
+                self.published_root,
+                dataset_id,
+                proof=session.as_authentication().as_proof(),
+                note=self._required_text(payload.get("note"), "note", 12, 400),
+            )
+        except (PublicationError, LedgerLockTimeout, ReviewError, SnapshotError) as error:
+            raise refusal(error.code, error.message, getattr(error, "blockers", [])) from error
+        return self._settle(result, "PUBLISH")
+
+    def _revert_publication(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(role="publisher", write=True)
+        snapshot_id = payload.get("snapshot_id")
+        if snapshot_id is not None and not isinstance(snapshot_id, str):
+            raise ApiError(400, "INVALID_REQUEST", "« snapshot_id » doit être une chaîne ou absent.")
+        try:
+            result = revert_publication(
+                self.published_root,
+                proof=session.as_authentication().as_proof(),
+                reason=self._required_text(payload.get("reason"), "reason", 12, 400),
+                snapshot_id=(snapshot_id or None),
+            )
+        except (PublicationError, LedgerLockTimeout, ReviewError, SnapshotError) as error:
+            raise refusal(error.code, error.message, getattr(error, "blockers", [])) from error
+        return self._settle(result, "REVERT_PUBLICATION")
+
+    def _attestations_from_payload(self, raw: Any) -> dict[str, dict[str, str | None]]:
+        """Accept the same `item=preuve` pairs as `--attest`, and validate them the same way."""
+        if raw is None:
+            return parse_attestations(None, None)
+        if not isinstance(raw, dict):
+            raise ApiError(400, "INVALID_REQUEST", "« attestations » doit être un objet { item: { evidence, reference } }.")
+        items: list[str] = []
+        references: list[str] = []
+        for item, value in raw.items():
+            if not isinstance(value, dict):
+                raise ApiError(400, "INVALID_REQUEST", f"L’attestation « {item} » doit être un objet.")
+            evidence = value.get("evidence")
+            if not isinstance(evidence, str) or not evidence.strip():
+                raise ApiError(400, "INVALID_REQUEST", f"L’attestation « {item} » doit porter une preuve.")
+            items.append(f"{item}={evidence}")
+            reference = value.get("reference")
+            if reference:
+                references.append(f"{item}={reference}")
+        try:
+            return parse_attestations(items, references)
+        except ReviewError as error:
+            raise refusal(error.code, error.message, error.blockers) from error
+
+    def _required_text(self, value: Any, field: str, minimum: int, maximum: int) -> str:
+        if not isinstance(value, str):
+            raise ApiError(400, "INVALID_REQUEST", f"Le champ « {field} » est exigé.")
+        text = " ".join(value.split())
+        if len(text) < minimum:
+            raise ApiError(400, "INVALID_REQUEST", f"« {field} » doit contenir au moins {minimum} caractères.")
+        if len(text) > maximum:
+            raise ApiError(400, "INVALID_REQUEST", f"« {field} » ne peut pas dépasser {maximum} caractères.")
+        return text
+
+    def _optional_text(self, value: Any, field: str, maximum: int) -> str | None:
+        if value in (None, ""):
+            return None
+        return self._required_text(value, field, 3, maximum)
+
+    def _settle(self, result: dict[str, Any], action: str) -> dict[str, Any]:
+        """Wrap a domain result with what the console needs to show next."""
+        return {
+            **result,
+            "action": action,
+            "publication_status": self._publication_status(),
+            "decided_by": (result.get("authentication") or {}).get("actor_id"),
+        }
+
+    def _handle_write(self) -> None:
+        raw_path, _, _query = self.path.partition("?")
+        path = raw_path.rstrip("/") or "/"
+        match = DATASET_ACTION_RE.match(path)
+        try:
+            if self.command == "POST" and path == f"{API_PREFIX}/session":
+                self._login()
+                return
+            if self.command == "DELETE" and path == f"{API_PREFIX}/session":
+                self._logout()
+                return
+            if self.command == "POST" and match is not None:
+                self._send(200, self._dataset_action(path, match))
+                return
+            if self.command == "POST" and path == PUBLICATION_REVERT_PATH:
+                self._send(200, self._revert_publication(self._read_json()))
+                return
+            self._refuse_write()
+        except ApiError as error:
+            self._send_refusal(error)
+        except (ReviewError, PublicationError, LedgerLockTimeout, SnapshotError, ActorError) as error:
+            self._send_refusal(refusal(error.code, error.message, getattr(error, "blockers", [])))
+        except ValueError as error:
+            self._send(
+                500,
+                {"error": "GOVERNANCE_UNAVAILABLE", "message": str(error), "publication_status": self._publication_status()},
+            )
+
+    do_POST = _handle_write  # noqa: N815 - http.server API
+    do_DELETE = _handle_write  # noqa: N815 - http.server API
+
+    def do_PUT(self) -> None:  # noqa: N802 - http.server API
+        self._refuse_write()
+
+    do_PATCH = do_PUT  # noqa: N815 - http.server API
+    do_OPTIONS = do_PUT  # noqa: N815 - http.server API
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - http.server API
         if getattr(self.server, "quiet", False):
@@ -281,16 +825,21 @@ def create_server(
     port: int,
     *,
     published_root: str | Path | None = None,
+    actors_root: str | Path | None = None,
+    session_ttl_seconds: int = SESSION_TTL_SECONDS,
     quiet: bool = False,
 ) -> ThreadingHTTPServer:
     resolved_root = Path(root)
     resolved_published = Path(published_root) if published_root is not None else resolved_root.parent / "published"
+    resolved_actors = Path(actors_root) if actors_root is not None else REGISTRY_DIRECTORY
     handler_class = type(
         "BoundAdminApiHandler",
         (AdminApiHandler,),
         {
             "root": resolved_root,
             "published_root": resolved_published,
+            "actors_root": resolved_actors,
+            "sessions": SessionStore(ttl_seconds=session_ttl_seconds),
             "base_router": make_router(resolved_root, resolved_published),
         },
     )
@@ -302,22 +851,52 @@ def create_server(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Sert en lecture seule la gouvernance du staging et les données du snapshot publié."
+        description=(
+            "Sert les données publiées en lecture seule et enregistre les décisions de la console "
+            "avec un compte local authentifié."
+        )
     )
     parser.add_argument("--root", type=Path, default=Path("data/staging"), help="Répertoire local de staging")
     parser.add_argument("--published-root", type=Path, default=Path("data/published"), help="Répertoire des snapshots publiés")
+    parser.add_argument(
+        "--actors-root",
+        type=Path,
+        default=REGISTRY_DIRECTORY,
+        help="Répertoire du registre d’acteurs (comptes locaux, ignoré par Git)",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Interface d’écoute (0.0.0.0 pour un aperçu distant)")
     parser.add_argument("--port", type=int, default=8787, help="Port d’écoute")
+    parser.add_argument(
+        "--session-ttl",
+        type=int,
+        default=SESSION_TTL_SECONDS,
+        help="Durée de vie d’une session console, en secondes (300 à 86400)",
+    )
     parser.add_argument("--quiet", action="store_true", help="Ne pas journaliser les requêtes")
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error("le port doit être compris entre 0 et 65535")
+    if not 300 <= args.session_ttl <= 24 * 3600:
+        parser.error("la durée de session doit être comprise entre 300 et 86400 secondes")
 
-    server = create_server(args.root, args.host, args.port, published_root=args.published_root, quiet=args.quiet)
+    server = create_server(
+        args.root,
+        args.host,
+        args.port,
+        published_root=args.published_root,
+        actors_root=args.actors_root,
+        session_ttl_seconds=args.session_ttl,
+        quiet=args.quiet,
+    )
     bound_host, bound_port = server.server_address[0], server.server_address[1]
     print(
-        f"API en lecture seule sur http://{bound_host}:{bound_port} "
-        f"(staging : {args.root} ; publié : {args.published_root})",
+        f"API publique en lecture seule + console de gouvernance sur http://{bound_host}:{bound_port} "
+        f"(staging : {args.root} ; publié : {args.published_root} ; comptes : {args.actors_root})",
+        flush=True,
+    )
+    print(
+        "Les décisions exigent une session console (POST /api/session) ou un jeton CLI ; "
+        "aucune décision anonyme n’est enregistrée.",
         flush=True,
     )
     try:

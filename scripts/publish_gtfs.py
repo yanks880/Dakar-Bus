@@ -21,6 +21,13 @@ from typing import Any
 try:  # Works both as `python -m scripts.publish_gtfs` and as a file script.
     from .catalog_gtfs import DATASET_ID_RE
     from .network_graph import GraphError, graph_status, rebuild_graph
+    from .actor_registry import REGISTRY_DIRECTORY
+    from .review_gtfs import (
+        ReviewError,
+        authentication_from_token,
+        read_token_argument,
+        require_authentication,
+    )
     from .publication_ledger import (
         PublicationError,
         PublicationLockTimeout,
@@ -31,6 +38,7 @@ try:  # Works both as `python -m scripts.publish_gtfs` and as a file script.
         previous_hash_for,
         publication_lock,
         read_publication_journal,
+        validate_publisher_id,
     )
     from .snapshot_gtfs import (
         SnapshotError,
@@ -43,6 +51,13 @@ try:  # Works both as `python -m scripts.publish_gtfs` and as a file script.
 except ImportError:  # pragma: no cover - exercised by the direct CLI entry point
     from catalog_gtfs import DATASET_ID_RE
     from network_graph import GraphError, graph_status, rebuild_graph
+    from actor_registry import REGISTRY_DIRECTORY
+    from review_gtfs import (
+        ReviewError,
+        authentication_from_token,
+        read_token_argument,
+        require_authentication,
+    )
     from publication_ledger import (
         PublicationError,
         PublicationLockTimeout,
@@ -53,6 +68,7 @@ except ImportError:  # pragma: no cover - exercised by the direct CLI entry poin
         previous_hash_for,
         publication_lock,
         read_publication_journal,
+        validate_publisher_id,
     )
     from snapshot_gtfs import (
         SnapshotError,
@@ -128,12 +144,19 @@ def publish_dataset(
     published_root: str | Path,
     dataset_id: str,
     *,
-    publisher_id: str,
+    proof: Any,
     note: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Freeze an approved version into a snapshot and make it the served one."""
+    """Freeze an approved version into a snapshot and make it the served one.
+
+    Publishing requires an authenticated `publisher`, and that actor must differ
+    from the reviewer of the same version: the separation of duties is enforced
+    here, not merely reported in the journal.
+    """
     current_time = _checked_now(now)
+    authentication = require_authentication(proof, role="publisher", subject="la publication")
+    publisher_id = validate_publisher_id(authentication["actor_id"])
     if not DATASET_ID_RE.fullmatch(dataset_id):
         raise PublicationError("INVALID_DATASET_ID", "dataset_id contient des caractères interdits.")
     root = Path(published_root)
@@ -157,6 +180,12 @@ def publish_dataset(
         with publication_lock(root):
             fresh_entries = _journal_entries(root)
             fresh_active = effective_publication(fresh_entries)["active"]
+            recorded_reviewer = str(review.get("reviewer_id") or "")
+            if recorded_reviewer and recorded_reviewer == publisher_id:
+                raise PublicationError(
+                    "SEPARATION_OF_DUTIES",
+                    f"« {publisher_id} » a approuvé cette version : un autre acteur doit la publier.",
+                )
             if (
                 isinstance(fresh_active, dict)
                 and fresh_active.get("dataset_id") == dataset_id
@@ -181,6 +210,7 @@ def publish_dataset(
                 review_entry_hash=review.get("review_entry_hash"),
                 reviewer_id=review.get("reviewer_id"),
                 record_count=manifest.get("record_count") or {},
+                authentication=authentication,
             )
             append_publication_entry(root, entry)
     except BaseException:
@@ -195,6 +225,8 @@ def publish_dataset(
         "dataset_version": dataset.get("dataset_version"),
         "publication_status": "PUBLISHED",
         "realtime": False,
+        "authentication": authentication,
+        "separation_of_duties": str(review.get("reviewer_id") or "") != publisher_id,
         "graph": graph,
         "journal_entry": entry,
         "previous_active_snapshot": active.get("snapshot_id") if isinstance(active, dict) else None,
@@ -215,13 +247,15 @@ def publish_dataset(
 def revert_publication(
     published_root: str | Path,
     *,
-    publisher_id: str,
+    proof: Any,
     reason: str,
     snapshot_id: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Stop serving the active snapshot; files and journal entries stay in place."""
     current_time = _checked_now(now)
+    authentication = require_authentication(proof, role="publisher", subject="l’annulation de publication")
+    publisher_id = validate_publisher_id(authentication["actor_id"])
     root = Path(published_root)
     with publication_lock(root):
         entries = _journal_entries(root)
@@ -246,6 +280,7 @@ def revert_publication(
             note=reason,
             previous_hash=previous_hash_for(entries),
             reverted_entry_id=str(active.get("entry_id")),
+            authentication=authentication,
         )
         append_publication_entry(root, entry)
 
@@ -254,6 +289,7 @@ def revert_publication(
         "dataset_id": active.get("dataset_id"),
         "publication_status": "NOT_PUBLISHED",
         "realtime": False,
+        "authentication": authentication,
         "journal_entry": entry,
         "reverted_entry_id": active.get("entry_id"),
         "files_deleted": False,
@@ -318,16 +354,30 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path("data/staging"), help="Répertoire local de staging")
     parser.add_argument("--published-root", type=Path, default=Path("data/published"), help="Répertoire des snapshots publiés")
     parser.add_argument("--now", type=_parse_now, default=None, help="Horodatage à utiliser (ISO 8601, tests et rejeu)")
+    parser.add_argument(
+        "--actors-root",
+        type=Path,
+        default=REGISTRY_DIRECTORY,
+        help="Répertoire du registre d’acteurs (comptes locaux)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     publish_parser = subparsers.add_parser("publish", help="Geler une version approuvée et la publier")
     publish_parser.add_argument("dataset_id")
-    publish_parser.add_argument("--publisher", required=True, help="Identifiant nominatif de la personne qui publie")
+    publish_parser_token = publish_parser.add_mutually_exclusive_group(required=True)
+    publish_parser_token.add_argument("--token", help="Jeton du compte publieur (npm run actors -- token)")
+    publish_parser_token.add_argument(
+        "--token-file", type=Path, help="Fichier contenant le jeton (première ligne), hors historique du shell"
+    )
     publish_parser.add_argument("--note", required=True, help="Motif ou contexte de la publication")
 
     revert_parser = subparsers.add_parser("revert", help="Annuler la publication active sans rien effacer")
     revert_parser.add_argument("--snapshot-id", default=None, help="Snapshot attendu comme actif (garde-fou)")
-    revert_parser.add_argument("--publisher", required=True)
+    revert_parser_token = revert_parser.add_mutually_exclusive_group(required=True)
+    revert_parser_token.add_argument("--token", help="Jeton du compte publieur (npm run actors -- token)")
+    revert_parser_token.add_argument(
+        "--token-file", type=Path, help="Fichier contenant le jeton (première ligne), hors historique du shell"
+    )
     revert_parser.add_argument("--reason", required=True)
 
     subparsers.add_parser("list", help="Lister les snapshots, leur intégrité et leur état de publication")
@@ -346,13 +396,16 @@ def main() -> int:
         if args.command == "publish":
             result = publish_dataset(
                 args.root, args.published_root, args.dataset_id,
-                publisher_id=args.publisher, note=args.note, now=args.now,
+                proof=authentication_from_token(read_token_argument(args.token, args.token_file), role="publisher", actors_root=args.actors_root),
+                note=args.note, now=args.now,
             )
             _emit(result)
             return 0
         if args.command == "revert":
             result = revert_publication(
-                args.published_root, publisher_id=args.publisher, reason=args.reason,
+                args.published_root,
+                proof=authentication_from_token(read_token_argument(args.token, args.token_file), role="publisher", actors_root=args.actors_root),
+                reason=args.reason,
                 snapshot_id=args.snapshot_id, now=args.now,
             )
             _emit(result)
@@ -395,7 +448,7 @@ def main() -> int:
         result = verify_published_snapshot(args.published_root, args.snapshot_id)
         _emit(result)
         return 0 if result["verified"] else 1
-    except (PublicationError, PublicationLockTimeout, SnapshotError) as error:
+    except (PublicationError, PublicationLockTimeout, SnapshotError, ReviewError) as error:
         payload = {
             "error": getattr(error, "code", "PUBLICATION_REFUSED"),
             "message": str(error),

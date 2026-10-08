@@ -744,3 +744,52 @@ button:disabled { cursor: not-allowed; }
   .journey-point-arrival { text-align: left; justify-items: start; }
   .journey-duration { justify-items: start; grid-auto-flow: column; }
 }
+
+/* Console connectée : décisions authentifiées */
+.console-panel { margin-top: 18px; padding-top: 16px; border-top: 1px solid #edf2ee; }
+.console-panel .panel-heading-row { margin-bottom: 12px; }
+.console-panel h3 { margin: 6px 0 4px; color: #364b3e; font-family: Manrope, sans-serif; font-size: 15px; font-weight: 750; letter-spacing: -.025em; }
+.console-panel .panel-heading-row p { margin: 0; color: #7d887e; font-size: 10px; line-height: 1.6; }
+
+.console-state { display: flex; align-items: center; padding: 11px 12px; border: 1px solid #e9f0eb; border-radius: 13px; background: #fafcfb; gap: 10px; }
+.console-state-connected { border-color: #cfe7d8; background: #f4faf6; }
+.console-state div { display: grid; gap: 3px; min-width: 0; }
+.console-state strong { color: #2f4638; font-size: 10.5px; font-weight: 730; }
+.console-state span { color: #7d8b82; font-size: 9px; line-height: 1.5; }
+.console-state code { padding: 1px 4px; border-radius: 5px; background: #eef3f0; color: #2b6249; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+.console-state .governance-refresh { margin-left: auto; }
+
+.console-login { display: grid; margin-top: 10px; gap: 5px; }
+.console-login label { color: #8c9a91; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.console-login input { padding: 8px 9px; border: 1px solid #e4ece6; border-radius: 10px; background: #fff; color: #2f4638; font-size: 11px; }
+.console-login input:focus { border-color: #b9dcc7; outline: 2px solid #e9f5ee; }
+
+.console-dataset-list { display: grid; margin: 12px 0 0; padding: 0; list-style: none; gap: 9px; }
+.console-dataset { padding: 11px; border: 1px solid #eaf0eb; border-radius: 13px; background: #fff; }
+.console-actions { display: flex; flex-wrap: wrap; margin-top: 10px; gap: 6px; }
+.console-action { display: inline-flex; align-items: center; padding: 6px 9px; border: 1px solid #e4ece6; border-radius: 9px; background: #fff; color: #3f5a4c; cursor: pointer; font-size: 9px; font-weight: 700; gap: 5px; }
+.console-action:hover { border-color: #c9e0d2; color: #147954; }
+.console-action:disabled { cursor: progress; opacity: .6; }
+.console-action-primary { border-color: #cfe7d8; background: #eef8f1; color: #146f4d; }
+
+.console-form { display: grid; margin-top: 10px; padding: 11px; border: 1px solid #e9f0eb; border-radius: 12px; background: #fafcfb; gap: 5px; }
+.console-form strong { color: #2f4638; font-size: 10.5px; font-weight: 740; }
+.console-form fieldset { display: grid; margin: 4px 0 0; padding: 8px; border: 1px solid #eaeff0; border-radius: 10px; background: #fff; gap: 4px; }
+.console-form legend { padding: 0 4px; color: #5f7167; font-size: 9px; font-weight: 700; }
+.console-form label { color: #8c9a91; font-size: 8px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.console-form input, .console-form textarea { width: 100%; padding: 7px 8px; border: 1px solid #e4ece6; border-radius: 9px; background: #fff; color: #2f4638; font-family: inherit; font-size: 10px; resize: vertical; }
+.console-form input:focus, .console-form textarea:focus { border-color: #b9dcc7; outline: 2px solid #e9f5ee; }
+
+.console-hint { margin: 2px 0 0; color: #87948c; font-size: 8.8px; line-height: 1.5; }
+
+.console-notice { margin-top: 12px; padding: 11px 12px; border: 1px solid #e9f0eb; border-radius: 12px; background: #fafcfb; }
+.console-notice strong { display: block; color: #2f4638; font-size: 10.5px; font-weight: 740; }
+.console-notice ul { display: grid; margin: 6px 0 0; padding-left: 15px; color: #6f7f76; font-size: 9px; line-height: 1.55; gap: 3px; }
+.console-notice-ok { border-color: #cfe7d8; background: #f4faf6; }
+.console-notice-error { border-color: #f0d9d6; background: #fdf4f2; }
+.console-notice-error strong { color: #a4483c; }
+
+@media (max-width: 720px) {
+  .console-panel { margin-top: 12px; padding-top: 12px; }
+  .console-dataset-meta { grid-template-columns: minmax(0, 1fr); }
+}

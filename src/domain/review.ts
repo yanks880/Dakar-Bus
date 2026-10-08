@@ -23,7 +23,9 @@ export interface CatalogDataset {
   serviceStatus: string | null
   reviewerId: string | null
   reviewedAt: string | null
+  reviewEntryId: string | null
   publicationStatus: string
+  publicationSnapshotId: string | null
 }
 
 export interface PipelineStage {
@@ -119,7 +121,9 @@ function parseDataset(raw: unknown): CatalogDataset | null {
     serviceStatus: optionalString(raw.service_status),
     reviewerId: optionalString(raw.reviewer_id),
     reviewedAt: optionalString(raw.reviewed_at),
+    reviewEntryId: optionalString(raw.review_entry_id),
     publicationStatus: optionalString(raw.publication_status) ?? 'NOT_PUBLISHED',
+    publicationSnapshotId: optionalString(raw.publication_snapshot_id),
   }
 }
 

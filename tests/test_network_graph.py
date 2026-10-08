@@ -28,6 +28,7 @@ from scripts.serve_read_api import journeys_payload
 from scripts.stage_gtfs import IngestMetadata, stage_gtfs_archive
 from test_publish_gtfs import FULL_ATTESTATIONS, PUBLISH_TABLES, PUBLISHER, REVIEWER
 from test_stage_gtfs import NOW, VALID_METADATA
+from auth_helpers import proof
 
 # One station with two child platforms, so the walk graph has something real to
 # follow, plus a timetable whose last departure is at 08:00 local time.
@@ -113,10 +114,10 @@ class GraphFixtures(unittest.TestCase):
         staged = stage_gtfs_archive(archive_path, staging, metadata, now=NOW)
         self.assertTrue(staged["staged"], staged)
         dataset_id = str(staged["dataset_id"])
-        approve_dataset(staging, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+        approve_dataset(staging, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
         published = Path(directory) / "published"
         result = publish_dataset(
-            staging, published, dataset_id, publisher_id=PUBLISHER,
+            staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"),
             note="Publication du jeu de test du graphe.", now=NOW,
         )
         return staging, published, dataset_id, str(result["snapshot_id"])
@@ -509,9 +510,9 @@ class JourneyApiTests(GraphFixtures):
             metadata = IngestMetadata(**{**VALID_METADATA.__dict__, "dataset_version": "graph-v2", "source_type": "OFFICIAL", "operator": "Réseau de démonstration", "service_status": "ACTIVE"})
             staged = stage_gtfs_archive(archive_path, staging, metadata, now=NOW)
             second_id = str(staged["dataset_id"])
-            approve_dataset(staging, second_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approve_dataset(staging, second_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
             second = publish_dataset(
-                staging, published, second_id, publisher_id=PUBLISHER, note="Deuxième version du jeu du graphe.",
+                staging, published, second_id, proof=proof(PUBLISHER, "publisher"), note="Deuxième version du jeu du graphe.",
                 now=NOW + timedelta(hours=1),
             )
 

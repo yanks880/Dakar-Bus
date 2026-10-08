@@ -16,15 +16,18 @@ Cette première fondation fournit :
 - un outil de staging versionné qui conserve le ZIP original, son checksum, le manifeste de provenance déclaré, les comptages et le rapport de validation, sans publication automatique ;
 - une revue humaine traçable : cinq attestations obligatoires, un relecteur nominatif, un journal append-only chaîné par empreintes et un retour arrière qui n'efface rien ;
 - une étape de publication qui gèle une version approuvée dans un snapshot daté et immuable (`network.sqlite` + manifeste haché), avec un journal append-only chaîné par empreintes et un retour arrière qui n'efface rien ;
-- une API locale en lecture seule : gouvernance du staging (`/api/pipeline`, `/api/catalog`, `/api/datasets/<id>`, `/api/publications`) et lecture publique du snapshot publié (`/api/network`, `/api/stops/search`, `/api/stops/near`, `/api/stops/<id>`, `/api/routes`, `/api/routes/<id>`, `/api/journeys`) ;
+- une API locale qui sert en lecture seule la gouvernance du staging (`/api/pipeline`, `/api/catalog`, `/api/datasets/<id>`, `/api/publications`) et le snapshot publié (`/api/network`, `/api/stops/search`, `/api/stops/near`, `/api/stops/<id>`, `/api/routes`, `/api/routes/<id>`, `/api/journeys`) ;
 - un graphe d'itinéraires dérivé du snapshot actif (`data/published/network.graph.json`) : marche par liens déclarés, courses directes déclarées, refus explicite dès qu'il ne correspond plus exactement au snapshot publié ;
 - une interface branchée sur ces routes : recherche d'arrêts, arrêts autour de vous, lignes publiées, fiche d'arrêt honnête, et recherche d'itinéraire limitée aux courses directes déclarées ;
-- un onglet Gouvernance qui affiche l'état réel du catalogue ou signale honnêtement qu'il n'est pas joignable ;
+- des comptes locaux nominatifs (secret haché en scrypt, registre `data/actors/` ignoré par Git) : jeton Bearer court pour la CLI, session à cookie `HttpOnly`/`SameSite=Strict` plus jeton CSRF pour la console ;
+- un onglet Gouvernance qui affiche l'état réel du catalogue, ou signale honnêtement qu'il n'est pas joignable, et permet d'approuver, refuser, annuler et publier depuis la console avec un compte authentifié — les mêmes règles qu'en ligne de commande, appliquées par le serveur ;
 - des règles testées pour le statut des horaires, le label LIVE, les décomptes en minutes et la publication d'objets actifs.
 
 **Aucun flux GTFS, GTFS-RT, horaire, arrêt, ligne, tracé, alerte ou donnée opérateur n'est actuellement fourni par ce dépôt.** La carte de fond représente uniquement la géographie OpenStreetMap. Un clic sur la carte choisit un point géographique, mais ne le géocode pas en nom de lieu.
 
 Le calcul d'itinéraire ne répond que lorsqu'un snapshot est réellement publié localement, et il ne propose alors que ce que le flux déclare : une montée, une descente, aux heures théoriques inscrites dans `stop_times`. Aucun itinéraire à correspondance, aucune position de véhicule et aucune estimation d'arrivée ne sont produits ; sans donnée publiée, l'interface l'explique au lieu de fabriquer un résultat.
+
+Aucune décision n'est anonyme : approuver, refuser, annuler ou publier exige un compte local dont le secret n'est stocké que haché (scrypt + sel, fichier `0600`). Les comptes génériques (`admin`, `ci`, `anonymous`, …) sont refusés, la personne qui approuve une version ne peut pas la publier elle-même, une révocation invalide les jetons et sessions déjà émis, et chaque décision enregistre l'acteur, la méthode d'authentification et l'horodatage.
 
 ## Démarrer
 
@@ -50,11 +53,11 @@ npm audit
 Pour voir l'onglet Gouvernance alimenté, lancer l'API locale puis le serveur de développement dans deux terminaux :
 
 ```bash
-npm run admin:api   # http://127.0.0.1:8787, lecture seule
+npm run admin:api   # http://127.0.0.1:8787 : lecture publique + décisions authentifiées
 npm run dev         # relaie /api vers l'API locale
 ```
 
-Pour publier une version déjà approuvée, `npm run publish:gtfs -- publish <dataset_id> --publisher prenom.nom --note "..."` ; les snapshots sont écrits dans `data/published/`, ignoré par Git comme le staging.
+Pour décider depuis la console, créer d'abord des comptes locaux (voir « Comptes locaux, jetons et sessions »), puis ouvrir l'onglet Gouvernance et se connecter. Pour décider en ligne de commande, émettre un jeton court et le passer à `npm run review:gtfs -- approve <dataset_id> --token "$TOKEN" …` ou à `npm run publish:gtfs -- publish <dataset_id> --token "$TOKEN" --note "..."`. Les comptes sont écrits dans `data/actors/`, les snapshots dans `data/published/` : les deux sont ignorés par Git, comme le staging.
 
 Le workflow GitHub Actions (`.github/workflows/ci.yml`) exécute le build, les deux suites de tests et l’audit des dépendances à chaque push et pull request.
 
@@ -62,9 +65,11 @@ Le workflow GitHub Actions (`.github/workflows/ci.yml`) exécute le build, les d
 
 ```text
 src/
-  App.tsx                 écrans et interactions, console de gouvernance
+  App.tsx                 écrans et interactions, onglet de gouvernance
   App.css                 design system responsive
   App.test.tsx            tests des parcours, états sans données et console
+  Console.tsx             console connectée : session, décisions, refus affichés tels quels
+  Console.test.tsx        tests de connexion, d'approbation, de refus et de publication
   components/TransitMap   carte, position GPS, points choisis
   domain/network.ts       registre des sources (aucun réseau publié par défaut)
   domain/network.test.ts  tests du catalogue initial vide
@@ -74,16 +79,19 @@ src/
   domain/review.test.ts   tests de parsing strict et de non-invention
   domain/published.ts     modèle de lecture du snapshot publié (parsing strict)
   domain/journeys.ts      modèle de lecture des courses directes (/api/journeys)
+  domain/session.ts       client de session et de décision (cookie, CSRF, refus du serveur)
+  domain/session.test.ts  tests de session, d'en-têtes et de refus
 scripts/
   validate_gtfs.py       validateur GTFS Static en lecture seule
   stage_gtfs.py          staging versionné, provenance à revoir
   catalog_gtfs.py        catalogue local en lecture seule, état de revue inclus
   review_ledger.py       journal append-only chaîné par empreintes, verrou exclusif
+  actor_registry.py      comptes locaux (scrypt), jetons Bearer, sessions en mémoire
   review_gtfs.py         revue humaine : approbation, refus, retour arrière
   publication_ledger.py  journal des publications append-only, chaîné par empreintes
   snapshot_gtfs.py       construction et lecture des snapshots publiés (SQLite figée)
   publish_gtfs.py        publication, vérification et retour arrière d’un snapshot
-  serve_admin_api.py     API HTTP en lecture seule : gouvernance et données publiées
+  serve_admin_api.py     API HTTP : lecture publique, et décisions authentifiées (session + CSRF)
   serve_read_api.py      routes publiques servies depuis le snapshot actif, dont les itinéraires
   network_graph.py       graphe d’itinéraires dérivé du snapshot actif, refusé s’il ne correspond plus
 public/
@@ -95,7 +103,7 @@ tests/
   test_catalog_gtfs.py     tests d’intégrité et de comparaison catalogue
   test_review_gtfs.py      tests d’approbation, de refus et de retour arrière
   test_publish_gtfs.py     tests de publication, de vérification et de retour arrière
-  test_serve_admin_api.py  tests de l’API en lecture seule
+  test_serve_admin_api.py  tests de l’API : lecture publique, sessions, décisions et refus
   test_network_graph.py    tests du graphe d’itinéraires et de /api/journeys
 ```
 
@@ -146,6 +154,33 @@ npm run catalog:gtfs -- compare <ancienne_version> <nouvelle_version>
 
 `compare` compare les comptages et métadonnées, pas les lignes une à une ni les géométries. Le catalogue ne modifie jamais l’état de revue et ne publie aucune version.
 
+## Comptes locaux, jetons et sessions
+
+Aucune décision n'est enregistrée sans acteur authentifié. Le registre est local (`data/actors/actors.json`, ignoré par Git) : chaque compte porte un identifiant nominatif, un rôle et un secret dont seule l'empreinte **scrypt** (n=2¹⁴, sel de 16 octets) est écrite, dans un fichier `0600`. La clé de signature des jetons (`data/actors/server.key`) est créée à la première émission, elle aussi en `0600`.
+
+```bash
+# créer deux personnes distinctes : une relectrice, un publieur
+npm run actors -- create fatou.ndiaye --name "Fatou Ndiaye" --role reviewer --created-by awa.mainteneur
+npm run actors -- create ousmane.fall --name "Ousmane Fall" --role publisher --created-by awa.mainteneur
+npm run actors -- list           # aucun secret n'est affiché
+npm run actors -- summary        # comptes actifs par rôle
+
+# jeton Bearer court (8 h par défaut) pour la ligne de commande
+npm run actors -- token fatou.ndiaye --ttl 3600
+npm run actors -- token fatou.ndiaye --ttl 3600 --secret "$SECRET" > /tmp/fatou.token
+
+# retirer un compte sans effacer sa trace
+npm run actors -- revoke ousmane.fall --revoked-by awa.mainteneur --reason "Départ de l’équipe, compte clos."
+```
+
+Règles appliquées par le registre :
+
+- un acteur nominatif est exigé : les identifiants génériques (`admin`, `ci`, `anonymous`, `demo`, …) sont refusés, comme dans les journaux ;
+- personne ne s'enregistre soi-même (`--created-by` doit désigner un autre acteur) et personne ne se révoque soi-même ;
+- le secret n'est jamais écrit en clair, jamais renvoyé par l'API et jamais conservé par le navigateur ; une révocation invalide immédiatement les jetons et les sessions de ce compte ;
+- un jeton (`dkr1.<charge utile>.<signature HMAC-SHA256>`) ne vaut que pour le rôle du compte, expire entre 60 s et 24 h, et devient inutile si le rôle ou le compte change ;
+- les sessions de la console vivent **en mémoire du serveur** : redémarrer `npm run admin:api` déconnecte tout le monde, rien n'est écrit sur disque, et le cookie est `HttpOnly` + `SameSite=Strict` + `Path=/api`.
+
 ## Revoir une version (revue humaine)
 
 La revue est la deuxième porte. Elle ne publie rien : elle enregistre une décision nominative dans un journal append-only (`<dataset>/review/journal.jsonl`), chaîné par empreintes SHA-256. Toute altération d'une ligne rompt la chaîne et bloque les décisions suivantes.
@@ -155,8 +190,11 @@ npm run review:gtfs -- pending
 npm run review:gtfs -- show <dataset_id>
 npm run review:gtfs -- journal <dataset_id>   # chaîne complète, empreintes revérifiées
 
+# un jeton de relecteur est exigé : plus aucun nom ne se tape à la main
+TOKEN=$(npm run actors -- token fatou.ndiaye --ttl 3600 --secret "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
 npm run review:gtfs -- approve <dataset_id> \
-  --reviewer prenom.nom \
+  --token "$TOKEN" \
   --attest source_identity="Identité et URL vérifiées auprès de l’éditeur le 2026-10-08" \
   --reference source_identity="$SOURCE_URL" \
   --attest reuse_rights="Licence ouverte publiée sur la page de la source" \
@@ -165,14 +203,19 @@ npm run review:gtfs -- approve <dataset_id> \
   --attest service_operational="Service exploité constaté aux dates déclarées" \
   --attest freshness_confirmed="Période de validité confirmée avec la source"
 
-npm run review:gtfs -- reject <dataset_id> --reviewer prenom.nom --reason "Source non identifiable"
-npm run review:gtfs -- revert <dataset_id> --reviewer prenom.nom --entry-id rv-000001 --reason "Licence non confirmée par l’éditeur"
+npm run review:gtfs -- reject <dataset_id> --token "$TOKEN" --reason "Source non identifiable"
+npm run review:gtfs -- revert <dataset_id> --token "$TOKEN" --entry-id rv-000001 --reason "Licence non confirmée par l’éditeur"
+
+# le jeton peut aussi venir d'un fichier, hors historique du shell
+npm run review:gtfs -- approve <dataset_id> --token-file /tmp/fatou.token --attest … 
 ```
 
 Règles appliquées par l'outil :
 
+- la décision exige un **jeton de compte local** : signature vérifiée, expiration vérifiée, compte encore actif, rôle `reviewer` exigé. Le nom de la personne vient du jeton, jamais d'un argument texte ;
+- l'entrée de journal enregistre l'acteur, la méthode d'authentification (`cli-token` ou `console-session`) et l'horodatage de l'authentification ;
 - les cinq attestations sont obligatoires ; une approbation incomplète est refusée et rien n'est écrit ;
-- les comptes génériques (`admin`, `test`, `anonymous`, …) sont refusés : la décision doit nommer une personne ;
+- les comptes génériques (`admin`, `test`, `anonymous`, …) sont refusés : la décision doit nommer une personne enregistrée ;
 - l'approbation est refusée si l'archive est altérée, si le journal est corrompu, si la validité effective n'est pas `CURRENT`, si le type de source est `UNKNOWN`, si l'opérateur n'est pas confirmé ou si le statut déclaré n'est pas `ACTIVE` ;
 - `revert` ajoute une entrée : la décision annulée reste lisible dans le journal ;
 - chaque décision prend un verrou exclusif (`review/journal.lock`, `flock`) le temps du cycle lecture → décision → écriture : deux relecteurs simultanés ne peuvent pas produire deux entrées de même séquence, le second attend puis constate la décision déjà enregistrée. Le verrou est libéré par le noyau si le processus meurt ;
@@ -184,21 +227,25 @@ Règles appliquées par l'outil :
 La publication est la seule étape qui rend une version lisible par l'application. Elle gèle la version approuvée dans un snapshot daté et immuable (`network.sqlite` + `manifest.json` haché), puis ajoute **une** entrée au journal des publications (`data/published/publication.jsonl`), chaîné par empreintes comme celui de la revue.
 
 ```bash
+# jeton d'un compte de rôle « publisher », distinct de la personne qui a approuvé
+PUBLISHER_TOKEN=$(npm run actors -- token ousmane.fall --ttl 3600 --secret "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
 npm run publish:gtfs -- publish <dataset_id> \
-  --publisher prenom.nom \
+  --token "$PUBLISHER_TOKEN" \
   --note "Publication du réseau vérifié le 2026-10-08"
 
 npm run publish:gtfs -- list
 npm run publish:gtfs -- show <snapshot_id>
 npm run publish:gtfs -- verify <snapshot_id>
 npm run publish:gtfs -- journal
-npm run publish:gtfs -- revert --publisher prenom.nom --reason "Période de validité contestée par la source"
+npm run publish:gtfs -- revert --token "$PUBLISHER_TOKEN" --reason "Période de validité contestée par la source"
 ```
 
 Règles appliquées par l'outil :
 
+- publier exige un **jeton de compte local de rôle `publisher`** (même vérification de signature, d'expiration et d'activité que pour la revue) ;
 - publier exige une revue `APPROVED`, un journal de revue intègre, une validité effective `CURRENT`, un `source_type` connu et un `service_status` `ACTIVE` — le tout revérifié au moment de la publication, pas au moment de l'approbation ;
-- le publieur est nominatif : les comptes génériques (`admin`, `ci`, `anonymous`, …) sont refusés, comme pour la revue ; l'entrée enregistre aussi le relecteur et l'empreinte de sa décision, et signale `separation_of_duties` lorsque les deux personnes diffèrent ;
+- la **séparation des devoirs** est appliquée sans exception : si l'acteur qui publie est celui qui a approuvé la version, la publication est refusée (`SEPARATION_OF_DUTIES`). L'entrée enregistre le relecteur, l'empreinte de sa décision et l'authentification du publieur ;
 - le snapshot est construit dans un répertoire temporaire puis renommé : rien n'est jamais écrit à moitié, et aucune version n'est écrasée ;
 - **construire un snapshot ne le publie pas** : tant que le journal n'a pas d'entrée, le snapshot reste `UNLISTED` et l'API ne sert rien ;
 - `verify` rehashe la base, recompte chaque table et compare au manifeste ; toute modification du fichier publié est signalée ;
@@ -246,18 +293,36 @@ Règles appliquées :
 - quand aucune course directe n'existe, la réponse le dit (`reason`, `message`, `next_service_date`) et rappelle que le moteur à correspondances n'est pas implémenté : aucun trajet indirect n'est fabriqué ;
 - `realtime` reste `false` et chaque résultat porte la mention « horaire théorique déclaré ».
 
-## Console de gouvernance en lecture seule
+## Console de gouvernance et décisions authentifiées
 
-`npm run admin:api` expose le catalogue et l'état de revue sur `http://127.0.0.1:8787` :
+`npm run admin:api` expose sur `http://127.0.0.1:8787` la lecture publique et les décisions authentifiées.
 
-- `GET /healthz` — état du service ;
-- `GET /api/pipeline` — comptage par étape de gouvernance, `published` toujours à 0 ;
-- `GET /api/catalog` — versions stagées, intégrité, validité effective, état de revue ;
+Lecture (aucune authentification) :
+
+- `GET /healthz` — état du service, racines servies, authentification exigée pour les décisions ;
+- `GET /api/pipeline` — comptage par étape de gouvernance, publication réelle incluse ;
+- `GET /api/catalog` — versions stagées, intégrité, validité effective, état de revue et décision active ;
 - `GET /api/datasets/<dataset_id>` — dossier de revue complet (provenance déclarée, bloqueurs, attestations attendues) ;
 - `GET /api/publications` — journal des publications et snapshots listés ;
 - les routes publiques de données (`/api/network`, `/api/stops/...`, `/api/routes...`, `/api/journeys`) servies depuis le snapshot publié.
 
-L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH`, `DELETE` et `OPTIONS` renvoient `405 READ_ONLY_API`. Les identifiants sont validés avant tout accès disque, les réponses portent `Cache-Control: no-store`, et le service worker ne met jamais `/api` en cache. Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative (relaiées par Vite) ; sans API joignable, il affiche « Console hors ligne » au lieu d'inventer un catalogue.
+Session :
+
+- `POST /api/session` — `{ actor_id, secret }` ouvre une session ; le cookie est `HttpOnly`, `SameSite=Strict`, `Path=/api`, et la réponse porte le jeton CSRF à renvoyer dans `X-Dakar-CSRF` ;
+- `GET /api/session` — acteur connecté, rôle, expiration, jeton CSRF, ou `authenticated: false` sans rien inventer ;
+- `DELETE /api/session` — ferme la session et efface le cookie ;
+- `GET /api/actors` — comptes connus (aucun secret), réservé à une session ouverte.
+
+Décisions (session exigée, en-tête `X-Dakar-CSRF` exigé, origine vérifiée) :
+
+- `POST /api/datasets/<dataset_id>/decision` — `{ decision: "approve" | "reject", attestations, note, reason }`, rôle `reviewer` ;
+- `POST /api/datasets/<dataset_id>/revert` — `{ entry_id, reason }`, rôle `reviewer` ;
+- `POST /api/datasets/<dataset_id>/publication` — `{ note }`, rôle `publisher` ;
+- `POST /api/publication/revert` — `{ reason, snapshot_id? }`, rôle `publisher`.
+
+Ces routes appellent exactement les mêmes fonctions que la CLI (`approve_dataset`, `reject_dataset`, `revert_decision`, `publish_dataset`, `revert_publication`) : attestations obligatoires, journal chaîné, séparation des devoirs et intégrité du snapshot sont vérifiées au même endroit, quel que soit l'entrée. Le serveur répond `401` sans session, `403` pour un rôle insuffisant, un jeton CSRF absent ou une origine étrangère, `404` pour une version inconnue, `409` quand l'état l'interdit (décision déjà active, version non publiable, journal verrouillé), `422` pour une demande incomplète ou une attestation invalide, `429` après huit échecs de connexion en cinq minutes, et chaque refus porte son code, son message et ses bloqueurs. Les routes publiques restent GET-only et répondent `405 READ_ONLY_API` à tout autre verbe.
+
+Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative (relayées par Vite) : sans API joignable, il affiche « Console hors ligne » et aucune décision. Avec une session ouverte, il propose les actions du rôle — approuver, refuser, annuler une décision, publier, annuler une publication — et répète les refus du serveur tels quels.
 
 ## Gouvernance de l'information
 
@@ -273,7 +338,11 @@ L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH`, `DELETE` et `
 - Un snapshot publié est immuable et haché ; si le fichier ne correspond plus à l'empreinte enregistrée, l'API ne sert plus rien du tout.
 - Les données publiées restent des horaires théoriques (GTFS Static) : aucune position de véhicule, aucune estimation et aucun temps réel ne sont dérivés d'un flux statique.
 - Le journal de revue est append-only : une annulation ajoute une entrée, elle n'en supprime aucune.
-- L'API d'administration est en lecture seule ; la console web ne peut enregistrer aucune décision.
+- Aucune décision anonyme : approuver, refuser, annuler ou publier exige un compte local authentifié, et l'entrée de journal nomme l'acteur, la méthode d'authentification et l'heure de cette authentification.
+- Les secrets ne sont stockés que hachés (scrypt + sel, fichier `0600`, registre ignoré par Git) ; une révocation invalide les jetons et sessions du compte, et les comptes génériques sont refusés partout.
+- La séparation des devoirs est appliquée par le serveur : la personne qui a approuvé une version ne peut pas la publier elle-même, même avec un jeton valide.
+- Les sessions de la console vivent en mémoire : un redémarrage de l'API déconnecte tout le monde, et aucune session n'est écrite sur disque.
+- Les écritures de la console exigent le jeton CSRF de la session et une origine identique à l'hôte ; un formulaire hostile ne peut pas décider à la place d'un acteur.
 
 ## Carte et déploiement
 
@@ -282,8 +351,8 @@ Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.or
 ## Prochaines étapes de la feuille de route
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.
-2. ~~Revue humaine traçable autour du staging/catalogue~~ — fait : journal chaîné, attestations obligatoires, retour arrière, console en lecture seule. Reste l'authentification et l'écriture depuis la console.
-3. ~~Publier une version approuvée~~ — fait : snapshot SQLite daté et haché, journal append-only, retour arrière, API de lecture et interface branchée sur ces routes. Reste à documenter la séparation des rôles au-delà du journal.
+2. ~~Revue humaine traçable autour du staging/catalogue~~ — fait : journal chaîné, attestations obligatoires, retour arrière, et décisions authentifiées depuis la console comme depuis la CLI (comptes locaux, jeton Bearer, session à cookie). Reste la revue à plusieurs yeux et la rotation planifiée des secrets.
+3. ~~Publier une version approuvée~~ — fait : snapshot SQLite daté et haché, journal append-only, retour arrière, API de lecture, interface branchée sur ces routes et séparation relecteur/publieur appliquée par le serveur.
 4. ~~Routage sur les données publiées~~ — fait pour les courses directes déclarées (graphe dérivé, `/api/journeys`). Reste le moteur à correspondances, qui n'a de sens qu'avec des données réelles et un temps de correspondance déclaré, puis la recherche géographique de lieux.
 5. Connecter les alertes et un flux temps réel uniquement après obtention d'une source exploitable.
 6. Compléter les tests d'intégration, E2E, sécurité, monitoring, sauvegardes et administration.

@@ -526,13 +526,17 @@ describe('governance console', () => {
     stubApi([
       { match: '/api/catalog', respond: () => jsonResponse(CATALOG_PAYLOAD) },
       { match: '/api/pipeline', respond: () => jsonResponse(PIPELINE_PAYLOAD) },
+      { match: '/api/session', respond: () => jsonResponse({ authenticated: false }) },
       { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
     ])
     render(<App />)
     fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
 
     expect(await screen.findByText('ddd-2026-10-abcdef123456')).toBeTruthy()
-    expect(screen.getByText(/console en lecture seule/i)).toBeTruthy()
+    expect(screen.getByText(/catalogue local vérifié/i)).toBeTruthy()
+    // The connected console is mounted with the catalogue and asks for an account.
+    expect(await screen.findByText(/aucune session ouverte/i)).toBeTruthy()
+    expect(screen.getByText(/npm run actors -- create/)).toBeTruthy()
     expect(screen.getByText('Approuvé')).toBeTruthy()
     expect(screen.getByText('fatou.ndiaye · 2026-10-08 11:30 UTC')).toBeTruthy()
     expect(screen.getByText('NOT_PUBLISHED')).toBeTruthy()

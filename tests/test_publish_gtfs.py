@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from scripts.actor_registry import ActorError, create_actor
 from scripts.publication_ledger import (
     PublicationError,
     PublicationLockTimeout,
@@ -24,7 +25,7 @@ from scripts.publish_gtfs import (
     revert_publication,
     verify_published_snapshot,
 )
-from scripts.review_gtfs import approve_dataset
+from scripts.review_gtfs import ReviewError, approve_dataset
 from scripts.snapshot_gtfs import (
     build_snapshot,
     connect_read_only,
@@ -40,6 +41,8 @@ from scripts.snapshot_gtfs import (
 )
 from scripts.stage_gtfs import IngestMetadata, stage_gtfs_archive
 from test_stage_gtfs import NOW, VALID_METADATA
+
+from auth_helpers import actor_token, proof
 
 PUBLISH_TABLES: dict[str, str] = {
     "agency.txt": (
@@ -119,12 +122,12 @@ class PublishFixtures(unittest.TestCase):
         self.assertTrue(staged["staged"], staged)
         dataset_id = str(staged["dataset_id"])
         if approved:
-            approve_dataset(staging, dataset_id, reviewer_id=REVIEWER, attestations=FULL_ATTESTATIONS, now=NOW)
+            approve_dataset(staging, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
         return staging, Path(directory) / "published", dataset_id
 
     def published_feed(self, directory: str, **overrides: Any) -> tuple[Path, Path, str, str]:
         staging, published, dataset_id = self.stage_feed(directory, **overrides)
-        result = publish_dataset(staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+        result = publish_dataset(staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
         return staging, published, dataset_id, str(result["snapshot_id"])
 
 
@@ -133,7 +136,7 @@ class GTFSPublicationTests(PublishFixtures):
         with tempfile.TemporaryDirectory() as directory:
             staging, published, dataset_id = self.stage_feed(directory)
             result = publish_dataset(
-                staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW
+                staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW
             )
 
             self.assertEqual(result["publication_status"], "PUBLISHED")
@@ -174,7 +177,7 @@ class GTFSPublicationTests(PublishFixtures):
         with tempfile.TemporaryDirectory() as directory:
             staging, published, dataset_id = self.stage_feed(directory, approved=False)
             with self.assertRaises(PublicationError) as caught:
-                publish_dataset(staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+                publish_dataset(staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
 
             self.assertEqual(caught.exception.code, "DATASET_NOT_PUBLISHABLE")
             self.assertIn("REVIEW_NOT_APPROVED", caught.exception.blockers)
@@ -187,7 +190,7 @@ class GTFSPublicationTests(PublishFixtures):
             # Re-publication after the declared window closed is refused.
             with self.assertRaises(PublicationError) as stale:
                 publish_dataset(
-                    staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE,
+                    staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE,
                     now=NOW + timedelta(days=120),
                 )
             self.assertIn("VALIDITY_NOT_CURRENT", stale.exception.blockers)
@@ -199,7 +202,7 @@ class GTFSPublicationTests(PublishFixtures):
             content[10] ^= 0xFF
             archive.write_bytes(bytes(content))
             with self.assertRaises(PublicationError) as tampered:
-                publish_dataset(staging, published_second, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+                publish_dataset(staging, published_second, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
             self.assertEqual(tampered.exception.code, "DATASET_NOT_INTACT")
             self.assertFalse(published_second.exists())
 
@@ -213,24 +216,96 @@ class GTFSPublicationTests(PublishFixtures):
             }
             with patch("scripts.snapshot_gtfs.current_review_state", return_value=state):
                 with self.assertRaises(PublicationError) as caught:
-                    publish_dataset(staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+                    publish_dataset(staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
             self.assertIn("SOURCE_TYPE_UNKNOWN", caught.exception.blockers)
 
-    def test_generic_publishers_are_refused_without_writing_a_snapshot(self) -> None:
+    def test_generic_accounts_cannot_publish_and_a_forged_proof_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             staging, published, dataset_id = self.stage_feed(directory)
+            actors_root = Path(directory) / "actors"
             for account in ("admin", "ci", "anonymous"):
-                with self.assertRaises(PublicationError) as caught:
-                    publish_dataset(staging, published, dataset_id, publisher_id=account, note=NOTE, now=NOW)
-                self.assertEqual(caught.exception.code, "INVALID_PUBLISHER")
+                # 1. Un compte générique ne peut même pas être enregistré.
+                with self.assertRaises(ActorError) as refused_account:
+                    create_actor(
+                        account,
+                        display_name="Compte générique",
+                        role="publisher",
+                        secret="secret-assez-long",
+                        created_by="awa.mainteneur",
+                        root=actors_root,
+                    )
+                self.assertIn(refused_account.exception.code, {"GENERIC_ACTOR_ID", "INVALID_ACTOR_ID"})
+
+                # 2. Une preuve fabriquée à la main pour ce nom ne publie rien.
+                with self.assertRaises(ReviewError) as caught:
+                    publish_dataset(staging, published, dataset_id, proof=proof(account, "publisher"), note=NOTE, now=NOW)
+                self.assertEqual(caught.exception.code, "AUTHENTICATION_INVALID")
+
             self.assertFalse((published / "publication.jsonl").exists())
-            self.assertEqual([path.name for path in published.iterdir() if path.is_dir()], [])
+            self.assertEqual(
+                [path.name for path in published.iterdir() if path.is_dir()] if published.exists() else [], []
+            )
+
+    def test_the_same_actor_cannot_approve_then_publish_a_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            staging, published, dataset_id = self.stage_feed(directory, approved=False)
+            # Le même acteur reçoit une preuve de relecteur puis une preuve de publieur.
+            approve_dataset(staging, dataset_id, proof=proof(REVIEWER, "reviewer"), attestations=FULL_ATTESTATIONS, now=NOW)
+            with self.assertRaises(PublicationError) as caught:
+                publish_dataset(staging, published, dataset_id, proof=proof(REVIEWER, "publisher"), note=NOTE, now=NOW)
+            self.assertEqual(caught.exception.code, "SEPARATION_OF_DUTIES")
+            self.assertFalse((published / "publication.jsonl").exists())
+            self.assertEqual(
+                [path.name for path in published.iterdir() if path.is_dir()] if published.exists() else [], []
+            )
+
+    def test_a_decision_without_an_authenticated_actor_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            staging, published, dataset_id = self.stage_feed(directory, approved=False)
+            expected_codes = {
+                # Rien du tout, ou une preuve sans acteur : une preuve est exigée.
+                "none": "AUTHENTICATION_REQUIRED",
+                "no_actor": "AUTHENTICATION_INVALID",
+                "no_role": "ROLE_FORBIDDEN",
+                "no_method": "AUTHENTICATION_INVALID",
+            }
+            malformed = {
+                "none": None,
+                "no_actor": {},
+                "no_role": {"actor_id": "fatou.ndiaye"},
+                "no_method": {"actor_id": "fatou.ndiaye", "role": "reviewer", "authenticated_at": "2026-10-08T09:00:00+00:00"},
+            }
+            for label, missing_proof in malformed.items():
+                with self.assertRaises(ReviewError) as approve_refusal:
+                    approve_dataset(staging, dataset_id, proof=missing_proof, attestations=FULL_ATTESTATIONS, now=NOW)
+                self.assertEqual(approve_refusal.exception.code, expected_codes[label], label)
+            # Un horodatage sans fuseau ne prouve rien.
+            with self.assertRaises(ReviewError) as naive_timestamp:
+                approve_dataset(
+                    staging,
+                    dataset_id,
+                    proof={"actor_id": "fatou.ndiaye", "role": "reviewer", "method": "cli-token", "authenticated_at": "2026-10-08T09:00:00"},
+                    attestations=FULL_ATTESTATIONS,
+                    now=NOW,
+                )
+            self.assertEqual(naive_timestamp.exception.code, "AUTHENTICATION_INVALID")
+            # Un rôle insuffisant est refusé sans rien écrire.
+            with self.assertRaises(ReviewError) as wrong_role:
+                approve_dataset(staging, dataset_id, proof=proof(REVIEWER, "publisher"), attestations=FULL_ATTESTATIONS, now=NOW)
+            self.assertEqual(wrong_role.exception.code, "ROLE_FORBIDDEN")
+            with self.assertRaises(ReviewError) as publish_refusal:
+                publish_dataset(staging, published, dataset_id, proof=proof(PUBLISHER, "reviewer"), note=NOTE, now=NOW)
+            self.assertEqual(publish_refusal.exception.code, "ROLE_FORBIDDEN")
+            self.assertFalse((published / "publication.jsonl").exists())
+            self.assertEqual(
+                [path.name for path in published.iterdir() if path.is_dir()] if published.exists() else [], []
+            )
 
     def test_a_refused_publication_leaves_no_orphan_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             staging, published, dataset_id, _ = self.published_feed(directory)
             with self.assertRaises(PublicationError) as caught:
-                publish_dataset(staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+                publish_dataset(staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
             self.assertEqual(caught.exception.code, "ALREADY_PUBLISHED")
 
             snapshot_dirs = [path.name for path in published.iterdir() if path.is_dir()]
@@ -242,9 +317,11 @@ class GTFSPublicationTests(PublishFixtures):
             staging, published, dataset_id = self.stage_feed(directory)
             with patch("scripts.publish_gtfs.publication_lock", side_effect=PublicationLockTimeout("Verrou tenu par une autre publication.")):
                 with self.assertRaises(PublicationLockTimeout):
-                    publish_dataset(staging, published, dataset_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+                    publish_dataset(staging, published, dataset_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
             self.assertFalse((published / "publication.jsonl").exists())
-            self.assertEqual([path.name for path in published.iterdir() if path.is_dir()], [])
+            self.assertEqual(
+                [path.name for path in published.iterdir() if path.is_dir()] if published.exists() else [], []
+            )
 
     def test_unlisted_snapshots_are_listed_but_never_served(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -262,13 +339,13 @@ class GTFSPublicationTests(PublishFixtures):
     def test_a_newer_version_supersedes_the_previous_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             staging, published, first_id = self.stage_feed(directory, version="publish-v1")
-            first = publish_dataset(staging, published, first_id, publisher_id=PUBLISHER, note=NOTE, now=NOW)
+            first = publish_dataset(staging, published, first_id, proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW)
             _, _, second_id = self.stage_feed(
                 directory, version="publish-v2",
                 tables={**PUBLISH_TABLES, "stops.txt": PUBLISH_TABLES["stops.txt"].replace("Terminus Yoff", "Terminus Yoff Nord")},
             )
             second = publish_dataset(
-                staging, published, second_id, publisher_id=PUBLISHER, note=NOTE,
+                staging, published, second_id, proof=proof(PUBLISHER, "publisher"), note=NOTE,
                 now=NOW + timedelta(hours=1),
             )
             self.assertEqual(second["previous_active_snapshot"], first["snapshot_id"])
@@ -286,7 +363,7 @@ class GTFSPublicationTests(PublishFixtures):
             _, published, dataset_id, snapshot_id = self.published_feed(directory)
             before = {path.name: path.stat().st_mtime for path in (published / snapshot_id).iterdir()}
 
-            result = revert_publication(published, publisher_id="awa.diop", reason=REASON, now=NOW + timedelta(hours=2))
+            result = revert_publication(published, proof=proof("awa.diop", "publisher"), reason=REASON, now=NOW + timedelta(hours=2))
             self.assertEqual(result["publication_status"], "NOT_PUBLISHED")
             self.assertFalse(result["files_deleted"])
             self.assertEqual(result["reverted_entry_id"], "pub-000001")
@@ -306,7 +383,7 @@ class GTFSPublicationTests(PublishFixtures):
             self.assertFalse(resolve_active_snapshot(published, now=NOW)["available"])
 
             with self.assertRaises(PublicationError) as caught:
-                revert_publication(published, publisher_id="awa.diop", reason=REASON, now=NOW)
+                revert_publication(published, proof=proof("awa.diop", "publisher"), reason=REASON, now=NOW)
             self.assertEqual(caught.exception.code, "NOTHING_PUBLISHED")
 
     def test_only_the_active_snapshot_can_be_reverted(self) -> None:
@@ -315,12 +392,12 @@ class GTFSPublicationTests(PublishFixtures):
             _, _, second_id = self.stage_feed(directory, version="publish-v2")
             second = publish_dataset(
                 published.parent / "staging", published, second_id,
-                publisher_id=PUBLISHER, note=NOTE, now=NOW + timedelta(hours=1),
+                proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW + timedelta(hours=1),
             )
 
             with self.assertRaises(PublicationError) as caught:
                 revert_publication(
-                    published, publisher_id=PUBLISHER, reason=REASON,
+                    published, proof=proof(PUBLISHER, "publisher"), reason=REASON,
                     snapshot_id=first_snapshot, now=NOW + timedelta(hours=2),
                 )
             self.assertEqual(caught.exception.code, "NOT_ACTIVE")
@@ -328,7 +405,7 @@ class GTFSPublicationTests(PublishFixtures):
 
             with self.assertRaises(PublicationError) as wrong_snapshot:
                 revert_publication(
-                    published, publisher_id=PUBLISHER, reason=REASON,
+                    published, proof=proof(PUBLISHER, "publisher"), reason=REASON,
                     snapshot_id="snap-20260101t000000z-inconnu", now=NOW + timedelta(hours=2),
                 )
             self.assertEqual(wrong_snapshot.exception.code, "NOT_ACTIVE")
@@ -353,7 +430,7 @@ class GTFSPublicationTests(PublishFixtures):
             with self.assertRaises(PublicationError) as caught:
                 publish_dataset(
                     published.parent / "staging", published, second_id,
-                    publisher_id=PUBLISHER, note=NOTE, now=NOW,
+                    proof=proof(PUBLISHER, "publisher"), note=NOTE, now=NOW,
                 )
             self.assertEqual(caught.exception.code, "JOURNAL_INVALID")
             self.assertEqual(len(list_snapshots(published, now=NOW)), 1)
@@ -393,24 +470,46 @@ class GTFSPublicationTests(PublishFixtures):
     def test_cli_publishes_reverts_and_verifies_with_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             staging, published, dataset_id = self.stage_feed(directory)
+            actors_root = Path(directory) / "actors"
+            publisher_token = actor_token(actors_root, PUBLISHER, "publisher")
             script = Path(__file__).resolve().parents[1] / "scripts" / "publish_gtfs.py"
-            base = [sys.executable, str(script), "--root", str(staging), "--published-root", str(published), "--now", "2026-10-08T12:00:00Z"]
+            base = [
+                sys.executable,
+                str(script),
+                "--root", str(staging),
+                "--published-root", str(published),
+                "--actors-root", str(actors_root),
+                "--now", "2026-10-08T12:00:00Z",
+            ]
 
-            blocked = subprocess.run(
-                [*base, "publish", dataset_id, "--publisher", "ci", "--note", NOTE],
+            # Un jeton fabriqué ne publie rien, même avec un nom plausible.
+            forged = subprocess.run(
+                [*base, "publish", dataset_id, "--token", "dkr1.faux.jeton", "--note", NOTE],
                 capture_output=True, text=True, check=False,
             )
-            self.assertEqual(blocked.returncode, 1, blocked.stderr)
-            self.assertEqual(json.loads(blocked.stdout)["error"], "INVALID_PUBLISHER")
+            self.assertEqual(forged.returncode, 1, forged.stderr)
+            self.assertEqual(json.loads(forged.stdout)["error"], "TOKEN_INVALID")
+
+            # Sans jeton, la commande refuse d’écrire un nom à la main.
+            missing = subprocess.run(
+                [*base, "publish", dataset_id, "--note", NOTE],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(missing.returncode, 2, missing.stderr)
+            self.assertIn("--token", missing.stderr)
 
             published_run = subprocess.run(
-                [*base, "publish", dataset_id, "--publisher", PUBLISHER, "--note", NOTE],
+                [*base, "publish", dataset_id, "--token", publisher_token, "--note", NOTE],
                 capture_output=True, text=True, check=False,
             )
             self.assertEqual(published_run.returncode, 0, published_run.stderr)
             payload = json.loads(published_run.stdout)
             snapshot_id = payload["snapshot_id"]
             self.assertEqual(payload["publication_status"], "PUBLISHED")
+            self.assertEqual(payload["authentication"]["actor_id"], PUBLISHER)
+            self.assertEqual(payload["authentication"]["method"], "cli-token")
+            self.assertEqual(payload["journal_entry"]["authentication"]["actor_id"], PUBLISHER)
+            self.assertTrue(payload["separation_of_duties"])
 
             listed = subprocess.run([*base, "list"], capture_output=True, text=True, check=False)
             self.assertEqual(listed.returncode, 0, listed.stderr)
@@ -421,7 +520,7 @@ class GTFSPublicationTests(PublishFixtures):
             self.assertTrue(json.loads(verified.stdout)["served"])
 
             reverted = subprocess.run(
-                [*base, "revert", "--publisher", PUBLISHER, "--reason", REASON],
+                [*base, "revert", "--token", publisher_token, "--reason", REASON],
                 capture_output=True, text=True, check=False,
             )
             self.assertEqual(reverted.returncode, 0, reverted.stderr)

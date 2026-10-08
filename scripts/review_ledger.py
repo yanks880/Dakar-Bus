@@ -352,6 +352,7 @@ def build_entry(
     attestations: dict[str, dict[str, str | None]] | None = None,
     reverted_entry_id: str | None = None,
     decision_basis: dict[str, Any] | None = None,
+    authentication: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if action not in LEDGER_ACTIONS:
         raise ValueError(f"action doit être l’une de : {', '.join(LEDGER_ACTIONS)}.")
@@ -371,6 +372,9 @@ def build_entry(
         "attestations": attestations or {},
         "reverted_entry_id": reverted_entry_id,
         "decision_basis": decision_basis or {},
+        # None when a decision was recorded without an authenticated actor: the
+        # absence is visible in the chain instead of being silently assumed.
+        "authentication": authentication,
         "previous_hash": previous_hash,
         "publication_status": "NOT_PUBLISHED",
         "publication_ready": False,
