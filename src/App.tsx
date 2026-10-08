@@ -805,7 +805,7 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
         <div>
           <span className="eyebrow">PROVENANCE ET REVUE</span>
           <h2>Gouvernance.</h2>
-          <p>Du staging à l’approbation, chaque étape laisse une trace vérifiable.</p>
+          <p>Du staging à la publication, chaque étape laisse une trace vérifiable.</p>
         </div>
         <span className="governance-heading-icon"><Database size={19} /></span>
       </div>
@@ -905,7 +905,7 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
 
       <div className="source-governance-note">
         <ShieldCheck size={16} />
-        <p><strong>Une approbation ne publie rien.</strong> Les décisions sont enregistrées sur la CLI par un relecteur nominatif dans un journal chaîné ; la publication reste une étape séparée, non implémentée.</p>
+        <p><strong>Une approbation ne publie rien.</strong> Les décisions sont enregistrées sur la CLI par un relecteur nominatif dans un journal chaîné ; la publication est une étape séparée qui gèle un snapshot daté et haché, et un retour arrière ajoute une entrée sans rien effacer.</p>
       </div>
     </section>
   )

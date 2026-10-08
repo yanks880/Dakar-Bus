@@ -15,7 +15,9 @@ Cette première fondation fournit :
 - un auditeur GTFS Static en lecture seule, sans extraction de l’archive, avec rapport JSON, contrôle des tables essentielles, relations, coordonnées, horaires, calendriers, tracés, fréquences et transferts ;
 - un outil de staging versionné qui conserve le ZIP original, son checksum, le manifeste de provenance déclaré, les comptages et le rapport de validation, sans publication automatique ;
 - une revue humaine traçable : cinq attestations obligatoires, un relecteur nominatif, un journal append-only chaîné par empreintes et un retour arrière qui n'efface rien ;
-- une API locale en lecture seule (`/api/pipeline`, `/api/catalog`, `/api/datasets/<id>`) et un onglet Gouvernance qui affiche l'état réel du catalogue ou signale honnêtement qu'il n'est pas joignable ;
+- une étape de publication qui gèle une version approuvée dans un snapshot daté et immuable (`network.sqlite` + manifeste haché), avec un journal append-only chaîné par empreintes et un retour arrière qui n'efface rien ;
+- une API locale en lecture seule : gouvernance du staging (`/api/pipeline`, `/api/catalog`, `/api/datasets/<id>`, `/api/publications`) et lecture publique du snapshot publié (`/api/network`, `/api/stops/search`, `/api/stops/near`, `/api/stops/<id>`, `/api/routes`, `/api/routes/<id>`) ;
+- un onglet Gouvernance qui affiche l'état réel du catalogue ou signale honnêtement qu'il n'est pas joignable ;
 - des règles testées pour le statut des horaires, le label LIVE, les décomptes en minutes et la publication d'objets actifs.
 
 **Aucun flux GTFS, GTFS-RT, horaire, arrêt, ligne, tracé, alerte ou donnée opérateur n'est actuellement fourni par ce dépôt.** La carte de fond représente uniquement la géographie OpenStreetMap. Le calcul d'itinéraire reste donc volontairement indisponible et l'interface l'explique au lieu de fabriquer un résultat. Un clic sur la carte choisit un point géographique, mais ne le géocode pas en nom de lieu.
@@ -48,6 +50,8 @@ npm run admin:api   # http://127.0.0.1:8787, lecture seule
 npm run dev         # relaie /api vers l'API locale
 ```
 
+Pour publier une version déjà approuvée, `npm run publish:gtfs -- publish <dataset_id> --publisher prenom.nom --note "..."` ; les snapshots sont écrits dans `data/published/`, ignoré par Git comme le staging.
+
 Le workflow GitHub Actions (`.github/workflows/ci.yml`) exécute le build, les deux suites de tests et l’audit des dépendances à chaque push et pull request.
 
 ## Structure
@@ -70,7 +74,11 @@ scripts/
   catalog_gtfs.py        catalogue local en lecture seule, état de revue inclus
   review_ledger.py       journal append-only chaîné par empreintes, verrou exclusif
   review_gtfs.py         revue humaine : approbation, refus, retour arrière
-  serve_admin_api.py     API HTTP en lecture seule pour la console
+  publication_ledger.py  journal des publications append-only, chaîné par empreintes
+  snapshot_gtfs.py       construction et lecture des snapshots publiés (SQLite figée)
+  publish_gtfs.py        publication, vérification et retour arrière d’un snapshot
+  serve_admin_api.py     API HTTP en lecture seule : gouvernance et données publiées
+  serve_read_api.py      routes publiques servies depuis le snapshot actif
 public/
   manifest.webmanifest    métadonnées PWA
   sw.js                  cache de l'enveloppe applicative, jamais /api
@@ -79,6 +87,7 @@ tests/
   test_stage_gtfs.py       tests de versionnage et de staging
   test_catalog_gtfs.py     tests d’intégrité et de comparaison catalogue
   test_review_gtfs.py      tests d’approbation, de refus et de retour arrière
+  test_publish_gtfs.py     tests de publication, de vérification et de retour arrière
   test_serve_admin_api.py  tests de l’API en lecture seule
 ```
 
@@ -162,6 +171,45 @@ Règles appliquées par l'outil :
 - une version refusée doit être réouverte par `revert` avant toute nouvelle décision ;
 - la sortie reste `publication_status: NOT_PUBLISHED` et `publication_ready: false`, y compris après approbation.
 
+## Publier un snapshot (troisième porte)
+
+La publication est la seule étape qui rend une version lisible par l'application. Elle gèle la version approuvée dans un snapshot daté et immuable (`network.sqlite` + `manifest.json` haché), puis ajoute **une** entrée au journal des publications (`data/published/publication.jsonl`), chaîné par empreintes comme celui de la revue.
+
+```bash
+npm run publish:gtfs -- publish <dataset_id> \
+  --publisher prenom.nom \
+  --note "Publication du réseau vérifié le 2026-10-08"
+
+npm run publish:gtfs -- list
+npm run publish:gtfs -- show <snapshot_id>
+npm run publish:gtfs -- verify <snapshot_id>
+npm run publish:gtfs -- journal
+npm run publish:gtfs -- revert --publisher prenom.nom --reason "Période de validité contestée par la source"
+```
+
+Règles appliquées par l'outil :
+
+- publier exige une revue `APPROVED`, un journal de revue intègre, une validité effective `CURRENT`, un `source_type` connu et un `service_status` `ACTIVE` — le tout revérifié au moment de la publication, pas au moment de l'approbation ;
+- le publieur est nominatif : les comptes génériques (`admin`, `ci`, `anonymous`, …) sont refusés, comme pour la revue ; l'entrée enregistre aussi le relecteur et l'empreinte de sa décision, et signale `separation_of_duties` lorsque les deux personnes diffèrent ;
+- le snapshot est construit dans un répertoire temporaire puis renommé : rien n'est jamais écrit à moitié, et aucune version n'est écrasée ;
+- **construire un snapshot ne le publie pas** : tant que le journal n'a pas d'entrée, le snapshot reste `UNLISTED` et l'API ne sert rien ;
+- `verify` rehashe la base, recompte chaque table et compare au manifeste ; toute modification du fichier publié est signalée ;
+- `revert` ajoute une entrée : le fichier publié reste sur disque, les deux entrées restent lisibles, et l'API cesse simplement de servir la version. Seul le snapshot actif peut être annulé ;
+- un journal altéré (chaîne rompue) bloque toute publication et toute lecture : l'API ne sert alors plus rien plutôt que de servir un état douteux.
+
+## API de lecture des données publiées
+
+Les routes publiques répondent uniquement depuis le snapshot actif, en URL relative (relayées par Vite). Sans publication — ou si la publication a été annulée — elles répondent honnêtement qu'il n'y a rien à servir.
+
+- `GET /api/network` — état de publication, provenance déclarée, empreintes, bornes et comptages ; `available: false` quand rien n'est publié ;
+- `GET /api/stops/search?q=<texte>&limit=<1..100>` — recherche d'arrêts par nom, insensible à la casse et aux accents, sur les noms tels que déclarés dans le flux ;
+- `GET /api/stops/near?lat=<...>&lon=<...>&radius=<1..5000>&limit=<1..100>` — arrêts dans un rayon, avec `distance_m` calculée depuis les coordonnées déclarées ;
+- `GET /api/stops/<stop_id>` — un arrêt, les lignes qui le desservent et la plage horaire théorique déclarée (`stop_times`) ;
+- `GET /api/routes` et `GET /api/routes/<route_id>` — lignes déclarées, agence, nombre de courses et d'arrêts, présence de tracés ;
+- `GET /api/publications` — journal des publications : entrées, snapshot actif, snapshots listés (`ACTIVE`, `SUPERSEDED`, `REVOKED`, `UNLISTED`).
+
+Chaque réponse porte `publication_status`, `snapshot_id`, `data_policy` et `realtime: false`. Les horaires sont des heures théoriques déclarées dans le flux : aucune position de véhicule, aucune estimation d'arrivée et aucune donnée inventée ne sont produites. Les requêtes invalides renvoient `400 INVALID_QUERY`, les identifiants inconnus `404 NOT_FOUND` et l'absence de publication `404 NOT_PUBLISHED`.
+
 ## Console de gouvernance en lecture seule
 
 `npm run admin:api` expose le catalogue et l'état de revue sur `http://127.0.0.1:8787` :
@@ -169,7 +217,9 @@ Règles appliquées par l'outil :
 - `GET /healthz` — état du service ;
 - `GET /api/pipeline` — comptage par étape de gouvernance, `published` toujours à 0 ;
 - `GET /api/catalog` — versions stagées, intégrité, validité effective, état de revue ;
-- `GET /api/datasets/<dataset_id>` — dossier de revue complet (provenance déclarée, bloqueurs, attestations attendues).
+- `GET /api/datasets/<dataset_id>` — dossier de revue complet (provenance déclarée, bloqueurs, attestations attendues) ;
+- `GET /api/publications` — journal des publications et snapshots listés ;
+- les routes publiques de données (`/api/network`, `/api/stops/...`, `/api/routes...`) servies depuis le snapshot publié.
 
 L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH`, `DELETE` et `OPTIONS` renvoient `405 READ_ONLY_API`. Les identifiants sont validés avant tout accès disque, les réponses portent `Cache-Control: no-store`, et le service worker ne met jamais `/api` en cache. Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative (relaiées par Vite) ; sans API joignable, il affiche « Console hors ligne » au lieu d'inventer un catalogue.
 
@@ -183,7 +233,9 @@ L'API ne propose aucun verbe d'écriture : `POST`, `PUT`, `PATCH`, `DELETE` et `
 - TATA reste une catégorie distincte d'AFTU.
 - La géolocalisation est conservée uniquement en mémoire côté navigateur ; aucune position n'est envoyée à une API ou persistée.
 - Le service worker ne met pas en cache les tuiles cartographiques tierces, ni des horaires ou positions présentés comme temps réel.
-- Une approbation de revue n'est pas une publication : `publication_status` reste `NOT_PUBLISHED` et l'étape de publication n'est pas implémentée.
+- Une approbation de revue n'est pas une publication : seule une entrée du journal des publications rend un snapshot lisible.
+- Un snapshot publié est immuable et haché ; si le fichier ne correspond plus à l'empreinte enregistrée, l'API ne sert plus rien du tout.
+- Les données publiées restent des horaires théoriques (GTFS Static) : aucune position de véhicule, aucune estimation et aucun temps réel ne sont dérivés d'un flux statique.
 - Le journal de revue est append-only : une annulation ajoute une entrée, elle n'en supprime aucune.
 - L'API d'administration est en lecture seule ; la console web ne peut enregistrer aucune décision.
 
@@ -195,7 +247,7 @@ Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.or
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.
 2. ~~Revue humaine traçable autour du staging/catalogue~~ — fait : journal chaîné, attestations obligatoires, retour arrière, console en lecture seule. Reste l'authentification et l'écriture depuis la console.
-3. Implémenter la publication elle-même : sélection d'une version approuvée, normalisation des tables GTFS vers un stockage de données, snapshot daté et retour arrière, avant toute couche carte.
+3. ~~Publier une version approuvée~~ — fait côté données : snapshot SQLite daté et haché, journal append-only, retour arrière, API de lecture (`/api/network`, `/api/stops/search`, `/api/stops/near`). Reste à brancher l'interface sur ces routes et à documenter la séparation des rôles au-delà du journal.
 4. Ajouter l'API publique et un moteur de recherche géographique/routage multimodal sur des données réelles.
 5. Connecter les alertes et un flux temps réel uniquement après obtention d'une source exploitable.
 6. Compléter les tests d'intégration, E2E, sécurité, monitoring, sauvegardes et administration.

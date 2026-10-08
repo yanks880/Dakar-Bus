@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only HTTP API over the staged GTFS catalog and its review ledger.
+"""Read-only HTTP API: governance on the staging side, published data on the other.
 
-This server never writes: approvals, rejections and rollbacks stay on the
-review CLI, where a named reviewer is required. The API only exposes what the
-catalog already verifies, so a console can display governance state without
-being able to alter it.
+The governance routes describe staged versions and their review state; the
+public routes serve the active published snapshot, and nothing else. This
+server never writes: approvals stay on the review CLI, publications on the
+publish CLI. Both route groups are GET-only and report honestly when the store
+or the journal is unusable.
 """
 
 from __future__ import annotations
@@ -19,24 +20,52 @@ from typing import Any
 
 try:  # Works both as `python -m scripts.serve_admin_api` and as a file script.
     from .catalog_gtfs import DATASET_ID_RE, list_staged_datasets
+    from .publication_ledger import current_publication_state
     from .review_gtfs import review_dossier
     from .review_ledger import current_review_state
+    from .serve_read_api import PUBLIC_ROUTES, ApiError, resolve_public_route
+    from .snapshot_gtfs import DATA_POLICY, list_snapshots
 except ImportError:  # pragma: no cover - exercised by the direct CLI entry point
     from catalog_gtfs import DATASET_ID_RE, list_staged_datasets
+    from publication_ledger import current_publication_state
     from review_gtfs import review_dossier
     from review_ledger import current_review_state
+    from serve_read_api import PUBLIC_ROUTES, ApiError, resolve_public_route
+    from snapshot_gtfs import DATA_POLICY, list_snapshots
 
 
 API_PREFIX = "/api"
 DATASET_ROUTE_PREFIX = f"{API_PREFIX}/datasets/"
-DATA_POLICY = (
-    "Lecture seule : aucune donnée de transport n’est publiée et aucune décision de revue "
-    "ne peut être enregistrée via cette API."
-)
+GOVERNANCE_ROUTES = ("/healthz", "/api/pipeline", "/api/catalog", "/api/datasets/<dataset_id>")
+
+# Kept for callers that imported the older name.
+AdminApiError = ApiError
 
 
-def pipeline_summary(root: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
-    """Count datasets per governance stage. Publication is always zero here."""
+def _known_routes() -> str:
+    return ", ".join((*GOVERNANCE_ROUTES, *PUBLIC_ROUTES))
+
+
+def _not_found(message: str) -> ApiError:
+    return ApiError(404, "NOT_FOUND", message)
+
+
+def _publication_overview(published_root: str | Path, *, now: datetime | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    state = current_publication_state(published_root)
+    try:
+        snapshots = list_snapshots(published_root, now=now)
+    except ValueError:
+        snapshots = []
+    return state, snapshots
+
+
+def pipeline_summary(
+    root: str | Path,
+    *,
+    now: datetime | None = None,
+    published_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Count datasets per governance stage, publication included."""
     entries = list_staged_datasets(root, now=now)
     counts = {
         "staged": len(entries),
@@ -46,6 +75,7 @@ def pipeline_summary(root: str | Path, *, now: datetime | None = None) -> dict[s
         "rejected": 0,
         "review_unknown": 0,
         "published": 0,
+        "snapshots": 0,
     }
     for entry in entries:
         if entry["integrity"] != "OK":
@@ -60,6 +90,11 @@ def pipeline_summary(root: str | Path, *, now: datetime | None = None) -> dict[s
         else:
             counts["review_unknown"] += 1
 
+    store = Path(published_root) if published_root is not None else Path(root).parent / "published"
+    publication, snapshots = _publication_overview(store, now=now)
+    counts["snapshots"] = len(snapshots)
+    counts["published"] = sum(1 for snapshot in snapshots if snapshot["publication_status"] == "ACTIVE")
+
     return {
         "generated_at": (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
         "counts": counts,
@@ -68,35 +103,64 @@ def pipeline_summary(root: str | Path, *, now: datetime | None = None) -> dict[s
             {"id": "pending_review", "label": "En revue", "count": counts["pending_review"], "note": "En attente d’une décision humaine nominative."},
             {"id": "approved", "label": "Approuvé", "count": counts["approved"], "note": "Attestations complètes ; publication toujours séparée."},
             {"id": "rejected", "label": "Refusé", "count": counts["rejected"], "note": "Motif enregistré dans le journal."},
-            {"id": "published", "label": "Publié", "count": counts["published"], "note": "La publication n’est pas encore implémentée."},
+            {
+                "id": "published",
+                "label": "Publié",
+                "count": counts["published"],
+                "note": "Snapshot daté, immuable et servi en lecture seule ; retour arrière tracé dans le journal.",
+            },
         ],
         "integrity_invalid": counts["integrity_invalid"],
         "review_unknown": counts["review_unknown"],
         "data_policy": DATA_POLICY,
-        "publication_status": "NOT_PUBLISHED",
+        "publication_status": publication["publication_status"],
+        "publication_journal_integrity": publication["journal_integrity"],
+        "active_snapshot_id": (publication.get("active") or {}).get("snapshot_id") if isinstance(publication.get("active"), dict) else None,
     }
 
 
-def catalog_payload(root: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
+def catalog_payload(
+    root: str | Path,
+    *,
+    now: datetime | None = None,
+    published_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Staged versions, with the publication state read from the journal.
+
+    The staging manifest always says `NOT_PUBLISHED` — it is frozen at import
+    time. What a version is *today* is decided by the publication journal, so
+    the console reads it from there rather than from the manifest.
+    """
+    store = Path(published_root) if published_root is not None else Path(root).parent / "published"
+    publication = current_publication_state(store)
+    _, snapshots = _publication_overview(store, now=now)
+    active = publication.get("active")
+    active_snapshot_id = active.get("snapshot_id") if isinstance(active, dict) else None
+
+    published_by_dataset: dict[str, list[dict[str, Any]]] = {}
+    for snapshot in snapshots:
+        published_by_dataset.setdefault(str(snapshot.get("dataset_id")), []).append(snapshot)
+
+    datasets = list_staged_datasets(root, now=now)
+    for entry in datasets:
+        related = published_by_dataset.get(str(entry["dataset_id"]), [])
+        if any(snapshot["snapshot_id"] == active_snapshot_id for snapshot in related):
+            entry["publication_status"] = "PUBLISHED"
+        elif any(snapshot["publication_status"] == "REVOKED" for snapshot in related):
+            entry["publication_status"] = "REVOKED"
+        elif related:
+            entry["publication_status"] = "SUPERSEDED"
+        entry["publication_snapshot_id"] = related[-1]["snapshot_id"] if related else None
+
     return {
         "generated_at": (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
         "root": Path(root).name or str(root),
-        "datasets": list_staged_datasets(root, now=now),
+        "datasets": datasets,
         "data_policy": DATA_POLICY,
-        "publication_status": "NOT_PUBLISHED",
+        "publication_status": publication["publication_status"],
+        "publication_journal_integrity": publication["journal_integrity"],
+        "active_snapshot_id": active_snapshot_id,
     }
-
-
-class AdminApiError(Exception):
-    def __init__(self, status: int, code: str, message: str) -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-
-
-def _not_found(message: str) -> AdminApiError:
-    return AdminApiError(404, "NOT_FOUND", message)
 
 
 def dataset_loader(root: Path, dataset_id: str) -> Callable[[], dict[str, Any]]:
@@ -118,19 +182,32 @@ def dataset_loader(root: Path, dataset_id: str) -> Callable[[], dict[str, Any]]:
     return load
 
 
-def make_router(root: Path) -> dict[str, Callable[[], dict[str, Any]]]:
-    """Exact-match routes only; identifiers are validated before touching disk."""
+def make_router(root: Path, published_root: Path) -> dict[str, Callable[[], dict[str, Any]]]:
+    """Exact-match governance routes; identifiers are validated before touching disk."""
     return {
-        "/healthz": lambda: {"status": "ok", "service": "dakar-bus-admin-api", "mode": "read-only"},
-        f"{API_PREFIX}/pipeline": lambda: pipeline_summary(root),
-        f"{API_PREFIX}/catalog": lambda: catalog_payload(root),
+        "/healthz": lambda: {
+            "status": "ok",
+            "service": "dakar-bus-read-api",
+            "mode": "read-only",
+            "governance_root": str(root),
+            "published_root": str(published_root),
+        },
+        f"{API_PREFIX}/pipeline": lambda: pipeline_summary(root, published_root=published_root),
+        f"{API_PREFIX}/catalog": lambda: catalog_payload(root, published_root=published_root),
     }
 
 
 class AdminApiHandler(BaseHTTPRequestHandler):
-    server_version = "DakarBusAdminApi/1.0"
+    server_version = "DakarBusReadApi/1.1"
     root: Path
+    published_root: Path
     base_router: dict[str, Callable[[], dict[str, Any]]]
+
+    def _publication_status(self) -> str:
+        try:
+            return str(current_publication_state(self.published_root)["publication_status"])
+        except (ValueError, OSError):  # pragma: no cover - unreadable store
+            return "UNKNOWN"
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
@@ -144,24 +221,32 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _resolve(self, path: str) -> dict[str, Any]:
+    def _resolve(self, path: str, query: str) -> dict[str, Any]:
         route = self.base_router.get(path)
-        if route is None and path.startswith(DATASET_ROUTE_PREFIX):
-            route = dataset_loader(self.root, path[len(DATASET_ROUTE_PREFIX):])
-        if route is None:
-            raise _not_found(
-                "Ressource inconnue ; l’API n’expose que /healthz, /api/pipeline, /api/catalog et /api/datasets/<dataset_id>."
-            )
-        return route()
+        if route is not None:
+            return route()
+        if path.startswith(DATASET_ROUTE_PREFIX):
+            return dataset_loader(self.root, path[len(DATASET_ROUTE_PREFIX):])()
+        public = resolve_public_route(path, query, self.published_root)
+        if public is not None:
+            return public()
+        raise _not_found(f"Ressource inconnue ; l’API en lecture seule expose : {_known_routes()}.")
 
     def _handle(self) -> None:
-        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        raw_path, _, query = self.path.partition("?")
+        path = raw_path.rstrip("/") or "/"
         try:
-            self._send(200, self._resolve(path))
-        except AdminApiError as error:
-            self._send(error.status, {"error": error.code, "message": error.message, "publication_status": "NOT_PUBLISHED"})
+            self._send(200, self._resolve(path, query))
+        except ApiError as error:
+            self._send(
+                error.status,
+                {"error": error.code, "message": error.message, "publication_status": self._publication_status()},
+            )
         except ValueError as error:
-            self._send(500, {"error": "CATALOG_UNAVAILABLE", "message": str(error), "publication_status": "NOT_PUBLISHED"})
+            self._send(
+                500,
+                {"error": "CATALOG_UNAVAILABLE", "message": str(error), "publication_status": self._publication_status()},
+            )
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         self._handle()
@@ -174,8 +259,11 @@ class AdminApiHandler(BaseHTTPRequestHandler):
             405,
             {
                 "error": "READ_ONLY_API",
-                "message": "Cette API est en lecture seule ; les décisions de revue passent par scripts/review_gtfs.py.",
-                "publication_status": "NOT_PUBLISHED",
+                "message": (
+                    "Cette API est en lecture seule ; les décisions de revue passent par scripts/review_gtfs.py "
+                    "et les publications par scripts/publish_gtfs.py."
+                ),
+                "publication_status": self._publication_status(),
             },
         )
 
@@ -187,12 +275,24 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         super().log_message(format, *args)
 
 
-def create_server(root: str | Path, host: str, port: int, *, quiet: bool = False) -> ThreadingHTTPServer:
+def create_server(
+    root: str | Path,
+    host: str,
+    port: int,
+    *,
+    published_root: str | Path | None = None,
+    quiet: bool = False,
+) -> ThreadingHTTPServer:
     resolved_root = Path(root)
+    resolved_published = Path(published_root) if published_root is not None else resolved_root.parent / "published"
     handler_class = type(
         "BoundAdminApiHandler",
         (AdminApiHandler,),
-        {"root": resolved_root, "base_router": make_router(resolved_root)},
+        {
+            "root": resolved_root,
+            "published_root": resolved_published,
+            "base_router": make_router(resolved_root, resolved_published),
+        },
     )
     server = ThreadingHTTPServer((host, port), handler_class)
     server.daemon_threads = True
@@ -201,8 +301,11 @@ def create_server(root: str | Path, host: str, port: int, *, quiet: bool = False
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Sert le catalogue et l’état de revue en lecture seule.")
+    parser = argparse.ArgumentParser(
+        description="Sert en lecture seule la gouvernance du staging et les données du snapshot publié."
+    )
     parser.add_argument("--root", type=Path, default=Path("data/staging"), help="Répertoire local de staging")
+    parser.add_argument("--published-root", type=Path, default=Path("data/published"), help="Répertoire des snapshots publiés")
     parser.add_argument("--host", default="127.0.0.1", help="Interface d’écoute (0.0.0.0 pour un aperçu distant)")
     parser.add_argument("--port", type=int, default=8787, help="Port d’écoute")
     parser.add_argument("--quiet", action="store_true", help="Ne pas journaliser les requêtes")
@@ -210,9 +313,13 @@ def main() -> int:
     if not 0 <= args.port <= 65535:
         parser.error("le port doit être compris entre 0 et 65535")
 
-    server = create_server(args.root, args.host, args.port, quiet=args.quiet)
+    server = create_server(args.root, args.host, args.port, published_root=args.published_root, quiet=args.quiet)
     bound_host, bound_port = server.server_address[0], server.server_address[1]
-    print(f"API admin en lecture seule sur http://{bound_host}:{bound_port} (racine : {args.root})", flush=True)
+    print(
+        f"API en lecture seule sur http://{bound_host}:{bound_port} "
+        f"(staging : {args.root} ; publié : {args.published_root})",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover - interactive stop

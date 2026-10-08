@@ -115,7 +115,7 @@ describe('governance console', () => {
     expect(screen.getByText(/une approbation ne publie rien/i)).toBeTruthy()
   })
 
-  it('shows the catalog read from the API and keeps publication unpublished', async () => {
+  it('shows the catalog read from the API and the publication stage as implemented', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -132,7 +132,34 @@ describe('governance console', () => {
     expect(screen.getByText('Approuvé')).toBeTruthy()
     expect(screen.getByText('fatou.ndiaye · 2026-10-08 11:30 UTC')).toBeTruthy()
     expect(screen.getByText('NOT_PUBLISHED')).toBeTruthy()
-    expect(screen.getByText(/non implémentée · rien n’est exposé publiquement/i)).toBeTruthy()
+    expect(screen.getAllByText(/snapshot daté et haché/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/non implémentée · rien n’est exposé publiquement/i)).toBeNull()
+  })
+
+  it('reports a published snapshot as published instead of hiding it', async () => {
+    const publishedCatalog = {
+      datasets: [{ ...CATALOG_PAYLOAD.datasets[0], publication_status: 'PUBLISHED', publication_snapshot_id: 'snap-20261008t131934z-demo' }],
+    }
+    const publishedPipeline = {
+      ...PIPELINE_PAYLOAD,
+      counts: { ...PIPELINE_PAYLOAD.counts, published: 1 },
+      publication_status: 'PUBLISHED',
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const payload = String(input).includes('/api/catalog') ? publishedCatalog : publishedPipeline
+        return Promise.resolve({ ok: true, status: 200, json: async () => payload })
+      }),
+    )
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+
+    expect(await screen.findByText('PUBLISHED')).toBeTruthy()
+    const publicationStage = Array.from(document.querySelectorAll('.governance-stage')).find((stage) =>
+      stage.textContent?.includes('Publication'),
+    )
+    expect(publicationStage?.querySelector('.governance-stage-count')?.textContent).toBe('1')
   })
 
   it('refuses a malformed API response instead of rendering a fake catalog', async () => {

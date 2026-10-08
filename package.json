@@ -15,7 +15,8 @@
     "stage:gtfs": "python3 scripts/stage_gtfs.py",
     "catalog:gtfs": "python3 scripts/catalog_gtfs.py",
     "review:gtfs": "python3 scripts/review_gtfs.py",
-    "admin:api": "python3 scripts/serve_admin_api.py --root data/staging --host 127.0.0.1 --port 8787"
+    "publish:gtfs": "python3 scripts/publish_gtfs.py",
+    "admin:api": "python3 scripts/serve_admin_api.py --root data/staging --published-root data/published --host 127.0.0.1 --port 8787"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

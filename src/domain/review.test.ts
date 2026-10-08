@@ -131,8 +131,10 @@ describe('catalog summary and labels', () => {
     expect(formatTimestamp('2026-10-08T11:30:00Z')).toBe('2026-10-08 11:30 UTC')
   })
 
-  it('keeps publication as an unimplemented stage and lists five attestations', () => {
-    expect(GOVERNANCE_STAGES.find((stage) => stage.id === 'publication')?.implemented).toBe(false)
+  it('lists publication as an implemented stage and five mandatory attestations', () => {
+    const publication = GOVERNANCE_STAGES.find((stage) => stage.id === 'publication')
+    expect(publication?.implemented).toBe(true)
+    expect(publication?.requirement).toContain('Snapshot daté et haché')
     expect(REQUIRED_ATTESTATIONS).toHaveLength(5)
   })
 })
