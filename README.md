@@ -7,7 +7,7 @@ Web app mobile-first pour explorer la mobilité de Dakar. L'interface place la c
 Cette première fondation fournit :
 
 - une carte interactive de Dakar, avec fond OpenStreetMap et attribution visible ;
-- une interface responsive avec Carte, Itinéraire, Explorer et Alertes ;
+- une interface responsive en 4 piliers : Explorer (carte + GPS), Trajet (recherche universelle), Alertes, Paramètres (aide, données, CGU, historique, console technique) ;
 - une demande de géolocalisation explicite, affichage de sa précision et gestion des refus/erreurs ;
 - une sélection de départ et destination par toucher/clic sur la carte ;
 - un catalogue de sources prévu pour TER, BRT, Dakar Dem Dikk, AFTU et TATA, sans prétendre qu'un jeu de données est déjà intégré ;
@@ -20,7 +20,7 @@ Cette première fondation fournit :
 - un graphe d'itinéraires dérivé du snapshot actif (`data/published/network.graph.json`) : marche par liens déclarés, courses directes déclarées, refus explicite dès qu'il ne correspond plus exactement au snapshot publié ;
 - une interface branchée sur ces routes : recherche d'arrêts, arrêts autour de vous, lignes publiées, fiche d'arrêt honnête, et recherche d'itinéraire limitée aux courses directes déclarées ;
 - des comptes locaux nominatifs (secret haché en scrypt, registre `data/actors/` ignoré par Git) : jeton Bearer court pour la CLI, session à cookie `HttpOnly`/`SameSite=Strict` plus jeton CSRF pour la console ;
-- un onglet Gouvernance qui affiche l'état réel du catalogue, ou signale honnêtement qu'il n'est pas joignable, et permet d'approuver, refuser, annuler et publier depuis la console avec un compte authentifié — les mêmes règles qu'en ligne de commande, appliquées par le serveur ;
+- une section technique dans Paramètres (repliée par défaut) qui affiche l'état réel du catalogue, ou signale honnêtement qu'il n'est pas joignable, et permet d'approuver, refuser, annuler et publier depuis la console avec un compte authentifié — les mêmes règles qu'en ligne de commande, appliquées par le serveur ;
 - des règles testées pour le statut des horaires, le label LIVE, les décomptes en minutes et la publication d'objets actifs.
 
 **Aucun flux GTFS, GTFS-RT, horaire, arrêt, ligne, tracé, alerte ou donnée opérateur n'est actuellement fourni par ce dépôt.** La carte de fond représente uniquement la géographie OpenStreetMap. Un clic sur la carte choisit un point géographique, mais ne le géocode pas en nom de lieu.
@@ -31,13 +31,13 @@ Aucune décision n'est anonyme : approuver, refuser, annuler ou publier exige un
 
 ## Réseau de référence TER/BRT, assistant et calculateur (ajouts 2026-10)
 
-Une couche **réseau de référence** distincte du pipeline de publication a été ajoutée, sans modifier l’UI existante :
+Une couche **réseau de référence** distincte du pipeline de publication a été ajoutée :
 
 - **Cadrage de la carte** : la carte englobe désormais toute la région utile (Almadies → Rufisque/Bargny, jusqu’aux terminus Diamniadio et Guédiawaye) via `fitBounds` au chargement.
-- **Tracés TER et BRT** : les 13 gares du TER (liste Sen TER, positions OpenStreetMap/SETER) et les 23 stations du BRT (liste CETUD/SunuBRT, positions de référence **approximatives**) sont tracées en superposition du fond OpenStreetMap, avec arrêts cliquables. Ce sont des géométries de référence simplifiées, explicitement étiquetées — pas un flux opérateur validé. Les interrupteurs de couche TER/BRT pilotent cet affichage.
-- **Assistant IA** : bouton flottant en bas à gauche de la carte. Moteur local à règles (aucun service externe) branché sur le réseau de référence, le calculateur et l’état réel des API : listes d’arrêts, desserte d’un lieu, fréquences annoncées, itinéraires, tarif de référence, état des perturbations (aucune alerte inventée).
-- **Calculateur de correspondances** : dans l’onglet Itinéraire, un module calcule le meilleur enchaînement TER + BRT entre deux points (arrêts de référence ou points de la carte), avec temps de marche, d’attente (demi-cadence annoncée) et de parcours estimés. DDD/AFTU/TATA ne sont pas inventés : le calculateur le dit.
-- **Onglet Explorer** : bloc « Réseau de référence » filtrable (TER/BRT), à côté des données publiées.
+- **Tracés TER et BRT** : les 13 gares du TER (liste Sen TER, positions OpenStreetMap/SETER) et les 23 stations du BRT sont tracées en superposition du fond OpenStreetMap, avec arrêts cliquables. Les positions des stations BRT sont les coordonnées **exactes** des nœuds OpenStreetMap de la relation de ligne B1 (`network=SunuBRT`, relations 19961937/19961993, relevées le 8 octobre 2026) : la séquence officielle des 23 stations est verrouillée par les tests (`src/domain/corridors.test.ts`) et reprise telle quelle dans le GTFS de référence. Le tracé reliant ces arrêts reste une géométrie de référence (pas le tracé métrique des voies), explicitement étiquetée — pas un flux opérateur validé. Les interrupteurs de couche TER/BRT pilotent cet affichage.
+- **Assistant IA** : bouton flottant en bas à gauche de la carte (onglet Explorer), et réponses dans la recherche universelle de Trajet. Moteur local à règles (aucun service externe) branché sur le réseau de référence, le calculateur et l’état réel des API : listes d’arrêts, desserte d’un lieu, fréquences annoncées, itinéraires, tarif de référence, état des perturbations (aucune alerte inventée).
+- **Calculateur de correspondances** : dans l’onglet Trajet, un module calcule le meilleur enchaînement TER + BRT entre deux points (arrêts de référence ou points de la carte), avec temps de marche, d’attente (demi-cadence annoncée) et de parcours estimés. DDD/AFTU/TATA ne sont pas inventés : le calculateur le dit.
+- **Catalogue de données** : dans Paramètres, bloc « Réseau de référence » filtrable (TER/BRT) à côté des lignes publiées.
 - **Onglet Alertes** : canaux officiels d’information (Sen TER, SunuBRT, CETUD) affichés tant qu’aucun flux d’alertes vérifiable n’est connecté.
 
 Un jeu **GTFS de référence** (`npm run reference:gtfs`, générateur `tools/build_reference_gtfs.py`) peut être stagé pour démontrer le pipeline de bout en bout (`npm run stage:gtfs …`). Sa fiche de staging porte une provenance et une confiance fidèles (`source_type UNKNOWN`, confiance 0,4) : **le script ne publie rien** — l’approbation exige les cinq attestations humaines (identité de la source vérifiée auprès de l’éditeur, droits de réutilisation, opérateur confirmé, service exploité, fraîcheur confirmée) puis une publication séparée par un compte distinct.
@@ -49,7 +49,7 @@ src/domain/corridors.ts        données de référence TER/BRT + provenance déc
 src/domain/planner.ts          calculateur multimodal (Dijkstra, réseau de référence)
 src/domain/assistant.ts        cerveau local de l’assistant (règles, zéro invention)
 src/components/AssistantChat   widget de chat flottant (bas gauche de la carte)
-src/components/MultimodalPlanner  calculatrice de correspondances (onglet Itinéraire)
+src/components/MultimodalPlanner  calculatrice de correspondances (onglet Trajet)
 tools/build_reference_gtfs.py  générateur du GTFS de référence (démonstration pipeline)
 ```
 
@@ -74,14 +74,14 @@ npm run build
 npm audit
 ```
 
-Pour voir l'onglet Gouvernance alimenté, lancer l'API locale puis le serveur de développement dans deux terminaux :
+Pour voir la console locale alimentée, lancer l'API locale puis le serveur de développement dans deux terminaux :
 
 ```bash
 npm run admin:api   # http://127.0.0.1:8787 : lecture publique + décisions authentifiées
 npm run dev         # relaie /api vers l'API locale
 ```
 
-Pour décider depuis la console, créer d'abord des comptes locaux (voir « Comptes locaux, jetons et sessions »), puis ouvrir l'onglet Gouvernance et se connecter. Pour décider en ligne de commande, émettre un jeton court et le passer à `npm run review:gtfs -- approve <dataset_id> --token "$TOKEN" …` ou à `npm run publish:gtfs -- publish <dataset_id> --token "$TOKEN" --note "..."`. Les comptes sont écrits dans `data/actors/`, les snapshots dans `data/published/` : les deux sont ignorés par Git, comme le staging.
+Pour décider depuis la console, créer d'abord des comptes locaux (voir « Comptes locaux, jetons et sessions »), puis ouvrir Paramètres → « Console d'administration locale » et se connecter. Pour décider en ligne de commande, émettre un jeton court et le passer à `npm run review:gtfs -- approve <dataset_id> --token "$TOKEN" …` ou à `npm run publish:gtfs -- publish <dataset_id> --token "$TOKEN" --note "..."`. Les comptes sont écrits dans `data/actors/`, les snapshots dans `data/published/` : les deux sont ignorés par Git, comme le staging.
 
 Le workflow GitHub Actions (`.github/workflows/ci.yml`) exécute le build, les deux suites de tests et l’audit des dépendances à chaque push et pull request.
 
@@ -348,7 +348,7 @@ Décisions (session exigée, en-tête `X-Dakar-CSRF` exigé, origine vérifiée)
 
 Ces routes appellent exactement les mêmes fonctions que la CLI (`approve_dataset`, `reject_dataset`, `revert_decision`, `publish_dataset`, `revert_publication`) : attestations obligatoires, journal chaîné, séparation des devoirs et intégrité du snapshot sont vérifiées au même endroit, quel que soit l'entrée. Le serveur répond `401` sans session, `403` pour un rôle insuffisant, un jeton CSRF absent ou une origine étrangère, `404` pour une version inconnue, `409` quand l'état l'interdit (décision déjà active, version non publiable, journal verrouillé), `422` pour une demande incomplète ou une attestation invalide, `429` après huit échecs de connexion en cinq minutes, et chaque refus porte son code, son message et ses bloqueurs. Les routes publiques restent GET-only et répondent `405 READ_ONLY_API` à tout autre verbe.
 
-Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative : Vite relaie `/api` vers l'API locale **en conservant l'en-tête `Host` du navigateur**, pour que l'origine comparée par le serveur soit bien celle appelée. Sans API joignable, la console affiche « Console hors ligne » et aucune décision. Avec une session ouverte, elle propose les actions du rôle — approuver, refuser, annuler une décision, publier, annuler une publication — et répète les refus du serveur tels quels.
+Dans l'application, la console locale (Paramètres) appelle ces routes en URL relative : Vite relaie `/api` vers l'API locale **en conservant l'en-tête `Host` du navigateur**, pour que l'origine comparée par le serveur soit bien celle appelée. Sans API joignable, la console affiche « Console hors ligne » et aucune décision. Avec une session ouverte, elle propose les actions du rôle — approuver, refuser, annuler une décision, publier, annuler une publication — et répète les refus du serveur tels quels.
 
 ## Gouvernance de l'information
 
@@ -370,6 +370,24 @@ Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative : Vi
 - Les sessions de la console vivent en mémoire : un redémarrage de l'API déconnecte tout le monde, et aucune session n'est écrite sur disque.
 - Les écritures de la console exigent le jeton CSRF de la session et une origine identique à l'hôte ; un formulaire hostile ne peut pas décider à la place d'un acteur.
 - L'enregistrement et la révocation des comptes ne sont pas authentifiés (pas d'autorité d'amorçage) : c'est une limite déclarée, protégée par les permissions du système de fichiers, et non une garantie cryptographique.
+
+## Structure de l'application : quatre piliers exclusifs
+
+La navigation est répartie sur quatre onglets, chacun avec un rôle unique : aucun élément n'empiète sur la vue d'un autre, et la carte n'est montée qu'à un seul endroit.
+
+| Onglet | Rôle exclusif | Contenu |
+| --- | --- | --- |
+| **Explorer** | Vue cartographique et géolocalisation | Carte Leaflet plein écran ou panneau latéral, couches TER/BRT, géolocalisation, rayon de 5 km autour de l'usager, flux des mobilités à proximité avec leurs horaires annoncés, assistant IA en bouton flottant. Aucun état d'API, aucun slogan. |
+| **Trajet** | Recherche universelle et itinéraires | Barre de recherche universelle (index complet des arrêts : snapshot publié + TER + BRT) reliée à l'assistant, calculateur multimodal TER/BRT avec correspondances marchables, courses directes déclarées du snapshot, rappel des 5 mobilités prises en charge (TER, BRT, DDD, AFTU, TATA). Pas de fond de carte. |
+| **Alertes** | Information voyageur | Fil des perturbations et canaux officiels. Aucune alerte n'est affichée sans source vérifiée, et l'absence d'alerte n'est jamais présentée comme un service normal. |
+| **Paramètres** | Aide, données et informations légales | Mode d'emploi pilier par pilier, catalogue des réseaux et données publiées, conditions générales d'utilisation, historique des mises à jour, état des API locales, et console d'administration **repliée par défaut** (staging, revue, publication). |
+
+Règles appliquées par le code et vérifiées par les tests (`src/App.test.tsx`, bloc « structure en quatre piliers ») :
+
+- la carte Leaflet n'est **jamais montée** ailleurs que dans Explorer : sur les autres onglets elle est retirée du DOM (`is-map-hidden`), donc aucune tuile ni calcul de carte ;
+- les points choisis « sur la carte » depuis Trajet passent par Explorer puis reviennent automatiquement à Trajet, et tout arrêt reste sélectionnable par son nom sans quitter Trajet ;
+- les 23 stations BRT affichées sont celles de la séquence officielle, avec les coordonnées exactes des nœuds OpenStreetMap (`src/domain/corridors.ts`, verrouillé par `src/domain/corridors.test.ts`) ;
+- aucun slogan publicitaire : l'interface est réduite aux informations utiles.
 
 ## Carte et déploiement
 

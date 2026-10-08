@@ -10,9 +10,9 @@ export interface PlannerPoint {
 }
 
 interface MultimodalPlannerProps {
-  /** Point de départ choisi sur la carte (ou position GPS) dans l'onglet Itinéraire. */
+  /** Point de départ choisi dans l'onglet Explorer (ou position GPS), réutilisé par Trajet. */
   mapOrigin?: PlannerPoint | null
-  /** Destination choisie sur la carte dans l'onglet Itinéraire. */
+  /** Destination choisie dans l'onglet Explorer, réutilisée par Trajet. */
   mapDestination?: PlannerPoint | null
 }
 

@@ -112,7 +112,7 @@ ${outcome.limitation}`
       .join('\n')
     const targetLine = target && serving.length > 0 ? `${target.name} est desservi par ${serving.map((line) => line.shortName).join(' et ')}. ` : ''
     const published = context.publishedAvailable
-      ? ' Un snapshot GTFS est publié : l’onglet Itinéraire calcule aussi les courses directes déclarées.'
+      ? ' Un snapshot GTFS est publié : l’onglet Trajet calcule aussi les courses directes déclarées.'
       : ' Aucun horaire publié n’est servi par l’API pour l’instant : je donne les fréquences de référence, jamais une heure de passage inventée.'
     return `${targetLine}Fréquences annoncées publiquement :
 ${detail}
@@ -126,7 +126,7 @@ ${published}${published ? '' : ' '}`.trim()
     if (stops.length > 0) {
       const stop = stops[0]
       const lines = linesServingStop(stop.id)
-      return `${stop.name} est desservi par ${lines.map((line) => `${line.shortName} (${CORRIDOR_NETWORKS[line.network].label})`).join(', ')}${stop.note ? ` — ${stop.note}` : ''}. Positions et correspondances sont visibles sur la carte (couche « Réseau de référence »).`
+      return `${stop.name} est desservi par ${lines.map((line) => `${line.shortName} (${CORRIDOR_NETWORKS[line.network].label})`).join(', ')}${stop.note ? ` — ${stop.note}` : ''}. Position et correspondances sont visibles sur l’onglet Explorer (couche « Réseau de référence »).`
     }
     return 'Ce lieu n’est ni une gare TER ni une station BRT du réseau de référence. Les réseaux DDD, AFTU et TATA n’ont pas encore de données vérifiées : je préfère le dire plutôt que deviner.'
   }
@@ -136,7 +136,7 @@ ${published}${published ? '' : ' '}`.trim()
     if (wantsBrt && !wantsTer) {
       return `Les 23 stations du BRT, de Petersen à la Préfecture de Guédiawaye :
 ${BRT_STOPS.map((stop, index) => `${index + 1}. ${stop.name}`).join('\n')}
-(Positions de référence approximatives ; tracé officiel Petersen ↔ Guédiawaye, 18,3 km.)`
+(Séquence officielle ; positions exactes des nœuds OpenStreetMap de la ligne B1, relevées le 8 octobre 2026 ; corridor de 18,3 km.)`
     }
     if (wantsTer && !wantsBrt) {
       return `Les 13 gares et haltes du TER, de Dakar à Diamniadio :
@@ -172,7 +172,7 @@ Aucun horaire minuté n’est publié ici : pas de temps réel, pas d’estimati
 
   // 9) État des données / gouvernance.
   if (includesAny(text, ['donnees', 'source', 'publie', 'publication', 'gouvernance', 'snapshot', 'api'])) {
-    return `État réel du système : ${context.publishedAvailable ? 'un snapshot GTFS est publié et servi par l’API de lecture.' : 'aucun snapshot GTFS n’est publié : les API répondent NOT_PUBLISHED pour les données de transport.'} ${context.adminOnline ? 'L’API de gouvernance locale est en ligne (onglet Gouvernance).' : 'L’API de gouvernance locale ne répond pas : démarrez-la avec npm run admin:api.'} Le réseau de référence TER/BRT affiché sur la carte est une couche distincte, clairement étiquetée, issue de sources publiques (Sen TER, CETUD/SunuBRT, OpenStreetMap) — pas un flux opérateur validé.`
+    return `État réel du système : ${context.publishedAvailable ? 'un snapshot GTFS est publié et servi par l’API de lecture.' : 'aucun snapshot GTFS n’est publié : les API répondent NOT_PUBLISHED pour les données de transport.'} ${context.adminOnline ? 'L’API de gouvernance locale est en ligne (onglet Paramètres, console technique).' : 'L’API de gouvernance locale ne répond pas : démarrez-la avec npm run admin:api.'} Le réseau de référence TER/BRT affiché dans l’onglet Explorer est une couche distincte, clairement étiquetée, issue de sources publiques (Sen TER, CETUD/SunuBRT, OpenStreetMap) — pas un flux opérateur validé.`
   }
 
   // 10) Recherche d'arrêt simple.

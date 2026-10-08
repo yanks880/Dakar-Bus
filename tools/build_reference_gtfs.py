@@ -4,16 +4,17 @@
 Objet : alimenter le pipeline de gouvernance local (staging → revue →
 publication) avec les corridors de référence déjà utilisés par l'interface
 (`src/domain/corridors.ts`) : 13 gares TER (positions OpenStreetMap/SETER,
-liste sentersa.sn) et 23 stations BRT (liste CETUD/SunuBRT, positions de
-référence approximatives).
+liste sentersa.sn) et 23 stations BRT (liste CETUD/SunuBRT ; positions =
+coordonnées exactes des nœuds OpenStreetMap de la relation B1, network=SunuBRT,
+relevées le 8 octobre 2026).
 
 HONNÊTETÉ : ce GTFS est une SYNTHÈSE locale à but de démonstration du
 pipeline — horaires cadencés déduits des fréquences annoncées publiquement,
-géométrie simplifiée reliant les arrêts. Ce n'est PAS un flux publié par les
-opérateurs. Le `feed_info.txt` le dit explicitement, et la fiche de staging
-doit porter une provenance et une confiance fidèles (source_type UNKNOWN,
-confiance modérée). La publication reste un acte humain : ce script ne publie
-rien et n'approuve rien.
+géométrie reliant les arrêts dans l'ordre de desserte (pas le tracé métrique
+des voies). Ce n'est PAS un flux publié par les opérateurs. Le `feed_info.txt`
+le dit explicitement, et la fiche de staging doit porter une provenance et une
+confiance fidèles (source_type UNKNOWN, confiance modérée). La publication
+reste un acte humain : ce script ne publie rien et n'approuve rien.
 
 Usage :
     python3 tools/build_reference_gtfs.py --out data/reference/dakar-bus-reference.zip
@@ -63,32 +64,36 @@ TER_STOPS = [
     Stop("TER-13", "Diamniadio", 14.7160641, -17.1984512),
 ]
 
-# Les 23 stations BRT (Petersen → Préfecture de Guédiawaye) — positions de
-# référence approximatives alignées sur le tracé officiel.
+# Les 23 stations BRT (Petersen – Papa Gueye Fall → Préfecture de Guédiawaye).
+# Ordre de desserte verrouillé sur la relation OpenStreetMap B1 « Omnibus »
+# (relations 19961937 sens Guédiawaye → Petersen et 19961993 sens inverse,
+# network=SunuBRT), parcourue ici dans le sens Plateau → Guédiawaye.
+# Coordonnées = positions exactes des nœuds `stop_position` OSM relevées le
+# 8 octobre 2026 (osmNodeId en commentaire) — aucune interpolation.
 BRT_STOPS = [
-    Stop("BRT-01", "Petersen – Papa Gueye Fall", 14.6785, -17.4443),
-    Stop("BRT-02", "Grande Mosquée", 14.6890, -17.4460),
-    Stop("BRT-03", "Place de la Nation", 14.6946, -17.4488),
-    Stop("BRT-04", "Dial Diop", 14.6970, -17.4432),
-    Stop("BRT-05", "Grand Dakar", 14.6992, -17.4386),
-    Stop("BRT-06", "Sacré-Cœur", 14.7070, -17.4332),
-    Stop("BRT-07", "Liberté 6", 14.7156, -17.4269),
-    Stop("BRT-08", "Liberté 5", 14.7196, -17.4233),
-    Stop("BRT-09", "Liberté 1", 14.7236, -17.4181),
-    Stop("BRT-10", "Khar Yallah", 14.7280, -17.4131),
-    Stop("BRT-11", "Scat Urbam", 14.7330, -17.4076),
-    Stop("BRT-12", "Grand Médine", 14.7370, -17.4011),
-    Stop("BRT-13", "Croisement 22", 14.7410, -17.3966),
-    Stop("BRT-14", "Police des Parcelles", 14.7450, -17.3921),
-    Stop("BRT-15", "Parcelles", 14.7500, -17.3881),
-    Stop("BRT-16", "Ndingala", 14.7560, -17.3831),
-    Stop("BRT-17", "Golf Sud", 14.7630, -17.3751),
-    Stop("BRT-18", "Cardinal Hyacinthe Thiandoum", 14.7710, -17.3651),
-    Stop("BRT-19", "Dalal Jam", 14.7800, -17.3521),
-    Stop("BRT-20", "Golf Nord", 14.7850, -17.3441),
-    Stop("BRT-21", "Gueule Tapée", 14.7910, -17.3391),
-    Stop("BRT-22", "Fith Mith", 14.7960, -17.3341),
-    Stop("BRT-23", "Préfecture de Guédiawaye", 14.8060, -17.3271),
+    Stop("BRT-01", "Petersen – Papa Gueye Fall", 14.6766438, -17.4406354),  # 13376764678
+    Stop("BRT-02", "Grande Mosquée", 14.6824846, -17.4443248),  # 13376766853
+    Stop("BRT-03", "Place de la Nation", 14.6960909, -17.4506369),  # 11739960199
+    Stop("BRT-04", "Dial Diop", 14.6993790, -17.4535498),  # 11739960196
+    Stop("BRT-05", "Grand Dakar", 14.7049934, -17.4583342),  # 11739960194
+    Stop("BRT-06", "Liberté 1", 14.7099321, -17.4624955),  # 11739960190
+    Stop("BRT-07", "Sacré-Cœur", 14.7169687, -17.4665407),  # 11739960188
+    Stop("BRT-08", "Liberté 5", 14.7210415, -17.4640450),  # 11739960184
+    Stop("BRT-09", "Liberté 6", 14.7263088, -17.4591976),  # 11739960181
+    Stop("BRT-10", "Khar Yalla", 14.7320392, -17.4564326),  # 11738664241
+    Stop("BRT-11", "Scat Urbam", 14.7369859, -17.4552396),  # 11738664176
+    Stop("BRT-12", "Cardinal Hyacinthe Thiandoum", 14.7415853, -17.4513360),  # 11739848237
+    Stop("BRT-13", "Grand Médine", 14.7481903, -17.4444326),  # 11739848234
+    Stop("BRT-14", "Police des Parcelles", 14.7510760, -17.4387907),  # 11739848233
+    Stop("BRT-15", "Croisement 22", 14.7539779, -17.4332535),  # 11739848217
+    Stop("BRT-16", "Parcelles", 14.7626996, -17.4242946),  # 11739850196
+    Stop("BRT-17", "Ndingala", 14.7646271, -17.4196781),  # 11739850112
+    Stop("BRT-18", "Golf Sud", 14.7675735, -17.4134425),  # 11739850115
+    Stop("BRT-19", "Dalal Jamm", 14.7719783, -17.4082010),  # 11739850118
+    Stop("BRT-20", "Fith Mith", 14.7753280, -17.4055188),  # 11739850121
+    Stop("BRT-21", "Golf Nord", 14.7763179, -17.3984054),  # 11739850125
+    Stop("BRT-22", "Gueule Tapée", 14.7756271, -17.3921489),  # 11739850126
+    Stop("BRT-23", "Préfecture de Guédiawaye", 14.7719791, -17.3868591),  # 11739850129
 ]
 
 
@@ -115,10 +120,10 @@ LINES = [
 ]
 
 TRANSFERS = [
-    ("TER-01", "BRT-01", 2, "Correspondance de référence Gare TER Dakar ↔ Gare routière de Petersen (~1,2 km à pied)."),
-    ("BRT-01", "TER-01", 2, "Correspondance de référence Gare routière de Petersen ↔ Gare TER Dakar (~1,2 km à pied)."),
-    ("TER-02", "BRT-02", 2, "Correspondance de référence Gare TER Colobane ↔ station BRT Grande Mosquée (~1,35 km à pied)."),
-    ("BRT-02", "TER-02", 2, "Correspondance de référence station BRT Grande Mosquée ↔ Gare TER Colobane (~1,35 km à pied)."),
+    ("TER-01", "BRT-01", 2, "Correspondance de référence Gare TER Dakar ↔ station BRT Petersen – Papa Gueye Fall (~1 km à pied)."),
+    ("BRT-01", "TER-01", 2, "Correspondance de référence station BRT Petersen – Papa Gueye Fall ↔ Gare TER Dakar (~1 km à pied)."),
+    ("TER-02", "BRT-03", 2, "Correspondance de référence Gare TER Colobane ↔ station BRT Place de la Nation (~1,4 km à pied)."),
+    ("BRT-03", "TER-02", 2, "Correspondance de référence station BRT Place de la Nation ↔ Gare TER Colobane (~1,4 km à pied)."),
 ]
 
 

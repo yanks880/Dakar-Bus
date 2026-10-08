@@ -9,11 +9,17 @@
  * - Les coordonnées des 13 gares TER proviennent d'OpenStreetMap
  *   (nœuds `railway=station`, opérateur déclaré SETER), recoupées avec
  *   Nominatim ; ce sont les positions des bâtiments de gare.
- * - Les positions des 23 stations BRT sont des positions de référence
- *   APPROXIMATIVES alignées sur le tracé officiel (Petersen → Guédiawaye) ;
- *   elles restent indicatives tant qu'un géocodage officiel n'est pas fourni.
- * - Les tracés (polylines) sont une géométrie de référence SIMPLIFIÉE reliant
- *   les arrêts dans l'ordre de desserte : ce n'est pas le tracé métrique des
+ * - Les positions des 23 stations BRT sont les coordonnées EXACTES des nœuds
+ *   OpenStreetMap de la relation de ligne B1 (`network=SunuBRT`, relations
+ *   19961937 « Préfecture de Guédiawaye → Petersen » et 19961993 « Petersen →
+ *   Préfecture de Guédiawaye »), relevées le 8 octobre 2026. Chaque station
+ *   porte l'identifiant de son nœud OSM (`osmNodeId`) : aucune position n'est
+ *   interpolée, estimée ou devinée. La relation contient 25 nœuds d'arrêt pour
+ *   23 stations : Khar Yalla est doublé (un arrêt par sens) et le pôle de
+ *   Petersen porte deux nœuds (Petersen et Papa Gueye Fall) ; un seul nœud par
+ *   station est retenu, l'autre est cité en commentaire.
+ * - Les tracés (polylines) relient ces arrêts dans l'ordre de desserte officiel
+ *   (Petersen → Préfecture de Guédiawaye) : ce n'est pas le tracé métrique des
  *   voies, et ce n'est pas un flux GTFS publié.
  *
  * Ce module ne publie donc rien au sens du pipeline de gouvernance du dépôt :
@@ -35,6 +41,8 @@ export interface CorridorStop {
   aliases: readonly string[]
   /** TER : zone tarifaire déclarée (1-3). BRT : pôle d'échange éventuel. */
   note?: string
+  /** Identification de la source de la position : nœud OpenStreetMap. */
+  osmNodeId?: number
 }
 
 export interface CorridorLine {
@@ -51,7 +59,8 @@ export interface CorridorLine {
   serviceWindow: string
   /** Vitesse commerciale moyenne retenue pour les estimations (km/h). */
   speedKph: number
-  /** Arrêts « semi-express » (desservis par B2/B3), si applicable. */
+  /** Arrêts « semi-express » (desservis par les services B2/B3 documentés),
+   *  si applicable. Ici : la desserte annoncée du B3 (7 stations). */
   expressStopIds?: readonly string[]
 }
 
@@ -96,7 +105,7 @@ export const CORRIDOR_NETWORKS: Record<CorridorNetworkId, CorridorNetwork> = {
     operator: 'Dakar Mobilité (CETUD)',
     description: 'Bus à haut niveau de service Petersen ↔ Préfecture de Guédiawaye — 18,3 km, 23 stations.',
     provenance:
-      'Stations : CETUD / sunubrt.sn et communiqués Dakar Mobilité (2024-2025). Positions de référence approximatives, tracé simplifié.',
+      'Stations : liste officielle CETUD / sunubrt.sn (23 stations entre Petersen – Papa Gueye Fall et la Préfecture de Guédiawaye). Positions : coordonnées exactes des nœuds OpenStreetMap de la relation B1 (19961937/19961993, network=SunuBRT), relevées le 8 octobre 2026. Tracé : liaison des arrêts dans l’ordre de desserte, pas le tracé métrique des voies.',
   },
 }
 
@@ -118,32 +127,45 @@ export const TER_STOPS: readonly CorridorStop[] = [
   { id: 'ter-diamniadio', name: 'Diamniadio', lat: 14.7160641, lon: -17.1984512, order: 12, aliases: ['ville nouvelle'], note: 'Zone 3 · terminus' },
 ]
 
-/** Les 23 stations du BRT, Petersen → Préfecture de Guédiawaye.
- *  Positions de référence approximatives le long du tracé officiel. */
+/** Les 23 stations du BRT, Petersen – Papa Gueye Fall → Préfecture de Guédiawaye.
+ *
+ *  Séquence : sens affiché et calculé (Plateau → Guédiawaye) de la relation
+ *  OpenStreetMap B1 « Omnibus » ; l'ordre officiel de desserte est vérifié par
+ *  recoupement avec la liste des 14 stations mises en service le 15 mai 2024,
+ *  celle des 23 stations publiée par SunuBRT/CETUD et les 7 arrêts du service
+ *  semi-express B3.
+ *
+ *  Positions : coordonnées exactes des nœuds OpenStreetMap `network=SunuBRT`
+ *  (osmNodeId), relevées le 8 octobre 2026 — aucune position interpolée.
+ *  Deux arrêts de la relation ne sont pas des stations distinctes ici :
+ *  - Khar Yalla : deux nœuds (11738664241 au nord, 11738664247 au sud), un par
+ *    sens de circulation, à ~100 m l'un de l'autre ;
+ *  - pôle de Petersen : deux nœuds (13376764678 « Papa Gueye Fall », retenu,
+ *    et 13376764677 « Petersen » sur l'avenue Faidherbe, à ~90 m). */
 export const BRT_STOPS: readonly CorridorStop[] = [
-  { id: 'brt-petersen', name: 'Petersen – Papa Gueye Fall', lat: 14.6785, lon: -17.4443, order: 0, aliases: ['petersen', 'papa gueye fall', 'gare de petersen', 'terminal cabral'], note: 'Pôle d’échange · terminus' },
-  { id: 'brt-grande-mosquee', name: 'Grande Mosquée', lat: 14.689, lon: -17.446, order: 1, aliases: ['mosquee de dakar'], note: undefined },
-  { id: 'brt-place-nation', name: 'Place de la Nation', lat: 14.6946, lon: -17.4488, order: 2, aliases: ['obelisque', 'place de l’obelisque'], note: undefined },
-  { id: 'brt-dial-diop', name: 'Dial Diop', lat: 14.697, lon: -17.4432, order: 3, aliases: ['boulevard dial diop'], note: undefined },
-  { id: 'brt-grand-dakar', name: 'Grand Dakar', lat: 14.6992, lon: -17.4386, order: 4, aliases: [], note: undefined },
-  { id: 'brt-sacre-coeur', name: 'Sacré-Cœur', lat: 14.707, lon: -17.4332, order: 5, aliases: ['sacre coeur', 'college sacre-coeur'], note: undefined },
-  { id: 'brt-liberte-6', name: 'Liberté 6', lat: 14.7156, lon: -17.4269, order: 6, aliases: ['liberte 6', 'rond-point liberte 6'], note: undefined },
-  { id: 'brt-liberte-5', name: 'Liberté 5', lat: 14.7196, lon: -17.4233, order: 7, aliases: ['liberte 5'], note: undefined },
-  { id: 'brt-liberte-1', name: 'Liberté 1', lat: 14.7236, lon: -17.4181, order: 8, aliases: ['liberte 1'], note: undefined },
-  { id: 'brt-khar-yallah', name: 'Khar Yallah', lat: 14.728, lon: -17.4131, order: 9, aliases: ['khar yalla'], note: undefined },
-  { id: 'brt-scat-urbam', name: 'Scat Urbam', lat: 14.733, lon: -17.4076, order: 10, aliases: ['scat'], note: undefined },
-  { id: 'brt-grand-medine', name: 'Grand Médine', lat: 14.737, lon: -17.4011, order: 11, aliases: ['grand medine'], note: 'Pôle d’échange' },
-  { id: 'brt-croisement-22', name: 'Croisement 22', lat: 14.741, lon: -17.3966, order: 12, aliases: ['croisement 22'], note: undefined },
-  { id: 'brt-police-parcelles', name: 'Police des Parcelles', lat: 14.745, lon: -17.3921, order: 13, aliases: ['police parcelles assainies'], note: undefined },
-  { id: 'brt-parcelles', name: 'Parcelles', lat: 14.75, lon: -17.3881, order: 14, aliases: ['parcelles assainies'], note: undefined },
-  { id: 'brt-ndingala', name: 'Ndingala', lat: 14.756, lon: -17.3831, order: 15, aliases: ['ndinguela'], note: undefined },
-  { id: 'brt-golf-sud', name: 'Golf Sud', lat: 14.763, lon: -17.3751, order: 16, aliases: ['golf sud guediawaye'], note: undefined },
-  { id: 'brt-thiandoum', name: 'Cardinal Hyacinthe Thiandoum', lat: 14.771, lon: -17.3651, order: 17, aliases: ['thiandoum'], note: undefined },
-  { id: 'brt-dalal-jam', name: 'Dalal Jam', lat: 14.78, lon: -17.3521, order: 18, aliases: ['dalal diam', 'hopital dalal jam', 'dalal jam'], note: undefined },
-  { id: 'brt-golf-nord', name: 'Golf Nord', lat: 14.785, lon: -17.3441, order: 19, aliases: ['golf nord guediawaye'], note: undefined },
-  { id: 'brt-gueule-tapee', name: 'Gueule Tapée', lat: 14.791, lon: -17.3391, order: 20, aliases: ['gueule tapee'], note: undefined },
-  { id: 'brt-fith-mith', name: 'Fith Mith', lat: 14.796, lon: -17.3341, order: 21, aliases: ['fith mith'], note: undefined },
-  { id: 'brt-prefecture-guediawaye', name: 'Préfecture de Guédiawaye', lat: 14.806, lon: -17.3271, order: 22, aliases: ['prefecture guediawaye', 'guédiawaye', 'guediawaye', 'pole guediawaye'], note: 'Pôle d’échange · terminus' },
+  { id: 'brt-petersen', name: 'Petersen – Papa Gueye Fall', lat: 14.6766438, lon: -17.4406354, order: 0, aliases: ['petersen', 'papa gueye fall', 'gare de petersen', 'gare routiere de petersen', 'terminal cabral', 'pem petersen'], note: 'Pôle d’échange · terminus', osmNodeId: 13376764678 },
+  { id: 'brt-grande-mosquee', name: 'Grande Mosquée', lat: 14.6824846, lon: -17.4443248, order: 1, aliases: ['mosquee de dakar', 'grande mosquee'], note: undefined, osmNodeId: 13376766853 },
+  { id: 'brt-place-nation', name: 'Place de la Nation', lat: 14.6960909, lon: -17.4506369, order: 2, aliases: ['obelisque', 'place de l’obelisque'], note: undefined, osmNodeId: 11739960199 },
+  { id: 'brt-dial-diop', name: 'Dial Diop', lat: 14.6993790, lon: -17.4535498, order: 3, aliases: ['boulevard dial diop'], note: undefined, osmNodeId: 11739960196 },
+  { id: 'brt-grand-dakar', name: 'Grand Dakar', lat: 14.7049934, lon: -17.4583342, order: 4, aliases: [], note: undefined, osmNodeId: 11739960194 },
+  { id: 'brt-liberte-1', name: 'Liberté 1', lat: 14.7099321, lon: -17.4624955, order: 5, aliases: ['liberte 1'], note: undefined, osmNodeId: 11739960190 },
+  { id: 'brt-sacre-coeur', name: 'Sacré-Cœur', lat: 14.7169687, lon: -17.4665407, order: 6, aliases: ['sacre coeur', 'college sacre-coeur'], note: undefined, osmNodeId: 11739960188 },
+  { id: 'brt-liberte-5', name: 'Liberté 5', lat: 14.7210415, lon: -17.4640450, order: 7, aliases: ['liberte 5'], note: undefined, osmNodeId: 11739960184 },
+  { id: 'brt-liberte-6', name: 'Liberté 6', lat: 14.7263088, lon: -17.4591976, order: 8, aliases: ['liberte 6', 'rond-point liberte 6'], note: undefined, osmNodeId: 11739960181 },
+  { id: 'brt-khar-yallah', name: 'Khar Yalla', lat: 14.7320392, lon: -17.4564326, order: 9, aliases: ['khar yalla', 'khar yallah'], note: undefined, osmNodeId: 11738664241 },
+  { id: 'brt-scat-urbam', name: 'Scat Urbam', lat: 14.7369859, lon: -17.4552396, order: 10, aliases: ['scat'], note: undefined, osmNodeId: 11738664176 },
+  { id: 'brt-thiandoum', name: 'Cardinal Hyacinthe Thiandoum', lat: 14.7415853, lon: -17.4513360, order: 11, aliases: ['thiandoum'], note: undefined, osmNodeId: 11739848237 },
+  { id: 'brt-grand-medine', name: 'Grand Médine', lat: 14.7481903, lon: -17.4444326, order: 12, aliases: ['grand medine', 'pem grand medine'], note: 'Pôle d’échange', osmNodeId: 11739848234 },
+  { id: 'brt-police-parcelles', name: 'Police des Parcelles', lat: 14.7510760, lon: -17.4387907, order: 13, aliases: ['police parcelles assainies'], note: undefined, osmNodeId: 11739848233 },
+  { id: 'brt-croisement-22', name: 'Croisement 22', lat: 14.7539779, lon: -17.4332535, order: 14, aliases: ['croisement 22'], note: undefined, osmNodeId: 11739848217 },
+  { id: 'brt-parcelles', name: 'Parcelles', lat: 14.7626996, lon: -17.4242946, order: 15, aliases: ['parcelles assainies'], note: undefined, osmNodeId: 11739850196 },
+  { id: 'brt-ndingala', name: 'Ndingala', lat: 14.7646271, lon: -17.4196781, order: 16, aliases: ['ndinguela'], note: undefined, osmNodeId: 11739850112 },
+  { id: 'brt-golf-sud', name: 'Golf Sud', lat: 14.7675735, lon: -17.4134425, order: 17, aliases: ['golf sud guediawaye'], note: undefined, osmNodeId: 11739850115 },
+  { id: 'brt-dalal-jam', name: 'Dalal Jamm', lat: 14.7719783, lon: -17.4082010, order: 18, aliases: ['dalal diam', 'dalal jam', 'hopital dalal jamm'], note: undefined, osmNodeId: 11739850118 },
+  { id: 'brt-fith-mith', name: 'Fith Mith', lat: 14.7753280, lon: -17.4055188, order: 19, aliases: ['fith mith'], note: undefined, osmNodeId: 11739850121 },
+  { id: 'brt-golf-nord', name: 'Golf Nord', lat: 14.7763179, lon: -17.3984054, order: 20, aliases: ['golf nord guediawaye'], note: undefined, osmNodeId: 11739850125 },
+  { id: 'brt-gueule-tapee', name: 'Gueule Tapée', lat: 14.7756271, lon: -17.3921489, order: 21, aliases: ['gueule tapee'], note: undefined, osmNodeId: 11739850126 },
+  { id: 'brt-prefecture-guediawaye', name: 'Préfecture de Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 22, aliases: ['prefecture guediawaye', 'guédiawaye', 'guediawaye', 'pole guediawaye', 'pem guediawaye'], note: 'Pôle d’échange · terminus', osmNodeId: 11739850129 },
 ]
 
 export const CORRIDOR_LINES: readonly CorridorLine[] = [
@@ -162,38 +184,49 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     id: 'brt-b1',
     network: 'brt',
     shortName: 'B1',
+    // La presse récente annonce « 21 stations desservies » par la B1 sans
+    // nommer les arrêts écartés ; la relation OpenStreetMap B1 (network=SunuBRT)
+    // et la modélisation « omnibus » retiennent, elles, les 23 stations du
+    // corridor. Aucun arrêt n'est retiré sur une base non nommée : l'écart
+    // reste signalé ici plutôt que deviné.
     longName: 'Petersen – Papa Gueye Fall ↔ Préfecture de Guédiawaye (omnibus)',
     color: '#0f8f66',
     stopIds: BRT_STOPS.map((stop) => stop.id),
     headwayMin: 6,
     serviceWindow: '6 h – 21 h, passage annoncé toutes les 6 min',
     speedKph: 25,
+    // Desserte annoncée du service semi-express B3 (SunuBRT, octobre 2025),
+    // remise dans l’ordre de parcours Petersen → Guédiawaye.
     expressStopIds: [
       'brt-petersen',
       'brt-place-nation',
-      'brt-grand-dakar',
-      'brt-sacre-coeur',
-      'brt-grand-medine',
-      'brt-dalal-jam',
+      'brt-khar-yallah',
+      'brt-croisement-22',
+      'brt-parcelles',
+      'brt-gueule-tapee',
       'brt-prefecture-guediawaye',
     ],
   },
 ]
 
 /** Correspondances marchables de référence entre les deux réseaux.
- *  Distances indicatives entre les bâtiments, pas de cheminement déclaré. */
+ *  Distances de marche estimées à partir des positions déclarées des deux
+ *  arrêts (≈ 1,3 × la distance à vol d’oiseau) : ce sont des estimations,
+ *  pas un cheminement piéton calculé. Les deux paires retenues sont les plus
+ *  proches du réseau : Petersen ↔ Gare de Dakar (770 m à vol d’oiseau) et
+ *  Place de la Nation ↔ Colobane (1 080 m à vol d’oiseau). */
 export const CORRIDOR_TRANSFERS: readonly CorridorTransfer[] = [
   {
     fromStopId: 'ter-dakar',
     toStopId: 'brt-petersen',
-    walkM: 1200,
-    label: 'Gare TER Dakar ↔ Gare routière de Petersen (marche de référence ~1,2 km)',
+    walkM: 1000,
+    label: 'Gare TER Dakar ↔ station BRT Petersen – Papa Gueye Fall (marche de référence ~1 km)',
   },
   {
     fromStopId: 'ter-colobane',
-    toStopId: 'brt-grande-mosquee',
-    walkM: 1350,
-    label: 'Gare TER Colobane ↔ station BRT Grande Mosquée (marche de référence ~1,35 km)',
+    toStopId: 'brt-place-nation',
+    walkM: 1400,
+    label: 'Gare TER Colobane ↔ station BRT Place de la Nation (marche de référence ~1,4 km)',
   },
 ]
 
