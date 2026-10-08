@@ -181,6 +181,8 @@ Règles appliquées par le registre :
 - un jeton (`dkr1.<charge utile>.<signature HMAC-SHA256>`) ne vaut que pour le rôle du compte, expire entre 60 s et 24 h, et devient inutile si le rôle ou le compte change ;
 - les sessions de la console vivent **en mémoire du serveur** : redémarrer `npm run admin:api` déconnecte tout le monde, rien n'est écrit sur disque, et le cookie est `HttpOnly` + `SameSite=Strict` + `Path=/api`.
 
+Limite déclarée : **l'enregistrement d'un compte n'est pas lui-même authentifié** — il n'existe pas d'autorité d'amorçage. `--created-by` est une provenance déclarée, pas une preuve ; la protection réelle est le poste de l'opérateur et les droits du répertoire (`0700`, fichiers `0600`). Ce que l'authentification garantit commence à la décision : une fois le compte créé, aucune approbation, aucun refus, aucune publication ne peut être enregistré sans preuve vérifiable, et chaque entrée nomme l'acteur, la méthode et l'heure.
+
 ## Revoir une version (revue humaine)
 
 La revue est la deuxième porte. Elle ne publie rien : elle enregistre une décision nominative dans un journal append-only (`<dataset>/review/journal.jsonl`), chaîné par empreintes SHA-256. Toute altération d'une ligne rompt la chaîne et bloque les décisions suivantes.
@@ -343,6 +345,7 @@ Dans l'application, l'onglet Gouvernance appelle ces routes en URL relative : Vi
 - La séparation des devoirs est appliquée par le serveur : la personne qui a approuvé une version ne peut pas la publier elle-même, même avec un jeton valide.
 - Les sessions de la console vivent en mémoire : un redémarrage de l'API déconnecte tout le monde, et aucune session n'est écrite sur disque.
 - Les écritures de la console exigent le jeton CSRF de la session et une origine identique à l'hôte ; un formulaire hostile ne peut pas décider à la place d'un acteur.
+- L'enregistrement et la révocation des comptes ne sont pas authentifiés (pas d'autorité d'amorçage) : c'est une limite déclarée, protégée par les permissions du système de fichiers, et non une garantie cryptographique.
 
 ## Carte et déploiement
 
