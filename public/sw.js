@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dakar-bus-shell-v1'
+const CACHE_NAME = 'dakar-bus-shell-v2'
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -23,6 +23,10 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
+
+  // Governance data is never cached: the console must always read the current
+  // catalog and review state instead of a frozen copy.
+  if (url.pathname.startsWith('/api/')) return
 
   if (request.mode === 'navigate') {
     event.respondWith(

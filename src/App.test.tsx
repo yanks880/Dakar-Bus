@@ -27,6 +27,7 @@ vi.mock('./components/TransitMap', () => ({
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('Dakar Bus experience safety', () => {
@@ -65,5 +66,84 @@ describe('Dakar Bus experience safety', () => {
 
     expect(screen.getByText(/source d’alertes non connectée/i)).toBeTruthy()
     expect(screen.getByText(/l’absence d’alerte reçue ne signifie pas que le service est normal/i)).toBeTruthy()
+  })
+})
+
+const CATALOG_PAYLOAD = {
+  datasets: [
+    {
+      dataset_id: 'ddd-2026-10-abcdef123456',
+      integrity: 'OK',
+      effective_validity_status: 'CURRENT',
+      review_status: 'APPROVED',
+      ledger_integrity: 'OK',
+      operator: 'Dakar Dem Dikk',
+      dataset_version: '2026-10',
+      source: 'Éditeur de données publiques',
+      source_type: 'OFFICIAL',
+      service_status: 'ACTIVE',
+      reviewer_id: 'fatou.ndiaye',
+      reviewed_at: '2026-10-08T11:30:00+00:00',
+      publication_status: 'NOT_PUBLISHED',
+    },
+  ],
+}
+
+const PIPELINE_PAYLOAD = {
+  generated_at: '2026-10-08T12:00:00+00:00',
+  counts: { staged: 1, approved: 1, published: 0 },
+  stages: [
+    { id: 'staged', label: 'Staging', count: 1, note: 'Archive copiée' },
+    { id: 'pending_review', label: 'En revue', count: 0, note: 'Attente de décision' },
+    { id: 'approved', label: 'Approuvé', count: 1, note: 'Attestations complètes' },
+    { id: 'rejected', label: 'Refusé', count: 0, note: 'Motif enregistré' },
+    { id: 'published', label: 'Publié', count: 0, note: 'Non implémentée' },
+  ],
+  data_policy: 'Lecture seule',
+  publication_status: 'NOT_PUBLISHED',
+}
+
+describe('governance console', () => {
+  it('says the local console is offline instead of inventing staged datasets', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('réseau indisponible'))))
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+
+    expect(await screen.findByText(/console hors ligne/i)).toBeTruthy()
+    expect(screen.queryByText(/ddd-2026-10-abcdef123456/i)).toBeNull()
+    expect(screen.queryByText(/fatou\.ndiaye/i)).toBeNull()
+    expect(screen.getByText(/une approbation ne publie rien/i)).toBeTruthy()
+  })
+
+  it('shows the catalog read from the API and keeps publication unpublished', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        const payload = url.includes('/api/catalog') ? CATALOG_PAYLOAD : PIPELINE_PAYLOAD
+        return Promise.resolve({ ok: true, status: 200, json: async () => payload })
+      }),
+    )
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+
+    expect(await screen.findByText('ddd-2026-10-abcdef123456')).toBeTruthy()
+    expect(screen.getByText(/console en lecture seule/i)).toBeTruthy()
+    expect(screen.getByText('Approuvé')).toBeTruthy()
+    expect(screen.getByText('fatou.ndiaye · 2026-10-08 11:30 UTC')).toBeTruthy()
+    expect(screen.getByText('NOT_PUBLISHED')).toBeTruthy()
+    expect(screen.getByText(/non implémentée · rien n’est exposé publiquement/i)).toBeTruthy()
+  })
+
+  it('refuses a malformed API response instead of rendering a fake catalog', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({ datasets: [{ nope: true }] }) })),
+    )
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+
+    expect(await screen.findByText(/console hors ligne/i)).toBeTruthy()
+    expect(screen.getByText(/une entrée du catalogue est incomplète/i)).toBeTruthy()
   })
 })

@@ -277,7 +277,7 @@ button:disabled { cursor: not-allowed; }
 .search-form kbd { display: flex; flex: 0 0 auto; align-items: center; padding: 4px 6px; border: 1px solid #e7ece8; border-radius: 6px; background: #fff; color: #99a49d; font-family: inherit; font-size: 9px; white-space: nowrap; }
 .search-clear { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #8b9890; cursor: pointer; }
 .search-clear:hover { background: #eef4f0; color: #20563d; }
-.desktop-tabs { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 17px; padding: 4px; border-radius: 12px; background: #f4f7f4; gap: 2px; }
+.desktop-tabs { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 17px; padding: 4px; border-radius: 12px; background: #f4f7f4; gap: 2px; }
 .nav-tab { position: relative; display: flex; height: 36px; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: #839188; cursor: pointer; font-size: 10px; font-weight: 650; gap: 6px; transition: background .17s ease, color .17s ease, box-shadow .17s ease; }
 .nav-tab:hover { color: #466354; }
 .nav-tab.active { background: #fff; box-shadow: 0 2px 6px rgba(21, 52, 37, .08); color: #126c4a; }
@@ -500,7 +500,7 @@ button:disabled { cursor: not-allowed; }
   .primary-action { min-height: 41px; margin-top: 10px; font-size: 10px; }
   .secondary-action, .data-state-strip { display: none; }
   .sidebar-footer { display: none; }
-  .mobile-nav { position: absolute; z-index: 700; right: 12px; bottom: max(9px, env(safe-area-inset-bottom)); left: 12px; display: grid; height: 64px; grid-template-columns: repeat(4, 1fr); padding: 5px 4px; border: 1px solid rgba(228, 236, 229, .96); border-radius: 19px; background: rgba(255, 255, 255, .96); box-shadow: 0 8px 26px rgba(19, 50, 32, .14); backdrop-filter: blur(22px); }
+  .mobile-nav { position: absolute; z-index: 700; right: 12px; bottom: max(9px, env(safe-area-inset-bottom)); left: 12px; display: grid; height: 64px; grid-template-columns: repeat(5, 1fr); padding: 5px 4px; border: 1px solid rgba(228, 236, 229, .96); border-radius: 19px; background: rgba(255, 255, 255, .96); box-shadow: 0 8px 26px rgba(19, 50, 32, .14); backdrop-filter: blur(22px); }
   .mobile-nav-item { display: flex; align-items: center; justify-content: center; flex-direction: column; border: 0; border-radius: 13px; background: transparent; color: #87948c; cursor: pointer; font-size: 8px; font-weight: 650; gap: 3px; }
   .mobile-nav-item.active { background: #edf6f0; color: #0e754e; }
   .mobile-nav-icon { position: relative; display: grid; width: 25px; height: 22px; place-items: center; }
@@ -574,3 +574,54 @@ button:disabled { cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* --- Gouvernance : console en lecture seule ------------------------------ */
+.governance-heading-icon { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border: 1px solid #e9f0eb; border-radius: 11px; background: #f6faf7; color: #19845d; }
+.governance-status { display: flex; align-items: flex-start; margin-top: 18px; padding: 12px; border: 1px solid #e7efe8; border-radius: 14px; background: #f8fbf8; gap: 10px; }
+.governance-status div { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.governance-status strong { color: #2f4a3c; font-size: 11px; font-weight: 750; letter-spacing: -.01em; }
+.governance-status span { color: #7b887f; font-size: 9.5px; line-height: 1.55; }
+.governance-status code { padding: 1px 4px; border-radius: 5px; background: #e9f2ec; color: #23644a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+.governance-status-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: #e4f2e9; color: #118054; }
+.governance-status-icon.is-offline { background: #fdf3e2; color: #a97c2c; }
+.governance-status-icon.is-loading { background: #eef3f0; color: #6d7c73; }
+.governance-status-ready { border-color: #dcefe2; background: linear-gradient(135deg, #f4faf6, #fbfdfb); }
+.governance-status-offline { border-color: #f0e6d3; background: linear-gradient(135deg, #fdfaf4, #fffdf9); }
+.governance-refresh { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 1px solid #e3ece5; border-radius: 9px; background: #fff; color: #5b6f64; cursor: pointer; }
+.governance-refresh:hover { border-color: #cfe2d5; color: #147954; }
+
+.governance-stage-strip { display: grid; margin-top: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.governance-stage { display: grid; padding: 10px; border: 1px solid #e9f0eb; border-radius: 13px; background: #fff; gap: 3px; }
+.governance-stage-count { color: #17845c; font-family: Manrope, sans-serif; font-size: 19px; font-weight: 760; letter-spacing: -.04em; line-height: 1; }
+.governance-stage strong { color: #33473c; font-size: 10px; font-weight: 720; }
+.governance-stage-note { color: #87948c; font-size: 8.5px; line-height: 1.45; }
+.governance-stage.is-planned { border-style: dashed; background: #fbfcfb; }
+.governance-stage.is-planned .governance-stage-count { color: #a4afa8; }
+
+.governance-list-heading { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 8px; color: #9aa59e; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
+.governance-empty { display: flex; align-items: flex-start; padding: 13px 12px; border: 1px dashed #dfe8e1; border-radius: 13px; background: #fafcfb; gap: 10px; }
+.governance-empty-icon { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: #eef4f0; color: #4d6a5a; }
+.governance-empty div { display: grid; gap: 3px; }
+.governance-empty strong { color: #35493d; font-size: 10.5px; font-weight: 730; }
+.governance-empty span { color: #7d8b82; font-size: 9.5px; line-height: 1.55; }
+.governance-empty code, .governance-checklist code { padding: 1px 4px; border-radius: 5px; background: #eef3f0; color: #2b6249; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+
+.governance-dataset-list { display: grid; margin: 0; padding: 0; list-style: none; gap: 8px; }
+.governance-dataset { padding: 11px; border: 1px solid #eaf0eb; border-radius: 13px; background: #fff; }
+.governance-dataset-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.governance-dataset-head strong { color: #26402f; font-size: 11px; font-weight: 730; }
+.governance-dataset-id { display: block; margin-top: 3px; color: #94a099; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; word-break: break-all; }
+.governance-badge { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; font-size: 8px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.governance-badge-pending_review { border: 1px solid #f0e5cf; background: #fdf7ea; color: #9c7b31; }
+.governance-badge-approved { border: 1px solid #cfe7d8; background: #eaf6ee; color: #16734f; }
+.governance-badge-rejected { border: 1px solid #f0d9d6; background: #fdf1ef; color: #a4483c; }
+.governance-badge-unknown { border: 1px solid #e3e8e4; background: #f5f7f5; color: #7b877f; }
+.governance-dataset-meta { display: grid; margin: 9px 0 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+.governance-dataset-meta div { display: grid; gap: 1px; min-width: 0; }
+.governance-dataset-meta dt { color: #a2ada6; font-size: 7.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.governance-dataset-meta dd { margin: 0; color: #4c6154; font-size: 9.5px; line-height: 1.4; word-break: break-word; }
+
+.governance-checklist { margin-top: 15px; padding: 12px; border: 1px solid #e9f0eb; border-radius: 13px; background: #f9fbf9; }
+.governance-checklist ul { display: grid; margin: 8px 0 0; padding: 0; list-style: none; gap: 6px; }
+.governance-checklist li { display: flex; align-items: flex-start; color: #5f7167; font-size: 9.5px; line-height: 1.5; gap: 7px; }
+.governance-checklist li svg { flex: 0 0 auto; margin-top: 2px; color: #6f9c85; }
