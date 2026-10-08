@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read-only catalog for staged GTFS versions.
 
-This tool verifies the staged archive checksum and exposes declared metadata.
-It does not approve, publish, delete, or alter datasets.
+This tool verifies the staged archive checksum, exposes declared metadata, and
+reports the current review state read from the append-only review ledger. It
+does not approve, publish, delete, or alter datasets.
 """
 
 from __future__ import annotations
@@ -15,6 +16,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+try:  # Works both as `python -m scripts.catalog_gtfs` and as a file script.
+    from .review_ledger import current_review_state
+except ImportError:  # pragma: no cover - exercised by the direct CLI entry point
+    from review_ledger import current_review_state
 
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 DATASET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,100}$")
@@ -49,6 +55,7 @@ def _invalid_entry(dataset_id: str, code: str, message: str) -> dict[str, Any]:
         "integrity_issue": {"code": code, "message": message},
         "manifest": None,
         "effective_validity_status": "UNKNOWN",
+        "review": {"review_status": "UNKNOWN", "ledger_integrity": "UNKNOWN", "ledger_issue": None, "entry_count": 0},
     }
 
 
@@ -148,6 +155,7 @@ def inspect_staged_dataset(directory: str | Path, *, now: datetime | None = None
         "integrity": "OK",
         "integrity_issue": None,
         "effective_validity_status": validity_status,
+        "review": current_review_state(dataset_dir),
         "manifest": manifest,
     }
 
@@ -167,16 +175,24 @@ def list_staged_datasets(root: str | Path, *, now: datetime | None = None) -> li
             continue
         inspected = inspect_staged_dataset(child, now=now)
         manifest = inspected.get("manifest")
+        review = inspected.get("review") or {}
         summary = {
             "dataset_id": inspected["dataset_id"],
             "integrity": inspected["integrity"],
             "integrity_issue": inspected["integrity_issue"],
             "effective_validity_status": inspected["effective_validity_status"],
+            "review_status": review.get("review_status", "UNKNOWN"),
+            "ledger_integrity": review.get("ledger_integrity", "UNKNOWN"),
+            "reviewer_id": review.get("reviewer_id"),
+            "reviewed_at": review.get("reviewed_at"),
+            "publication_status": "NOT_PUBLISHED",
         }
         if isinstance(manifest, dict):
+            # review_status and publication_status are reported from the review
+            # ledger and the staging policy, never copied from the frozen manifest.
             for key in (
                 "dataset_version", "operator", "source", "source_type", "confidence",
-                "service_status", "review_status", "publication_status", "record_count", "ingested_at",
+                "service_status", "record_count", "ingested_at",
             ):
                 summary[key] = manifest.get(key)
         entries.append(summary)
@@ -267,7 +283,11 @@ def main() -> int:
         if args.command == "list":
             result = list_staged_datasets(args.root)
             _emit(result)
-            return 0 if all(entry["integrity"] == "OK" for entry in result) else 1
+            healthy = all(
+                entry["integrity"] == "OK" and entry.get("ledger_integrity") in {"OK", "EMPTY"}
+                for entry in result
+            )
+            return 0 if healthy else 1
         if args.command == "show":
             result = show_staged_dataset(args.root, args.dataset_id)
             _emit(result)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -8,8 +8,12 @@ import {
   ChevronDown,
   CircleAlert,
   Compass,
+  Database,
+  FileCheck2,
   Footprints,
+  History,
   Info,
+  Lock,
   Layers3,
   LocateFixed,
   Map as MapIcon,
@@ -17,6 +21,7 @@ import {
   Minus,
   Navigation,
   Plus,
+  RefreshCw,
   Route as RouteIcon,
   Search,
   ShieldCheck,
@@ -25,9 +30,30 @@ import {
 } from 'lucide-react'
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
 import { NETWORK_SOURCES, getConnectedNetworkCount, type NetworkId, type NetworkSource } from './domain/network'
+import {
+  GOVERNANCE_STAGES,
+  REQUIRED_ATTESTATIONS,
+  formatTimestamp,
+  integrityLabel,
+  parseCatalogPayload,
+  parsePipelinePayload,
+  reviewStatusLabel,
+  summarizeCatalog,
+  validityStatusLabel,
+  type CatalogDataset,
+  type PipelineSummary,
+} from './domain/review'
 import './App.css'
 
-type TabId = 'map' | 'route' | 'explore' | 'alerts'
+type TabId = 'map' | 'route' | 'explore' | 'alerts' | 'governance'
+type GovernanceStatus = 'idle' | 'loading' | 'ready' | 'offline'
+
+interface GovernanceState {
+  status: GovernanceStatus
+  datasets: CatalogDataset[]
+  pipeline: PipelineSummary | null
+  error: string | null
+}
 type GpsState = 'idle' | 'loading' | 'ready' | 'denied' | 'error'
 type MapPoint = Coordinates & { label: string }
 
@@ -36,6 +62,7 @@ const NAV_ITEMS: { id: TabId; label: string; icon: typeof MapIcon }[] = [
   { id: 'route', label: 'Itinéraire', icon: RouteIcon },
   { id: 'explore', label: 'Explorer', icon: Compass },
   { id: 'alerts', label: 'Alertes', icon: Bell },
+  { id: 'governance', label: 'Gouvernance', icon: Database },
 ]
 
 const NETWORK_ICONS: Record<NetworkId, typeof TrainFront> = {
@@ -80,6 +107,7 @@ function App() {
   const [gpsMessage, setGpsMessage] = useState<string | null>(null)
   const [exploreFilter, setExploreFilter] = useState<NetworkId | 'all'>('all')
   const [alertInfoOpen, setAlertInfoOpen] = useState(false)
+  const [governance, setGovernance] = useState<GovernanceState>({ status: 'idle', datasets: [], pipeline: null, error: null })
   const toastTimer = useRef<number | undefined>(undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const connectedCount = getConnectedNetworkCount()
@@ -106,6 +134,48 @@ function App() {
     window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), 3600)
   }
+
+  const loadGovernance = useCallback(async () => {
+    setGovernance((current) => ({ ...current, status: 'loading', error: null }))
+    try {
+      const [catalogResponse, pipelineResponse] = await Promise.all([
+        fetch('/api/catalog', { headers: { Accept: 'application/json' } }),
+        fetch('/api/pipeline', { headers: { Accept: 'application/json' } }),
+      ])
+      if (!catalogResponse.ok || !pipelineResponse.ok) {
+        setGovernance({
+          status: 'offline',
+          datasets: [],
+          pipeline: null,
+          error: `L’API d’administration a répondu ${catalogResponse.status} / ${pipelineResponse.status}.`,
+        })
+        return
+      }
+      const catalog = parseCatalogPayload(await catalogResponse.json())
+      const pipeline = parsePipelinePayload(await pipelineResponse.json())
+      if (!catalog.ok) {
+        setGovernance({ status: 'offline', datasets: [], pipeline: null, error: catalog.reason })
+        return
+      }
+      if (!pipeline.ok) {
+        setGovernance({ status: 'offline', datasets: [], pipeline: null, error: pipeline.reason })
+        return
+      }
+      setGovernance({ status: 'ready', datasets: catalog.value, pipeline: pipeline.value, error: null })
+    } catch {
+      setGovernance({
+        status: 'offline',
+        datasets: [],
+        pipeline: null,
+        error: 'L’API d’administration locale ne répond pas sur /api.',
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeTab !== 'governance') return
+    if (governance.status === 'idle') void loadGovernance()
+  }, [activeTab, governance.status, loadGovernance])
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -395,6 +465,8 @@ function App() {
           {activeTab === 'alerts' && (
             <AlertsPanel infoOpen={alertInfoOpen} onToggleInfo={() => setAlertInfoOpen((open) => !open)} />
           )}
+
+          {activeTab === 'governance' && <GovernancePanel state={governance} onReload={() => void loadGovernance()} />}
         </div>
 
         <footer className="sidebar-footer">
@@ -713,6 +785,128 @@ function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleIn
         <span><i className="severity-dot info" /> Information</span>
       </div>
       <div className="alert-empty-hint"><Info size={15} /><span>Aucune alerte active ne peut être confirmée à ce stade.</span></div>
+    </section>
+  )
+}
+
+function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload: () => void }) {
+  const summary = summarizeCatalog(state.datasets)
+  const stageCounts: Record<string, number> = {
+    staging: summary.total,
+    review: summary.pendingReview,
+    approval: summary.approved,
+    publication: summary.published,
+  }
+  const showCounts = state.status === 'ready'
+
+  return (
+    <section className="panel governance-panel" aria-label="Gouvernance des données">
+      <div className="panel-heading-row">
+        <div>
+          <span className="eyebrow">PROVENANCE ET REVUE</span>
+          <h2>Gouvernance.</h2>
+          <p>Du staging à l’approbation, chaque étape laisse une trace vérifiable.</p>
+        </div>
+        <span className="governance-heading-icon"><Database size={19} /></span>
+      </div>
+
+      <div className={`governance-status governance-status-${state.status}`} role="status">
+        {state.status === 'ready' && (
+          <>
+            <span className="governance-status-icon is-online"><Lock size={15} /></span>
+            <div>
+              <strong>Console en lecture seule</strong>
+              <span>Catalogue local lu à {formatTimestamp(state.pipeline?.generatedAt ?? null)} · aucune écriture possible depuis le navigateur.</span>
+            </div>
+            <button type="button" className="governance-refresh" onClick={onReload} aria-label="Recharger le catalogue"><RefreshCw size={14} /></button>
+          </>
+        )}
+        {state.status === 'loading' && (
+          <>
+            <span className="governance-status-icon is-loading"><RefreshCw size={15} className="is-spinning" /></span>
+            <div><strong>Lecture du catalogue local…</strong><span>Les versions stagées et leur état de revue sont vérifiés à chaque lecture.</span></div>
+          </>
+        )}
+        {state.status === 'offline' && (
+          <>
+            <span className="governance-status-icon is-offline"><AlertTriangle size={15} /></span>
+            <div>
+              <strong>Console hors ligne</strong>
+              <span>{state.error} Démarrer l’API locale avec <code>npm run admin:api</code> puis recharger.</span>
+            </div>
+            <button type="button" className="governance-refresh" onClick={onReload} aria-label="Réessayer la connexion"><RefreshCw size={14} /></button>
+          </>
+        )}
+        {state.status === 'idle' && (
+          <>
+            <span className="governance-status-icon"><Database size={15} /></span>
+            <div><strong>Catalogue non chargé</strong><span>Ouvrir cet onglet interroge l’API locale en lecture seule.</span></div>
+          </>
+        )}
+      </div>
+
+      <div className="governance-stage-strip">
+        {GOVERNANCE_STAGES.map((stage) => (
+          <div className={`governance-stage${stage.implemented ? '' : ' is-planned'}`} key={stage.id}>
+            <span className="governance-stage-count">{showCounts ? stageCounts[stage.id] ?? 0 : '—'}</span>
+            <strong>{stage.label}</strong>
+            <span className="governance-stage-note">{stage.implemented ? stage.requirement : 'Non implémentée · rien n’est exposé publiquement'}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="governance-list-heading">
+        <span>VERSIONS STAGÉES</span>
+        <span className="source-count">{showCounts ? `${summary.total} lue${summary.total > 1 ? 's' : ''}` : 'catalogue non chargé'}</span>
+      </div>
+
+      {state.status === 'ready' && state.datasets.length === 0 && (
+        <div className="governance-empty">
+          <span className="governance-empty-icon"><FileCheck2 size={18} /></span>
+          <div>
+            <strong>Aucune version stagée</strong>
+            <span>Le staging s’effectue avec <code>npm run stage:gtfs</code> sur une archive obtenue auprès d’une source vérifiable.</span>
+          </div>
+        </div>
+      )}
+
+      {state.status === 'ready' && state.datasets.length > 0 && (
+        <ul className="governance-dataset-list">
+          {state.datasets.map((dataset) => (
+            <li className="governance-dataset" key={dataset.datasetId}>
+              <div className="governance-dataset-head">
+                <strong>{dataset.operator ?? 'Opérateur non déclaré'}</strong>
+                <span className={`governance-badge governance-badge-${dataset.reviewStatus.toLowerCase()}`}>
+                  {reviewStatusLabel(dataset.reviewStatus)}
+                </span>
+              </div>
+              <span className="governance-dataset-id">{dataset.datasetId}</span>
+              <dl className="governance-dataset-meta">
+                <div><dt>Version</dt><dd>{dataset.datasetVersion ?? 'inconnue'}</dd></div>
+                <div><dt>Source</dt><dd>{dataset.sourceType ?? 'inconnue'}{dataset.serviceStatus ? ` · ${dataset.serviceStatus}` : ''}</dd></div>
+                <div><dt>Validité</dt><dd>{validityStatusLabel(dataset.validityStatus)}</dd></div>
+                <div><dt>Intégrité</dt><dd>{integrityLabel(dataset)}</dd></div>
+                <div><dt>Décision</dt><dd>{dataset.reviewerId ? `${dataset.reviewerId} · ${formatTimestamp(dataset.reviewedAt)}` : 'aucune décision'}</dd></div>
+                <div><dt>Publication</dt><dd>{dataset.publicationStatus}</dd></div>
+              </dl>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="governance-checklist">
+        <span className="eyebrow">ATTESTATIONS OBLIGATOIRES</span>
+        <ul>
+          {REQUIRED_ATTESTATIONS.map((item) => (
+            <li key={item.id}><History size={13} /><span>{item.label}</span></li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="source-governance-note">
+        <ShieldCheck size={16} />
+        <p><strong>Une approbation ne publie rien.</strong> Les décisions sont enregistrées sur la CLI par un relecteur nominatif dans un journal chaîné ; la publication reste une étape séparée, non implémentée.</p>
+      </div>
     </section>
   )
 }
