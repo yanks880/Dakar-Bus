@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+!.env.example
