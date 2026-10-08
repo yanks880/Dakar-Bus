@@ -3,6 +3,8 @@ dist/
 .vite/
 coverage/
 /data/staging/
+/data/published/
+/data/actors/
 *.tsbuildinfo
 __pycache__/
 *.py[cod]

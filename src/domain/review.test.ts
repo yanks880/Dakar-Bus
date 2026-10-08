@@ -25,7 +25,9 @@ const dataset = (overrides: Partial<CatalogDataset> = {}): CatalogDataset => ({
   serviceStatus: 'ACTIVE',
   reviewerId: null,
   reviewedAt: null,
+  reviewEntryId: null,
   publicationStatus: 'NOT_PUBLISHED',
+  publicationSnapshotId: null,
   ...overrides,
 })
 
@@ -46,7 +48,9 @@ describe('catalog payload parsing', () => {
           service_status: 'ACTIVE',
           reviewer_id: 'fatou.ndiaye',
           reviewed_at: '2026-10-08T11:30:00+00:00',
-          publication_status: 'NOT_PUBLISHED',
+          review_entry_id: 'rv-000004',
+          publication_status: 'PUBLISHED',
+          publication_snapshot_id: 'snap-20261008t113000z-dakar-dem-dikk',
         },
       ],
     })
@@ -56,7 +60,10 @@ describe('catalog payload parsing', () => {
     expect(parsed.value).toHaveLength(1)
     expect(parsed.value[0].reviewStatus).toBe('APPROVED')
     expect(parsed.value[0].reviewerId).toBe('fatou.ndiaye')
-    expect(parsed.value[0].publicationStatus).toBe('NOT_PUBLISHED')
+    expect(parsed.value[0].publicationStatus).toBe('PUBLISHED')
+    // The console can only revert what it can identify: the active decision and the snapshot.
+    expect(parsed.value[0].reviewEntryId).toBe('rv-000004')
+    expect(parsed.value[0].publicationSnapshotId).toBe('snap-20261008t113000z-dakar-dem-dikk')
   })
 
   it('refuses payloads that are missing entries instead of guessing', () => {
@@ -131,8 +138,10 @@ describe('catalog summary and labels', () => {
     expect(formatTimestamp('2026-10-08T11:30:00Z')).toBe('2026-10-08 11:30 UTC')
   })
 
-  it('keeps publication as an unimplemented stage and lists five attestations', () => {
-    expect(GOVERNANCE_STAGES.find((stage) => stage.id === 'publication')?.implemented).toBe(false)
+  it('lists publication as an implemented stage and five mandatory attestations', () => {
+    const publication = GOVERNANCE_STAGES.find((stage) => stage.id === 'publication')
+    expect(publication?.implemented).toBe(true)
+    expect(publication?.requirement).toContain('Snapshot daté et haché')
     expect(REQUIRED_ATTESTATIONS).toHaveLength(5)
   })
 })

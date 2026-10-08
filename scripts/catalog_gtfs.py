@@ -185,6 +185,9 @@ def list_staged_datasets(root: str | Path, *, now: datetime | None = None) -> li
             "ledger_integrity": review.get("ledger_integrity", "UNKNOWN"),
             "reviewer_id": review.get("reviewer_id"),
             "reviewed_at": review.get("reviewed_at"),
+            # The active decision, so the console can revert it without guessing an identifier.
+            "review_entry_id": (review.get("decision") or {}).get("entry_id") if isinstance(review.get("decision"), dict) else None,
+            "review_entry_hash": (review.get("decision") or {}).get("entry_hash") if isinstance(review.get("decision"), dict) else None,
             "publication_status": "NOT_PUBLISHED",
         }
         if isinstance(manifest, dict):

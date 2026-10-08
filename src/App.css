@@ -625,3 +625,171 @@ button:disabled { cursor: not-allowed; }
 .governance-checklist ul { display: grid; margin: 8px 0 0; padding: 0; list-style: none; gap: 6px; }
 .governance-checklist li { display: flex; align-items: flex-start; color: #5f7167; font-size: 9.5px; line-height: 1.5; gap: 7px; }
 .governance-checklist li svg { flex: 0 0 auto; margin-top: 2px; color: #6f9c85; }
+
+/* --- Données publiées : arrêts, lignes, fiche d'arrêt ------------------- */
+.map-source-chip.is-published { color: #0d6b4a; }
+.map-source-chip.is-published .source-dot { background: #13845c; box-shadow: 0 0 0 3px rgba(19, 132, 92, .14); }
+.layer-icon-published { background: #e8f5ed; color: #0f7b53; }
+
+.data-honesty-card.tone-published { border-color: #d9ecdf; background: linear-gradient(135deg, #f4faf6, #fbfdfb); }
+.data-honesty-card.tone-warning { border-color: #f3e2c6; background: linear-gradient(135deg, #fdf8ee, #fffdf9); }
+.neutral-status.status-published { border-color: #d5ebdd; color: #0e7a52; }
+.neutral-status.status-published i { background: #13845c; }
+.neutral-status.status-warning { border-color: #f0dfc0; color: #a1731f; }
+.neutral-status.status-warning i { background: #c9932f; }
+.honesty-meta { color: #81908a; font-size: 9px; line-height: 1.5; }
+.honesty-link { margin-top: 6px; padding: 0; border: 0; background: none; color: #0b7250; font-size: 9.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
+.honesty-link:hover { color: #085539; }
+.data-honesty-card code { padding: 1px 4px; border-radius: 5px; background: #e9f2ec; color: #23644a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+
+.published-stop-list, .published-route-list { display: grid; margin: 9px 0 0; padding: 0; list-style: none; gap: 5px; }
+.published-stop-row { display: flex; width: 100%; min-height: 44px; align-items: center; padding: 7px 9px; border: 1px solid #e9efea; border-radius: 13px; background: #fdfefd; color: inherit; cursor: pointer; gap: 9px; text-align: left; }
+.published-stop-row:hover { border-color: #cfe4d6; background: #f6fbf8; }
+.stop-row-icon { display: grid; width: 29px; height: 29px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #eaf5ee; color: #0f7b53; }
+.stop-row-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.stop-row-copy strong { overflow: hidden; color: #22422f; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.stop-row-copy small { color: #859389; font-size: 9px; }
+.published-stop-row svg:last-child { flex: 0 0 auto; color: #9aa79f; }
+.published-stop-empty, .stop-card-note { margin: 8px 0 0; color: #7f8d84; font-size: 9.5px; line-height: 1.55; }
+
+.published-counts { display: flex; align-items: center; margin-top: 11px; padding: 8px 10px; border: 1px solid #e9efea; border-radius: 12px; background: #fbfdfb; color: #6f7f76; font-size: 9px; gap: 7px; flex-wrap: wrap; }
+.published-counts strong { color: #17513a; font-weight: 750; }
+
+.published-lines-block, .search-results-block { margin-top: 16px; }
+.published-route-list li { display: flex; align-items: center; padding: 8px 10px; border: 1px solid #e9efea; border-radius: 12px; background: #fdfefd; gap: 9px; }
+.route-list-badge { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #eef5f0; color: #1a7d57; }
+.route-list-copy { display: grid; gap: 2px; }
+.route-list-copy strong { color: #22422f; font-size: 11px; font-weight: 700; }
+.route-list-copy small { color: #859389; font-size: 9px; }
+
+.published-inline-error { display: flex; align-items: center; margin: 8px 0 0; padding: 8px 10px; border: 1px solid #f2e3c9; border-radius: 11px; background: #fdf9ef; color: #8a6a29; font-size: 9.5px; gap: 7px; }
+.published-inline-error button { margin-left: auto; padding: 0; border: 0; background: none; color: #0b7250; font-size: 9.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
+
+.stop-card { position: relative; flex: 0 0 auto; margin: 12px 22px 0; padding: 12px; border: 1px solid #dcebe1; border-radius: 16px; background: linear-gradient(150deg, #f7fcf9, #ffffff); box-shadow: 0 6px 18px rgba(20, 52, 34, .06); }
+.stop-card-head { display: flex; align-items: flex-start; gap: 9px; }
+.stop-card-head > div { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.stop-card-head strong { color: #17402e; font-family: Manrope, sans-serif; font-size: 13.5px; font-weight: 780; letter-spacing: -.02em; }
+.stop-card-head span:not(.stop-card-icon) { overflow: hidden; color: #7e8d85; font-size: 9px; text-overflow: ellipsis; }
+.stop-card-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: #e8f5ed; color: #0e7a52; }
+.stop-card-head button { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #7c8b83; cursor: pointer; }
+.stop-card-head button:hover { background: #edf5ef; color: #0a6745; }
+.stop-card-routes { display: grid; margin: 10px 0 0; padding: 0; list-style: none; gap: 5px; }
+.stop-card-routes li { display: flex; align-items: center; padding: 6px 8px; border-radius: 10px; background: #f4f9f5; color: #1f4331; font-size: 10.5px; font-weight: 650; gap: 8px; }
+.stop-card-routes li small { margin-left: auto; color: #86948b; font-size: 8.5px; font-weight: 600; }
+.stop-route-badge { display: grid; width: 22px; height: 22px; flex: 0 0 auto; place-items: center; border-radius: 7px; background: #e3f1e8; color: #12805a; }
+.stop-card-actions { display: flex; margin-top: 10px; gap: 7px; }
+.stop-card-actions button { display: inline-flex; min-height: 32px; flex: 1; align-items: center; justify-content: center; border: 1px solid #d9e8de; border-radius: 11px; background: #fff; color: #0f6a4a; font-size: 10.5px; font-weight: 700; cursor: pointer; gap: 6px; }
+.stop-card-actions button:hover:not(:disabled) { border-color: #bcdcc7; background: #f5fbf7; }
+.stop-card-actions button:disabled { opacity: .5; }
+.stop-card-error { display: flex; align-items: center; color: #8a6a29; font-size: 9.5px; gap: 8px; }
+.stop-card-error button { margin-left: auto; border: 0; background: none; color: #7c8b83; cursor: pointer; }
+
+.leaflet-tooltip.stop-tooltip { padding: 4px 8px; border: 1px solid #dbe7de; border-radius: 9px; box-shadow: 0 4px 14px rgba(20, 48, 34, .12); color: #1f4234; font-size: 10.5px; font-weight: 600; }
+.map-transport-note.is-published .transport-note-icon { background: #e4f2e9; color: #0d7a52; }
+
+/* --- Mise en page : carte plein écran ou panneau latéral ---------------- */
+.layout-toggle { margin-right: 8px; }
+@media (min-width: 821px) {
+  .app-shell.layout-map { grid-template-columns: minmax(0, 1fr); --panel-w: min(404px, calc(100vw - 36px)); }
+  .app-shell.layout-map .map-stage { grid-column: 1; }
+  .app-shell.layout-map .sidebar {
+    position: absolute;
+    z-index: 800;
+    top: 18px;
+    bottom: 18px;
+    left: 18px;
+    width: var(--panel-w);
+    border: 1px solid #e5ebe6;
+    border-radius: 22px;
+    box-shadow: 0 22px 50px rgba(16, 44, 31, .2), 0 2px 8px rgba(16, 44, 31, .06);
+    overflow: hidden;
+  }
+  .app-shell.layout-map .map-heading-overlay,
+  .app-shell.layout-map .map-transport-note,
+  .app-shell.layout-map .map-attribution-note { left: calc(18px + var(--panel-w) + 16px); }
+  .app-shell.layout-map .map-heading-overlay { flex-wrap: wrap; max-width: calc(100vw - var(--panel-w) - 300px); }
+}
+@media (max-width: 820px) {
+  .layout-toggle { display: none; }
+}
+
+/* --- Itinéraires : courses directes déclarées --------------------------- */
+.route-unavailable-note { color: #9a8358 !important; font-style: italic; }
+.route-next-service { color: #7b5d31 !important; font-size: 9px; }
+.journey-results { display: grid; margin-top: 16px; gap: 10px; }
+.journey-results-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.journey-count-chip { padding: 3px 9px; border-radius: 999px; background: #e8f4ec; color: #126e4b; font-size: 9px; font-weight: 700; }
+.journey-later-day { margin: 0; padding: 8px 10px; border: 1px solid #f0e7d7; border-radius: 10px; background: #fcfaf6; color: #7b5d31; font-size: 9px; line-height: 1.5; }
+.journey-list { display: grid; margin: 0; padding: 0; list-style: none; gap: 9px; }
+.journey-card { display: grid; padding: 11px; border: 1px solid #e5ebe6; border-radius: 13px; background: #fff; gap: 9px; }
+.journey-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.journey-route-badge { padding: 2px 8px; border-radius: 7px; background: #126e4b; color: #fff; font-size: 9.5px; font-weight: 750; letter-spacing: .02em; }
+.journey-mode { padding: 2px 7px; border-radius: 999px; background: #eef4ef; color: #4f6b5c; font-size: 8.5px; font-weight: 650; }
+.journey-route-name { color: #7d8b82; font-size: 9px; }
+.journey-timeline { display: grid; align-items: center; gap: 8px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+.journey-point { display: grid; gap: 2px; min-width: 0; }
+.journey-point strong { overflow: hidden; color: #24483a; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.journey-point small { display: inline-flex; align-items: center; color: #87948b; font-size: 8.5px; gap: 4px; }
+.journey-point small svg { color: #618274; }
+.journey-clock { color: #126e4b; font-size: 13px; font-weight: 780; letter-spacing: .01em; }
+.journey-point-arrival { text-align: right; justify-items: end; }
+.journey-duration { display: grid; justify-items: center; color: #6b7c72; font-size: 8.5px; gap: 2px; }
+.journey-duration svg { color: #a8b5ac; }
+.journey-date-note { margin: 0; padding: 6px 8px; border-radius: 8px; background: #fcfaf6; color: #7b5d31; font-size: 8.5px; font-weight: 650; }
+.journey-note { margin: 0; color: #93a099; font-size: 8.5px; line-height: 1.5; }
+.journey-footnote { margin: 0; color: #93a099; font-size: 8.5px; line-height: 1.5; }
+.journey-footnote-strong { color: #64766c; font-weight: 650; }
+@media (max-width: 420px) {
+  .journey-timeline { grid-template-columns: minmax(0, 1fr); }
+  .journey-point-arrival { text-align: left; justify-items: start; }
+  .journey-duration { justify-items: start; grid-auto-flow: column; }
+}
+
+/* Console connectée : décisions authentifiées */
+.console-panel { margin-top: 18px; padding-top: 16px; border-top: 1px solid #edf2ee; }
+.console-panel .panel-heading-row { margin-bottom: 12px; }
+.console-panel h3 { margin: 6px 0 4px; color: #364b3e; font-family: Manrope, sans-serif; font-size: 15px; font-weight: 750; letter-spacing: -.025em; }
+.console-panel .panel-heading-row p { margin: 0; color: #7d887e; font-size: 10px; line-height: 1.6; }
+
+.console-state { display: flex; align-items: center; padding: 11px 12px; border: 1px solid #e9f0eb; border-radius: 13px; background: #fafcfb; gap: 10px; }
+.console-state-connected { border-color: #cfe7d8; background: #f4faf6; }
+.console-state div { display: grid; gap: 3px; min-width: 0; }
+.console-state strong { color: #2f4638; font-size: 10.5px; font-weight: 730; }
+.console-state span { color: #7d8b82; font-size: 9px; line-height: 1.5; }
+.console-state code { padding: 1px 4px; border-radius: 5px; background: #eef3f0; color: #2b6249; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+.console-state .governance-refresh { margin-left: auto; }
+
+.console-login { display: grid; margin-top: 10px; gap: 5px; }
+.console-login label { color: #8c9a91; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.console-login input { padding: 8px 9px; border: 1px solid #e4ece6; border-radius: 10px; background: #fff; color: #2f4638; font-size: 11px; }
+.console-login input:focus { border-color: #b9dcc7; outline: 2px solid #e9f5ee; }
+
+.console-dataset-list { display: grid; margin: 12px 0 0; padding: 0; list-style: none; gap: 9px; }
+.console-dataset { padding: 11px; border: 1px solid #eaf0eb; border-radius: 13px; background: #fff; }
+.console-actions { display: flex; flex-wrap: wrap; margin-top: 10px; gap: 6px; }
+.console-action { display: inline-flex; align-items: center; padding: 6px 9px; border: 1px solid #e4ece6; border-radius: 9px; background: #fff; color: #3f5a4c; cursor: pointer; font-size: 9px; font-weight: 700; gap: 5px; }
+.console-action:hover { border-color: #c9e0d2; color: #147954; }
+.console-action:disabled { cursor: progress; opacity: .6; }
+.console-action-primary { border-color: #cfe7d8; background: #eef8f1; color: #146f4d; }
+
+.console-form { display: grid; margin-top: 10px; padding: 11px; border: 1px solid #e9f0eb; border-radius: 12px; background: #fafcfb; gap: 5px; }
+.console-form strong { color: #2f4638; font-size: 10.5px; font-weight: 740; }
+.console-form fieldset { display: grid; margin: 4px 0 0; padding: 8px; border: 1px solid #eaeff0; border-radius: 10px; background: #fff; gap: 4px; }
+.console-form legend { padding: 0 4px; color: #5f7167; font-size: 9px; font-weight: 700; }
+.console-form label { color: #8c9a91; font-size: 8px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.console-form input, .console-form textarea { width: 100%; padding: 7px 8px; border: 1px solid #e4ece6; border-radius: 9px; background: #fff; color: #2f4638; font-family: inherit; font-size: 10px; resize: vertical; }
+.console-form input:focus, .console-form textarea:focus { border-color: #b9dcc7; outline: 2px solid #e9f5ee; }
+
+.console-hint { margin: 2px 0 0; color: #87948c; font-size: 8.8px; line-height: 1.5; }
+
+.console-notice { margin-top: 12px; padding: 11px 12px; border: 1px solid #e9f0eb; border-radius: 12px; background: #fafcfb; }
+.console-notice strong { display: block; color: #2f4638; font-size: 10.5px; font-weight: 740; }
+.console-notice ul { display: grid; margin: 6px 0 0; padding-left: 15px; color: #6f7f76; font-size: 9px; line-height: 1.55; gap: 3px; }
+.console-notice-ok { border-color: #cfe7d8; background: #f4faf6; }
+.console-notice-error { border-color: #f0d9d6; background: #fdf4f2; }
+.console-notice-error strong { color: #a4483c; }
+
+@media (max-width: 720px) {
+  .console-panel { margin-top: 12px; padding-top: 12px; }
+  .console-dataset-meta { grid-template-columns: minmax(0, 1fr); }
+}

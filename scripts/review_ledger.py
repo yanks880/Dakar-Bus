@@ -107,17 +107,21 @@ class LedgerLockTimeout(RuntimeError):
 
 
 @contextmanager
-def ledger_lock(dataset_dir: str | Path, *, timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> Iterator[Path]:
-    """Serialise writers on one dataset for the whole read-decide-append cycle.
+def file_lock(
+    lock_path: Path,
+    *,
+    subject: str,
+    timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+    message: str | None = None,
+    error_class: type[RuntimeError] = LedgerLockTimeout,
+) -> Iterator[Path]:
+    """Serialise writers with an advisory flock, released by the kernel on exit.
 
-    The lock is advisory and process-wide (flock): it is released by the kernel
-    when the holder exits, so a crashed review cannot leave it stuck. Callers
-    must read the journal *inside* the lock, otherwise two approvals can both
-    compute the same sequence number and break the hash chain.
+    Callers must read the journal *inside* the lock, otherwise two writers can
+    both compute the same sequence number and break the hash chain. A crashed
+    process cannot leave the lock stuck: the kernel drops it.
     """
-    ledger = ledger_dir(dataset_dir)
-    ledger.mkdir(parents=True, exist_ok=True)
-    lock_path = ledger / LOCK_FILENAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(lock_path, "a+b")
     acquired = False
     try:
@@ -132,8 +136,8 @@ def ledger_lock(dataset_dir: str | Path, *, timeout: float = DEFAULT_LOCK_TIMEOU
                 break
             except OSError:
                 if time.monotonic() >= deadline:
-                    raise LedgerLockTimeout(
-                        f"Le journal de « {Path(dataset_dir).name} » est verrouillé par une autre revue ; rien n’a été écrit."
+                    raise error_class(
+                        message or f"Le journal de « {subject} » est verrouillé par une autre écriture ; rien n’a été écrit."
                     ) from None
                 time.sleep(0.02)
         yield lock_path
@@ -146,19 +150,38 @@ def ledger_lock(dataset_dir: str | Path, *, timeout: float = DEFAULT_LOCK_TIMEOU
         handle.close()
 
 
+@contextmanager
+def ledger_lock(dataset_dir: str | Path, *, timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> Iterator[Path]:
+    """Serialise reviewers on one dataset for the whole read-decide-append cycle."""
+    ledger = ledger_dir(dataset_dir)
+    with file_lock(ledger / LOCK_FILENAME, subject=Path(dataset_dir).name, timeout=timeout) as path:
+        yield path
+
+
 def _issue(code: str, message: str) -> dict[str, str]:
     return {"code": code, "message": message}
 
 
-def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
-    """Read the journal and verify its hash chain without repairing anything."""
-    path = journal_path(dataset_dir)
+def read_chain(
+    path: Path,
+    *,
+    entry_id_re: re.Pattern[str],
+    label: str = "journal",
+    schema_version: str = LEDGER_SCHEMA_VERSION,
+    entry_id_field: str = "entry_id",
+) -> dict[str, Any]:
+    """Read one append-only chain and verify it without repairing anything.
+
+    The review ledger and the publication journal share this rule: every line is
+    JSON, numbered from one, linked to the previous entry by SHA-256 and must
+    match its own hash. Shared here so both journals are checked identically.
+    """
     if not path.exists():
         return {"integrity": "EMPTY", "issue": None, "entries": [], "path": str(path)}
     if path.is_symlink() or not path.is_file():
         return {
             "integrity": "INVALID",
-            "issue": _issue("JOURNAL_UNSAFE", "Le journal est un lien symbolique ou n’est pas un fichier."),
+            "issue": _issue("JOURNAL_UNSAFE", f"Le {label} est un lien symbolique ou n’est pas un fichier."),
             "entries": [],
             "path": str(path),
         }
@@ -167,7 +190,7 @@ def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
     except (OSError, UnicodeDecodeError) as error:
         return {
             "integrity": "INVALID",
-            "issue": _issue("JOURNAL_UNREADABLE", f"Le journal ne peut pas être lu : {error}"),
+            "issue": _issue("JOURNAL_UNREADABLE", f"Le {label} ne peut pas être lu : {error}"),
             "entries": [],
             "path": str(path),
         }
@@ -177,7 +200,7 @@ def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
         if not line.strip():
             return {
                 "integrity": "INVALID",
-                "issue": _issue("JOURNAL_EMPTY_LINE", f"Le journal contient une ligne vide (ligne {line_number})."),
+                "issue": _issue("JOURNAL_EMPTY_LINE", f"Le {label} contient une ligne vide (ligne {line_number})."),
                 "entries": [],
                 "path": str(path),
             }
@@ -186,14 +209,14 @@ def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
         except json.JSONDecodeError as error:
             return {
                 "integrity": "INVALID",
-                "issue": _issue("JOURNAL_NOT_JSON", f"La ligne {line_number} du journal n’est pas du JSON : {error}"),
+                "issue": _issue("JOURNAL_NOT_JSON", f"La ligne {line_number} du {label} n’est pas du JSON : {error}"),
                 "entries": [],
                 "path": str(path),
             }
-        if not isinstance(entry, dict) or entry.get("schema_version") != LEDGER_SCHEMA_VERSION:
+        if not isinstance(entry, dict) or entry.get("schema_version") != schema_version:
             return {
                 "integrity": "INVALID",
-                "issue": _issue("JOURNAL_SCHEMA_UNSUPPORTED", f"La ligne {line_number} n’utilise pas le schéma {LEDGER_SCHEMA_VERSION}."),
+                "issue": _issue("JOURNAL_SCHEMA_UNSUPPORTED", f"La ligne {line_number} n’utilise pas le schéma {schema_version}."),
                 "entries": [],
                 "path": str(path),
             }
@@ -201,11 +224,11 @@ def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
 
     expected_previous = GENESIS_HASH
     for index, entry in enumerate(entries, start=1):
-        entry_id = entry.get("entry_id")
-        if not isinstance(entry_id, str) or not ENTRY_ID_RE.fullmatch(entry_id):
+        entry_id = entry.get(entry_id_field)
+        if not isinstance(entry_id, str) or not entry_id_re.fullmatch(entry_id):
             return {
                 "integrity": "INVALID",
-                "issue": _issue("JOURNAL_ENTRY_ID_INVALID", f"entry_id manquant ou invalide à la ligne {index}."),
+                "issue": _issue("JOURNAL_ENTRY_ID_INVALID", f"{entry_id_field} manquant ou invalide à la ligne {index}."),
                 "entries": entries,
                 "path": str(path),
             }
@@ -236,6 +259,11 @@ def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
     if not entries:
         return {"integrity": "EMPTY", "issue": None, "entries": [], "path": str(path)}
     return {"integrity": "OK", "issue": None, "entries": entries, "path": str(path)}
+
+
+def read_journal(dataset_dir: str | Path) -> dict[str, Any]:
+    """Read the review journal and verify its hash chain without repairing it."""
+    return read_chain(journal_path(dataset_dir), entry_id_re=ENTRY_ID_RE, label="journal")
 
 
 def effective_review(entries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -324,6 +352,7 @@ def build_entry(
     attestations: dict[str, dict[str, str | None]] | None = None,
     reverted_entry_id: str | None = None,
     decision_basis: dict[str, Any] | None = None,
+    authentication: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if action not in LEDGER_ACTIONS:
         raise ValueError(f"action doit être l’une de : {', '.join(LEDGER_ACTIONS)}.")
@@ -343,6 +372,9 @@ def build_entry(
         "attestations": attestations or {},
         "reverted_entry_id": reverted_entry_id,
         "decision_basis": decision_basis or {},
+        # None when a decision was recorded without an authenticated actor: the
+        # absence is visible in the chain instead of being silently assumed.
+        "authentication": authentication,
         "previous_hash": previous_hash,
         "publication_status": "NOT_PUBLISHED",
         "publication_ready": False,

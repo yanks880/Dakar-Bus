@@ -23,7 +23,9 @@ export interface CatalogDataset {
   serviceStatus: string | null
   reviewerId: string | null
   reviewedAt: string | null
+  reviewEntryId: string | null
   publicationStatus: string
+  publicationSnapshotId: string | null
 }
 
 export interface PipelineStage {
@@ -45,7 +47,7 @@ export type ParseResult<T> = { ok: true; value: T } | { ok: false; reason: strin
 const REVIEW_STATUSES: readonly ReviewStatus[] = ['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'UNKNOWN']
 const LEDGER_INTEGRITIES: readonly LedgerIntegrity[] = ['OK', 'EMPTY', 'INVALID', 'UNKNOWN']
 
-/** Stages every dataset must cross. Publication is not implemented yet. */
+/** Stages every dataset must cross, publication included. */
 export const GOVERNANCE_STAGES: readonly { id: string; label: string; requirement: string; implemented: boolean }[] = [
   {
     id: 'staging',
@@ -68,8 +70,8 @@ export const GOVERNANCE_STAGES: readonly { id: string; label: string; requiremen
   {
     id: 'publication',
     label: 'Publication',
-    requirement: 'Étape séparée, réversible et non implémentée : rien n’atteint la carte publique.',
-    implemented: false,
+    requirement: 'Snapshot daté et haché d’une version approuvée, servi en lecture seule ; retour arrière tracé, sans rien effacer.',
+    implemented: true,
   },
 ]
 
@@ -119,7 +121,9 @@ function parseDataset(raw: unknown): CatalogDataset | null {
     serviceStatus: optionalString(raw.service_status),
     reviewerId: optionalString(raw.reviewer_id),
     reviewedAt: optionalString(raw.reviewed_at),
+    reviewEntryId: optionalString(raw.review_entry_id),
     publicationStatus: optionalString(raw.publication_status) ?? 'NOT_PUBLISHED',
+    publicationSnapshotId: optionalString(raw.publication_snapshot_id),
   }
 }
 
