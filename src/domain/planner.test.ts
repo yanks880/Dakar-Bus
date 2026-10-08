@@ -3,7 +3,8 @@ import { getCorridorStop } from './corridors'
 import { describeLeg, planReferenceJourney, type PlannerResult } from './planner'
 
 const PLATEAU = { label: 'Plateau (point carte)', lat: 14.6735, lon: -17.4375 }
-const GUEDIAWAYE = { label: 'Guédiawaye (point carte)', lat: 14.8035, lon: -17.3245 }
+// Point à ~110 m de la station BRT « Préfecture de Guédiawaye » (position OSM).
+const GUEDIAWAYE = { label: 'Guédiawaye (point carte)', lat: 14.7725, lon: -17.3860 }
 const RUFISQUE = { label: 'Rufisque (point carte)', lat: 14.7145, lon: -17.2725 }
 
 describe('calculateur multimodal de référence', () => {

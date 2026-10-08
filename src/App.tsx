@@ -4,6 +4,8 @@ import {
   ArrowDownUp,
   ArrowRight,
   Bell,
+  BookOpen,
+  Bot,
   BusFront,
   ChevronDown,
   CircleAlert,
@@ -17,14 +19,16 @@ import {
   LayoutPanelLeft,
   Layers3,
   LocateFixed,
-  Map as MapIcon,
   MapPin,
   Minus,
   Navigation,
   Plus,
   RefreshCw,
   Route as RouteIcon,
+  ScrollText,
   Search,
+  Sparkles,
+  Settings,
   ShieldCheck,
   TrainFront,
   X,
@@ -32,13 +36,17 @@ import {
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
 import { AssistantChat } from './components/AssistantChat'
 import { MultimodalPlanner } from './components/MultimodalPlanner'
+import { answerAssistant, type AssistantContext } from './domain/assistant'
 import {
   BRT_STOPS,
   CORRIDOR_LINES,
   CORRIDOR_NETWORKS,
   DAKAR_REGION_BOUNDS,
   TER_STOPS,
+  getCorridorStop,
   linesServingStop,
+  nearestCorridorStops,
+  searchCorridorStops,
   type CorridorStop,
 } from './domain/corridors'
 import {
@@ -83,7 +91,8 @@ import {
 } from './domain/review'
 import './App.css'
 
-type TabId = 'map' | 'route' | 'explore' | 'alerts' | 'governance'
+/** Quatre piliers fonctionnels, un rôle exclusif par onglet. */
+type TabId = 'explore' | 'route' | 'alerts' | 'settings'
 type GovernanceStatus = 'idle' | 'loading' | 'ready' | 'offline'
 type PublishedStatus = 'idle' | 'loading' | 'ready' | 'error'
 type LayoutMode = 'map' | 'split'
@@ -132,7 +141,10 @@ const IDLE_JOURNEY: JourneyState = { status: 'idle', search: null, error: null, 
 type GpsState = 'idle' | 'loading' | 'ready' | 'denied' | 'error'
 type MapPoint = Coordinates & { label: string; kind?: 'map' | 'stop'; stopId?: string }
 
-const NEARBY_RADIUS_M = 1500
+/** Rayon demandé à l’API pour « autour de vous » : 5 km, la limite servie
+ *  par /api/stops/near. Les arrêts sont classés du plus proche au plus loin. */
+const NEARBY_RADIUS_M = 5000
+const NEARBY_LIMIT = 12
 /** Walking radius asked from the routing API: declared links only, never a shortcut. */
 const ROUTE_MAX_WALK_M = 900
 const LAYOUT_STORAGE_KEY = 'dakar-bus:layout'
@@ -189,12 +201,15 @@ function readStoredLayout(): LayoutMode {
   }
 }
 
-const NAV_ITEMS: { id: TabId; label: string; icon: typeof MapIcon }[] = [
-  { id: 'map', label: 'Carte', icon: MapIcon },
-  { id: 'route', label: 'Itinéraire', icon: RouteIcon },
+/** La barre de navigation répartit l’application en 4 piliers exclusifs :
+ *  Explorer (carte + GPS + assistant), Trajet (recherche universelle et
+ *  itinéraires), Alertes (information voyageur), Paramètres (aide, données,
+ *  CGU, historique et console technique locale). */
+const NAV_ITEMS: { id: TabId; label: string; icon: typeof Compass }[] = [
   { id: 'explore', label: 'Explorer', icon: Compass },
+  { id: 'route', label: 'Trajet', icon: RouteIcon },
   { id: 'alerts', label: 'Alertes', icon: Bell },
-  { id: 'governance', label: 'Gouvernance', icon: Database },
+  { id: 'settings', label: 'Paramètres', icon: Settings },
 ]
 
 const NETWORK_ICONS: Record<NetworkId, typeof TrainFront> = {
@@ -204,6 +219,10 @@ const NETWORK_ICONS: Record<NetworkId, typeof TrainFront> = {
   aftu: BusFront,
   tata: BusFront,
   other: BusFront,
+}
+
+function formatRadius(radiusM: number): string {
+  return radiusM >= 1000 ? `${Math.round(radiusM / 1000)} km` : `${Math.round(radiusM)} m`
 }
 
 function formatCoordinates(point: Coordinates): string {
@@ -216,7 +235,7 @@ function NetworkIcon({ id, size = 18 }: { id: NetworkId; size?: number }) {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('map')
+  const [activeTab, setActiveTab] = useState<TabId>('explore')
   const [search, setSearch] = useState('')
   const [networkLayers, setNetworkLayers] = useState<Record<NetworkId, boolean>>({
     ter: true,
@@ -234,12 +253,18 @@ function App() {
   const [nextZoomNonce, setNextZoomNonce] = useState(0)
   const [routePoints, setRoutePoints] = useState<Partial<Record<RoutePointKey, MapPoint>>>({})
   const [pickingPoint, setPickingPoint] = useState<RoutePointKey | null>(null)
+  /** Onglet vers lequel revenir après un choix de point sur la carte. */
+  const [pickReturnTab, setPickReturnTab] = useState<TabId | null>(null)
   const [routeAttempted, setRouteAttempted] = useState(false)
   const [journey, setJourney] = useState<JourneyState>(IDLE_JOURNEY)
   const [toast, setToast] = useState<string | null>(null)
   const [gpsMessage, setGpsMessage] = useState<string | null>(null)
   const [exploreFilter, setExploreFilter] = useState<NetworkId | 'all'>('all')
   const [alertInfoOpen, setAlertInfoOpen] = useState(false)
+  /** Section technique de l’onglet Paramètres : console d’administration locale. */
+  const [consoleOpen, setConsoleOpen] = useState(false)
+  /** Réponse de l’assistant à la dernière recherche universelle. */
+  const [assistantAnswer, setAssistantAnswer] = useState<{ question: string; answer: string } | null>(null)
   const [governance, setGovernance] = useState<GovernanceState>({ status: 'idle', datasets: [], pipeline: null, error: null })
   const [published, setPublished] = useState<PublishedState>({ status: 'idle', network: null, error: null })
   const [nearby, setNearby] = useState<NearbyState>({ status: 'idle', stops: [], radius: NEARBY_RADIUS_M, error: null })
@@ -275,25 +300,32 @@ function App() {
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
 
-  useEffect(() => {
-    function handleKeyboardShortcut(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        searchInputRef.current?.focus()
-      }
-      if (event.key === 'Escape') {
-        setLayersOpen(false)
-        setPickingPoint(null)
-      }
-      const target = event.target as HTMLElement | null
-      const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
-      if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'p') {
-        event.preventDefault()
-        toggleLayout()
-      }
+  // Les raccourcis clavier passent par une référence : le gestionnaire voit
+  // toujours l’état courant (onglet de retour, point en cours de choix…).
+  const shortcutRef = useRef<(event: KeyboardEvent) => void>(() => {})
+
+  shortcutRef.current = function handleKeyboardShortcut(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault()
+      searchInputRef.current?.focus()
     }
-    window.addEventListener('keydown', handleKeyboardShortcut)
-    return () => window.removeEventListener('keydown', handleKeyboardShortcut)
+    if (event.key === 'Escape') {
+      setLayersOpen(false)
+      if (pickingPoint) cancelPointSelection()
+      else setPickingPoint(null)
+    }
+    const target = event.target as HTMLElement | null
+    const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
+    if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'p') {
+      event.preventDefault()
+      toggleLayout()
+    }
+  }
+
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => shortcutRef.current(event)
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
   }, [])
 
   function announce(message: string) {
@@ -339,10 +371,12 @@ function App() {
     }
   }, [])
 
+  // Le catalogue local (staging, revue, publications) n’est interrogé que
+  // lorsque la section technique de Paramètres est ouverte.
   useEffect(() => {
-    if (activeTab !== 'governance') return
+    if (activeTab !== 'settings' || !consoleOpen) return
     if (governance.status === 'idle') void loadGovernance()
-  }, [activeTab, governance.status, loadGovernance])
+  }, [activeTab, consoleOpen, governance.status, loadGovernance])
 
   const loadPublishedNetwork = useCallback(async () => {
     setPublished((current) => ({ ...current, status: 'loading', error: null }))
@@ -398,7 +432,7 @@ function App() {
 
   const loadNearbyStops = useCallback(async (origin: Coordinates) => {
     setNearby({ status: 'loading', stops: [], radius: NEARBY_RADIUS_M, error: null })
-    const result = await fetchApi(`/api/stops/near?lat=${origin.lat}&lon=${origin.lng}&radius=${NEARBY_RADIUS_M}&limit=8`)
+    const result = await fetchApi(`/api/stops/near?lat=${origin.lat}&lon=${origin.lng}&radius=${NEARBY_RADIUS_M}&limit=${NEARBY_LIMIT}`)
     if (!result.ok) {
       setNearby({
         status: 'error',
@@ -441,6 +475,23 @@ function App() {
       setRecenterTo({ lat: parsed.value.lat, lng: parsed.value.lon })
     }
     announce(`Arrêt ${parsed.value.stopName} · ${parsed.value.routes.length} ligne${parsed.value.routes.length > 1 ? 's' : ''} déclarée${parsed.value.routes.length > 1 ? 's' : ''}.`)
+  }
+
+  /** Recherche universelle (en-tête) : elle couvre l’index complet des arrêts
+   *  et lignes — snapshot publié + réseau de référence TER/BRT — et interroge
+   *  l’assistant, qui répond à partir des mêmes données vérifiées. */
+  function askUniversalSearch(query: string) {
+    const question = query.trim()
+    setActiveTab('route')
+    setPickingPoint(null)
+    if (!question) {
+      setStopSearch({ status: 'idle', query: '', stops: [], error: null })
+      setAssistantAnswer(null)
+      return
+    }
+    const context: AssistantContext = { publishedAvailable: dataAvailable, adminOnline: governance.status === 'ready' }
+    setAssistantAnswer({ question, answer: answerAssistant(question, context) })
+    void runStopSearch(question)
   }
 
   function useStopAsRoutePoint(stop: PublishedStopDetail, key: RoutePointKey) {
@@ -497,22 +548,29 @@ function App() {
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setActiveTab('explore')
-    setPickingPoint(null)
-    if (!search.trim()) {
-      setStopSearch({ status: 'idle', query: '', stops: [], error: null })
-      return
-    }
-    void runStopSearch(search)
+    askUniversalSearch(search)
   }
 
   function clearSearch() {
     setSearch('')
     setStopSearch({ status: 'idle', query: '', stops: [], error: null })
+    setAssistantAnswer(null)
+  }
+
+  /** Annule un choix de point en cours et ramène l’utilisateur d’où il vient. */
+  function cancelPointSelection() {
+    const target = pickReturnTab
+    setPickingPoint(null)
+    setPickReturnTab(null)
+    setLayersOpen(false)
+    if (target && target !== 'explore') setActiveTab(target)
   }
 
   function startPointSelection(key: RoutePointKey) {
-    setActiveTab('route')
+    // La carte n’est montée que dans l’onglet « Explorer » : on y emmène
+    // l’utilisateur pour désigner le point, puis on le ramène au trajet.
+    setPickReturnTab('route')
+    setActiveTab('explore')
     setPickingPoint(key)
     setRouteAttempted(false)
     setJourney(IDLE_JOURNEY)
@@ -522,12 +580,16 @@ function App() {
 
   function handleMapPick(point: Coordinates) {
     if (!pickingPoint) return
+    const picked = pickingPoint
     const nextPoint: MapPoint = { ...point, label: 'Point choisi sur la carte' }
-    setRoutePoints((current) => ({ ...current, [pickingPoint]: nextPoint }))
+    setRoutePoints((current) => ({ ...current, [picked]: nextPoint }))
     setRouteAttempted(false)
     setJourney(IDLE_JOURNEY)
     setPickingPoint(null)
-    announce(pickingPoint === 'origin' ? 'Point de départ enregistré.' : 'Destination enregistrée.')
+    const target = pickReturnTab
+    setPickReturnTab(null)
+    if (target && target !== 'explore') setActiveTab(target)
+    announce(picked === 'origin' ? 'Point de départ enregistré.' : 'Destination enregistrée.')
   }
 
   function requestLocation(purpose: 'center' | 'origin' = 'center') {
@@ -582,6 +644,44 @@ function App() {
 
   function toggleNetwork(id: NetworkId) {
     setNetworkLayers((current) => ({ ...current, [id]: !current[id] }))
+  }
+
+  /** Arrêts choisis dans l’onglet Trajet sans passer par la carte :
+   *  les arrêts publiés déjà lus par l’application, puis le réseau de
+   *  référence TER/BRT. Aucun lieu n’est deviné : la liste est exhaustive. */
+  const selectablePublishedStops = [...nearby.stops, ...stopSearch.stops].filter(
+    (stop, index, all) =>
+      stop.lat !== null && stop.lon !== null && all.findIndex((candidate) => candidate.stopId === stop.stopId) === index,
+  )
+  const routeStopOptions: StopOption[] = [
+    ...selectablePublishedStops.map((stop) => ({ value: `published:${stop.stopId}`, label: `${stop.stopName} (publié)`, group: 'Arrêts publiés' })),
+    ...BRT_STOPS.map((stop) => ({ value: `ref:${stop.id}`, label: `BRT · ${stop.name}`, group: 'Réseau de référence BRT' })),
+    ...TER_STOPS.map((stop) => ({ value: `ref:${stop.id}`, label: `TER · ${stop.name}`, group: 'Réseau de référence TER' })),
+  ]
+
+  function selectRoutePoint(key: RoutePointKey, value: string) {
+    if (!value) return
+    const separator = value.indexOf(':')
+    const kind = value.slice(0, separator)
+    const id = value.slice(separator + 1)
+    let next: MapPoint | null = null
+    if (kind === 'published') {
+      const stop = selectablePublishedStops.find((candidate) => candidate.stopId === id)
+      if (stop && stop.lat !== null && stop.lon !== null) {
+        next = { lat: stop.lat, lng: stop.lon, label: stop.stopName, kind: 'stop', stopId: stop.stopId }
+      }
+    } else {
+      const stop = getCorridorStop(id)
+      if (stop) next = { lat: stop.lat, lng: stop.lon, label: stop.name }
+    }
+    if (!next) {
+      announce('Cet arrêt n’est plus disponible : choisissez-en un autre.')
+      return
+    }
+    setRoutePoints((current) => ({ ...current, [key]: next! }))
+    setRouteAttempted(false)
+    setJourney(IDLE_JOURNEY)
+    announce(key === 'origin' ? `${next.label} défini comme départ.` : `${next.label} défini comme destination.`)
   }
 
   function swapRoutePoints() {
@@ -643,8 +743,15 @@ function App() {
     ? NETWORK_SOURCES
     : NETWORK_SOURCES.filter((network) => network.id === exploreFilter)
 
+  // La carte n'existe que sur l'onglet « Explorer » : ailleurs, elle est
+  // démontée du DOM (aucune tuile, aucun calcul Leaflet) et le panneau occupe
+  // toute la place. Chaque onglet garde ainsi un rôle unique.
+  const mapVisible = activeTab === 'explore'
+  const showStopCard = activeTab === 'explore' || activeTab === 'route'
+
   return (
-    <main className={`app-shell layout-${layout}`}>
+    <main className={`app-shell layout-${layout} tab-${activeTab}${mapVisible ? '' : ' is-map-hidden'}`}>
+      {mapVisible && (
       <section className="map-stage" aria-label="Carte de Dakar">
         <TransitMap
           location={location}
@@ -739,7 +846,7 @@ function App() {
           <div className="map-pick-banner" role="status">
             <MapPin size={16} />
             <span>Choisissez {pickingPoint === 'origin' ? 'un point de départ' : 'une destination'} sur la carte</span>
-            <button type="button" aria-label="Annuler la sélection" onClick={() => setPickingPoint(null)}><X size={16} /></button>
+            <button type="button" aria-label="Annuler la sélection" onClick={cancelPointSelection}><X size={16} /></button>
           </div>
         )}
 
@@ -777,6 +884,7 @@ function App() {
         {/* Assistant IA : bouton flottant en bas à gauche de la carte. */}
         <AssistantChat context={{ publishedAvailable: dataAvailable, adminOnline: governance.status === 'ready' }} />
       </section>
+      )}
 
       <aside className="sidebar" aria-label="Dakar Bus">
         <div className="sidebar-top">
@@ -804,10 +912,10 @@ function App() {
             <Search size={18} className="search-icon" aria-hidden="true" />
             <input
               ref={searchInputRef}
-              aria-label="Rechercher un arrêt, une station ou une ligne"
+              aria-label="Rechercher un arrêt, une station, une ligne ou poser une question"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Arrêt, station, ligne…"
+              placeholder="Arrêt, station ou question…"
             />
             {search ? (
               <button type="button" className="search-clear" aria-label="Effacer la recherche" onClick={() => setSearch('')}><X size={15} /></button>
@@ -826,7 +934,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === item.id}
                   className={`nav-tab${activeTab === item.id ? ' active' : ''}`}
-                  onClick={() => { setActiveTab(item.id); setPickingPoint(null) }}
+                  onClick={() => { setActiveTab(item.id); setPickingPoint(null); setPickReturnTab(null); setLayersOpen(false) }}
                 >
                   <Icon size={16} strokeWidth={1.9} />
                   <span>{item.label}</span>
@@ -837,7 +945,9 @@ function App() {
           </nav>
         </div>
 
-        {selectedStop && (
+        {/* La fiche d’arrêt n’accompagne que les onglets qui manipulent des
+            arrêts (carte/exploration et calcul d’itinéraire). */}
+        {showStopCard && selectedStop && (
           <StopCard
             stop={selectedStop}
             onClose={() => { setSelectedStop(null); setSelectedStopError(null) }}
@@ -845,7 +955,7 @@ function App() {
             onUseAsDestination={() => useStopAsRoutePoint(selectedStop, 'destination')}
           />
         )}
-        {selectedStopError && (
+        {showStopCard && selectedStopError && (
           <div className="stop-card stop-card-error" role="status">
             <AlertTriangle size={15} />
             <span>{selectedStopError}</span>
@@ -854,29 +964,41 @@ function App() {
         )}
 
         <div className="panel-content" key={activeTab}>
-          {activeTab === 'map' && (
-            <MapPanel
+          {activeTab === 'explore' && (
+            <ExplorerPanel
               gpsState={gpsState}
               gpsMessage={gpsMessage}
               onLocate={() => requestLocation()}
               onPlan={() => setActiveTab('route')}
-              onExplore={() => setActiveTab('explore')}
               published={published}
               dataAvailable={dataAvailable}
               nearby={nearby}
+              location={location}
               lines={lines}
               onSelectStop={(stop) => void openStop(stop)}
-              onRefresh={() => void loadPublishedNetwork()}
+              onFocusReferenceStop={handleSelectCorridorStop}
             />
           )}
 
           {activeTab === 'route' && (
             <>
+              <UniversalSearchCard
+                query={search}
+                answer={assistantAnswer}
+                search={stopSearch}
+                onRetry={() => askUniversalSearch(search)}
+                onClear={clearSearch}
+                onSelectPublishedStop={(stop) => void openStop(stop)}
+                onSelectReferenceStop={handleSelectCorridorStop}
+                dataAvailable={dataAvailable}
+              />
               <RoutePanel
                 routePoints={routePoints}
                 pickingPoint={pickingPoint}
                 routeAttempted={routeAttempted}
+                stopOptions={routeStopOptions}
                 onSelectPoint={startPointSelection}
+                onSelectStop={selectRoutePoint}
                 onUseLocation={() => requestLocation('origin')}
                 onSwap={swapRoutePoints}
                 onClear={() => { setRoutePoints({}); setRouteAttempted(false); setPickingPoint(null); setJourney(IDLE_JOURNEY) }}
@@ -884,39 +1006,44 @@ function App() {
                 dataAvailable={dataAvailable}
                 journey={journey}
               />
-              {/* Ajout : calculatrice de correspondances multimodale (réseau de référence). */}
+              {/* Calculatrice de correspondances multimodale (réseau de référence). */}
               <MultimodalPlanner mapOrigin={routePoints.origin} mapDestination={routePoints.destination} />
             </>
-          )}
-
-          {activeTab === 'explore' && (
-            <ExplorePanel
-              filter={exploreFilter}
-              query={search}
-              sources={visibleSources}
-              onFilterChange={setExploreFilter}
-              onToggleLayer={toggleNetwork}
-              layerState={networkLayers}
-              onClearSearch={clearSearch}
-              dataAvailable={dataAvailable}
-              lines={lines}
-              search={stopSearch}
-              onSelectStop={(stop) => void openStop(stop)}
-              onRetrySearch={() => void runStopSearch(stopSearch.query)}
-              onFocusReferenceStop={(stop) => { setActiveTab('map'); handleSelectCorridorStop(stop) }}
-            />
           )}
 
           {activeTab === 'alerts' && (
             <AlertsPanel infoOpen={alertInfoOpen} onToggleInfo={() => setAlertInfoOpen((open) => !open)} />
           )}
 
-          {activeTab === 'governance' && <GovernancePanel state={governance} onReload={() => void loadGovernance()} />}
+          {activeTab === 'settings' && (
+            <>
+              <SettingsHelpSection />
+              <DataCatalogSection
+                filter={exploreFilter}
+                sources={visibleSources}
+                onFilterChange={setExploreFilter}
+                onToggleLayer={toggleNetwork}
+                layerState={networkLayers}
+                dataAvailable={dataAvailable}
+                lines={lines}
+                onFocusReferenceStop={(stop: CorridorStop) => { setActiveTab('explore'); handleSelectCorridorStop(stop) }}
+              />
+              <LegalSection />
+              <ChangelogSection />
+              <ReadApiCard published={published} dataAvailable={dataAvailable} onRefresh={() => void loadPublishedNetwork()} />
+              <LocalConsoleSection
+                open={consoleOpen}
+                onToggle={() => setConsoleOpen((current) => !current)}
+                state={governance}
+                onReload={() => void loadGovernance()}
+              />
+            </>
+          )}
         </div>
 
         <footer className="sidebar-footer">
           <div className="footer-truth-mark"><ShieldCheck size={15} /><span>Pas de donnée, pas d’affirmation.</span></div>
-          <button type="button" className="footer-link" onClick={() => setActiveTab('explore')}>Sources & données <ArrowRight size={13} /></button>
+          <button type="button" className="footer-link" onClick={() => { setActiveTab('settings'); setConsoleOpen(false) }}>Aide, CGU & sources <ArrowRight size={13} /></button>
         </footer>
       </aside>
 
@@ -929,7 +1056,7 @@ function App() {
               type="button"
               className={`mobile-nav-item${activeTab === item.id ? ' active' : ''}`}
               aria-current={activeTab === item.id ? 'page' : undefined}
-              onClick={() => { setActiveTab(item.id); setPickingPoint(null) }}
+              onClick={() => { setActiveTab(item.id); setPickingPoint(null); setPickReturnTab(null) }}
             >
               <span className="mobile-nav-icon"><Icon size={19} strokeWidth={1.9} />{item.id === 'alerts' && <i />}</span>
               <span>{item.label}</span>
@@ -943,52 +1070,25 @@ function App() {
   )
 }
 
-function publishedBadge(state: PublishedState): { label: string; tone: 'neutral' | 'published' | 'warning' } {
-  if (state.status === 'loading') return { label: 'LECTURE', tone: 'neutral' }
-  if (state.status === 'error') return { label: 'INDISPONIBLE', tone: 'warning' }
-  if (state.network && isCurrentSnapshot(state.network)) return { label: 'PUBLIÉ', tone: 'published' }
-  if (state.network?.available) return { label: 'PÉRIODE DÉPASSÉE', tone: 'warning' }
-  return { label: 'EN ATTENTE', tone: 'neutral' }
-}
-
-function MapPanel({
-  gpsState,
-  gpsMessage,
-  onLocate,
-  onPlan,
-  onExplore,
+/** État de l’API de lecture : il n’apparaît jamais sur la carte. Il vit dans
+ *  l’onglet Paramètres, seul centre d’état des API et d’aide. */
+function ReadApiCard({
   published,
   dataAvailable,
-  nearby,
-  lines,
-  onSelectStop,
   onRefresh,
 }: {
-  gpsState: GpsState
-  gpsMessage: string | null
-  onLocate: () => void
-  onPlan: () => void
-  onExplore: () => void
   published: PublishedState
   dataAvailable: boolean
-  nearby: NearbyState
-  lines: LinesState
-  onSelectStop: (stop: PublishedStop) => void
   onRefresh: () => void
 }) {
   const network = published.network
   const badge = publishedBadge(published)
   return (
-    <section className="panel map-panel" aria-label="Résumé de la carte">
-      <div className="panel-intro">
-        <div>
-          <span className="eyebrow">VOTRE VILLE, VOTRE RYTHME</span>
-          <h2>La ville en mouvement.</h2>
-          <p>Explorez Dakar et repérez les options de mobilité autour de vous.</p>
-        </div>
-        <span className="intro-compass"><Compass size={19} /></span>
+    <>
+      <div className="governance-list-heading">
+        <span>API DE LECTURE · SNAPSHOT PUBLIÉ</span>
+        <span className="source-count">/api/network</span>
       </div>
-
       <div className={`data-honesty-card tone-${badge.tone}`}>
         <div className="honesty-icon"><ShieldCheck size={18} /></div>
         <div className="honesty-copy">
@@ -1022,10 +1122,53 @@ function MapPanel({
           )}
         </div>
       </div>
+    </>
+  )
+}
 
+function publishedBadge(state: PublishedState): { label: string; tone: 'neutral' | 'published' | 'warning' } {
+  if (state.status === 'loading') return { label: 'LECTURE', tone: 'neutral' }
+  if (state.status === 'error') return { label: 'INDISPONIBLE', tone: 'warning' }
+  if (state.network && isCurrentSnapshot(state.network)) return { label: 'PUBLIÉ', tone: 'published' }
+  if (state.network?.available) return { label: 'PÉRIODE DÉPASSÉE', tone: 'warning' }
+  return { label: 'EN ATTENTE', tone: 'neutral' }
+}
+
+/** Onglet « Explorer » : la carte et rien d’autre autour d’elle. Panneau des
+ *  environs (rayon de 5 km), flux des mobilités disponibles à proximité avec
+ *  leurs horaires annoncés, accès à l’assistant IA et au calcul d’itinéraire.
+ *  Ni slogan, ni état d’API : ces éléments vivent dans Paramètres. */
+function ExplorerPanel({
+  gpsState,
+  gpsMessage,
+  onLocate,
+  onPlan,
+  published,
+  dataAvailable,
+  nearby,
+  location,
+  lines,
+  onSelectStop,
+  onFocusReferenceStop,
+}: {
+  gpsState: GpsState
+  gpsMessage: string | null
+  onLocate: () => void
+  onPlan: () => void
+  published: PublishedState
+  dataAvailable: boolean
+  nearby: NearbyState
+  location: UserLocation | null
+  lines: LinesState
+  onSelectStop: (stop: PublishedStop) => void
+  onFocusReferenceStop: (stop: CorridorStop) => void
+}) {
+  const network = published.network
+  return (
+    <section className="panel map-panel" aria-label="Environs de la carte">
       <div className="nearby-header">
         <div>
-          <span className="eyebrow">EXPLORATION</span>
+          <span className="eyebrow">VUE CARTE · GPS</span>
           <h3>Autour de vous</h3>
         </div>
         <button type="button" className="text-action" onClick={onLocate} disabled={gpsState === 'loading'}>
@@ -1033,6 +1176,10 @@ function MapPanel({
           {gpsState === 'loading' ? 'Recherche…' : 'Me localiser'}
         </button>
       </div>
+      <p className="nearby-radius-note">
+        Rayon de {formatRadius(NEARBY_RADIUS_M)} autour de votre position. En attendant la géolocalisation,
+        la carte affiche le réseau de référence TER/BRT.
+      </p>
 
       {!dataAvailable && (
         <div className="nearby-empty">
@@ -1050,7 +1197,7 @@ function MapPanel({
           <span className="nearby-empty-icon"><LocateFixed size={18} /></span>
           <div>
             <strong>Activez la localisation</strong>
-            <span>Les arrêts publiés dans un rayon de {Math.round(nearby.radius)} m s’afficheront ici, avec leur distance.</span>
+            <span>Les arrêts publiés dans un rayon de {formatRadius(nearby.radius)} s’afficheront ici, avec leur distance et leurs horaires déclarés.</span>
           </div>
           <span className="empty-chevron"><ArrowRight size={15} /></span>
         </div>
@@ -1067,7 +1214,7 @@ function MapPanel({
       {dataAvailable && gpsState === 'ready' && nearby.status === 'ready' && (
         <ul className="published-stop-list">
           {nearby.stops.length === 0 && (
-            <li className="published-stop-empty">Aucun arrêt publié dans un rayon de {Math.round(nearby.radius)} m autour de votre position.</li>
+            <li className="published-stop-empty">Aucun arrêt publié dans un rayon de {formatRadius(nearby.radius)} autour de votre position.</li>
           )}
           {nearby.stops.map((stop) => (
             <li key={stop.stopId}>
@@ -1084,6 +1231,13 @@ function MapPanel({
         </ul>
       )}
 
+      <MobilityFlow
+        location={location}
+        dataAvailable={dataAvailable}
+        publishedStops={dataAvailable ? nearby.stops : []}
+        onFocusReferenceStop={onFocusReferenceStop}
+      />
+
       {dataAvailable && (
         <div className="published-counts">
           <span><strong>{lines.routes.length}</strong> ligne{lines.routes.length > 1 ? 's' : ''} publiée{lines.routes.length > 1 ? 's' : ''}</span>
@@ -1096,12 +1250,14 @@ function MapPanel({
 
       <button type="button" className="primary-action" onClick={onPlan}>
         <RouteIcon size={17} />
-        <span>Préparer un itinéraire</span>
+        <span>Préparer un trajet</span>
         <ArrowRight size={16} />
       </button>
-      <button type="button" className="secondary-action" onClick={onExplore}>
-        {dataAvailable ? 'Voir les arrêts et lignes publiés' : 'Explorer les sources réseau'} <ArrowRight size={14} />
-      </button>
+
+      <p className="mobility-note">
+        <Bot size={13} /> Assistant IA : bouton flottant en bas de la carte — il répond sur les mêmes données
+        (23 stations BRT, 13 gares TER et snapshot publié), jamais au-delà.
+      </p>
 
       <div className="data-state-strip">
         <span className="data-state-marker" />
@@ -1113,19 +1269,125 @@ function MapPanel({
   )
 }
 
+/** Mobilités disponibles à proximité immédiate, avec leurs horaires annoncés.
+ *
+ *  TER et BRT sont calculés depuis le réseau de référence (positions et
+ *  fréquences publiques). DDD, AFTU et TATA n’ont aucune donnée vérifiée : la
+ *  ligne le dit, sans inventer d’arrêt ni d’horaire. */
+function MobilityFlow({
+  location,
+  dataAvailable,
+  publishedStops,
+  onFocusReferenceStop,
+}: {
+  location: UserLocation | null
+  dataAvailable: boolean
+  publishedStops: readonly PublishedStop[]
+  onFocusReferenceStop: (stop: CorridorStop) => void
+}) {
+  const referenceNearby = location
+    ? nearestCorridorStops({ lat: location.lat, lon: location.lng }, 8).filter((entry) => entry.distanceM <= NEARBY_RADIUS_M)
+    : []
+  const rows: {
+    id: NetworkId
+    label: string
+    distance: string
+    detail: string
+    stop: CorridorStop | null
+  }[] = [
+    ...(['ter', 'brt'] as const).map((networkId) => {
+      const matches = referenceNearby.filter((entry) => entry.stop.id.startsWith(networkId))
+      const best = matches[0] ?? null
+      const line = CORRIDOR_LINES.find((candidate) => candidate.network === networkId)
+      return {
+        id: networkId,
+        label: CORRIDOR_NETWORKS[networkId].label,
+        distance: best ? `${formatDistance(Math.round(best.distanceM)) ?? ''} · ${best.stop.name}` : 'aucun arrêt dans le rayon',
+        detail: line
+          ? `${line.shortName} · ${line.serviceWindow} · passage annoncé toutes les ${line.headwayMin} min`
+          : 'aucune ligne de référence déclarée',
+        stop: best?.stop ?? null,
+      }
+    }),
+    ...(['ddd', 'aftu', 'tata'] as const).map((networkId) => {
+      const source = NETWORK_SOURCES.find((candidate) => candidate.id === networkId)
+      return {
+        id: networkId,
+        label: source?.label ?? networkId.toUpperCase(),
+        distance: 'aucune donnée vérifiée',
+        detail: 'Intégré dès qu’un flux publié déclare ses arrêts et ses horaires : rien n’est inventé en attendant.',
+        stop: null as CorridorStop | null,
+      }
+    }),
+    {
+      id: 'other',
+      label: 'Snapshot publié',
+      distance: dataAvailable
+        ? publishedStops.length > 0
+          ? `${publishedStops.length} arrêt${publishedStops.length > 1 ? 's' : ''} publié${publishedStops.length > 1 ? 's' : ''} dans le rayon`
+          : 'aucun arrêt publié dans le rayon'
+        : 'aucune publication active',
+      detail: dataAvailable
+        ? 'Ouvrez un arrêt ci-dessus : la fiche affiche les lignes déclarées et la fenêtre d’horaires théoriques du flux.'
+        : 'Les arrêts publiés apparaîtront ici dès qu’un snapshot vérifié sera publié (npm run publish:gtfs).',
+      stop: null as CorridorStop | null,
+    },
+  ]
+
+  return (
+    <div className="mobility-flow" aria-label="Flux des mobilités à proximité">
+      <div className="source-list-heading">
+        <span>FLUX DES MOBILITÉS À PROXIMITÉ</span>
+        <span className="source-count">{location ? `rayon ${Math.round(NEARBY_RADIUS_M / 1000)} km` : 'GPS éteint'}</span>
+      </div>
+      <ul className="mobility-flow-list">
+        {rows.map((row) => (
+          <li key={row.id} className={`mobility-row mobility-${row.id}`}>
+            <span className="mobility-icon"><NetworkIcon id={row.id} size={16} /></span>
+            <div className="mobility-copy">
+              <strong>{row.label}</strong>
+              <small>{location ? row.distance : 'Activez la localisation pour mesurer la distance'}</small>
+              <small className="mobility-detail">{row.detail}</small>
+            </div>
+            {row.stop && (
+              <button type="button" className="mobility-action" onClick={() => onFocusReferenceStop(row.stop!)}>
+                Voir sur la carte
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="mobility-note">
+        <Info size={13} /> Horaires annoncés et heures théoriques déclarées : aucune position de véhicule, aucun temps réel.
+      </p>
+    </div>
+  )
+}
+
+interface StopOption {
+  value: string
+  label: string
+  group: string
+}
+
 function PointField({
   title,
   point,
   pointKey,
   isPicking,
+  stopOptions,
   onSelect,
+  onSelectStop,
 }: {
   title: string
   point?: MapPoint
   pointKey: RoutePointKey
   isPicking: boolean
+  stopOptions: readonly StopOption[]
   onSelect: (key: RoutePointKey) => void
+  onSelectStop: (key: RoutePointKey, value: string) => void
 }) {
+  const groups = Array.from(new Set(stopOptions.map((option) => option.group)))
   return (
     <div className={`point-field${isPicking ? ' picking' : ''}`}>
       <span className={`point-symbol ${pointKey === 'origin' ? 'origin-symbol' : 'destination-symbol'}`}><i /></span>
@@ -1141,6 +1403,25 @@ function PointField({
           )}
           {!point && <MapPin size={14} />}
         </button>
+        {stopOptions.length > 0 && (
+          <select
+            className="point-stop-select"
+            aria-label={`${title} parmi les arrêts connus`}
+            value=""
+            onChange={(event) => onSelectStop(pointKey, event.target.value)}
+          >
+            <option value="">Choisir un arrêt par son nom…</option>
+            {groups.map((group) => (
+              <optgroup key={group} label={group}>
+                {stopOptions
+                  .filter((option) => option.group === group)
+                  .map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+              </optgroup>
+            ))}
+          </select>
+        )}
       </div>
       {isPicking && <span className="picking-label">Touchez la carte</span>}
     </div>
@@ -1152,6 +1433,8 @@ function RoutePanel({
   pickingPoint,
   routeAttempted,
   onSelectPoint,
+  onSelectStop,
+  stopOptions,
   onUseLocation,
   onSwap,
   onClear,
@@ -1163,6 +1446,8 @@ function RoutePanel({
   pickingPoint: RoutePointKey | null
   routeAttempted: boolean
   onSelectPoint: (key: RoutePointKey) => void
+  onSelectStop: (key: RoutePointKey, value: string) => void
+  stopOptions: readonly StopOption[]
   onUseLocation: () => void
   onSwap: () => void
   onClear: () => void
@@ -1176,7 +1461,11 @@ function RoutePanel({
         <div>
           <span className="eyebrow">TRAJET MULTIMODAL</span>
           <h2>Votre prochain trajet.</h2>
-          <p>{dataAvailable ? 'Choisissez deux arrêts publiés ou deux points sur la carte : les courses directes déclarées sont proposées.' : 'Choisissez deux points sur la carte pour commencer.'}</p>
+          <p>
+            {dataAvailable
+              ? 'Deux arrêts publiés, deux arrêts BRT/TER ou deux points choisis depuis l’onglet Explorer : les courses directes déclarées sont proposées.'
+              : 'Choisissez deux arrêts BRT/TER ci-dessous, ou un point via l’onglet Explorer : cet onglet se passe de fond de carte.'}
+          </p>
         </div>
         {(routePoints.origin || routePoints.destination) && <button type="button" className="icon-button clear-route" aria-label="Effacer le trajet" onClick={onClear}><X size={16} /></button>}
       </div>
@@ -1184,9 +1473,25 @@ function RoutePanel({
       <form onSubmit={onSubmit}>
         <div className="route-fields-wrap">
           <div className="route-connector" aria-hidden="true"><i /><span /><i /></div>
-          <PointField title="Départ" point={routePoints.origin} pointKey="origin" isPicking={pickingPoint === 'origin'} onSelect={onSelectPoint} />
+          <PointField
+            title="Départ"
+            point={routePoints.origin}
+            pointKey="origin"
+            isPicking={pickingPoint === 'origin'}
+            stopOptions={stopOptions}
+            onSelect={onSelectPoint}
+            onSelectStop={onSelectStop}
+          />
           <button type="button" className="swap-route" aria-label="Inverser départ et destination" onClick={onSwap}><ArrowDownUp size={15} /></button>
-          <PointField title="Destination" point={routePoints.destination} pointKey="destination" isPicking={pickingPoint === 'destination'} onSelect={onSelectPoint} />
+          <PointField
+            title="Destination"
+            point={routePoints.destination}
+            pointKey="destination"
+            isPicking={pickingPoint === 'destination'}
+            stopOptions={stopOptions}
+            onSelect={onSelectPoint}
+            onSelectStop={onSelectStop}
+          />
         </div>
 
         <button type="button" className="use-location-action" onClick={onUseLocation}>
@@ -1226,6 +1531,21 @@ function RoutePanel({
         <span><Footprints size={14} /> Marche</span>
         <span><BusFront size={14} /> Bus & BRT</span>
         <span><TrainFront size={14} /> TER</span>
+      </div>
+
+      <div className="route-network-strip" aria-label="Réseaux pris en charge">
+        <span className="eyebrow">RÉSEAUX PRIS EN CHARGE</span>
+        <ul>
+          <li><strong>TER</strong><span>{TER_STOPS.length} gares · Dakar ↔ Diamniadio</span></li>
+          <li><strong>BRT</strong><span>{BRT_STOPS.length} stations · tracé officiel Petersen ↔ Guédiawaye</span></li>
+          <li><strong>DDD</strong><span>Aucune donnée vérifiée : indexé dès qu’un flux publié le déclare</span></li>
+          <li><strong>AFTU</strong><span>Aucune donnée vérifiée : indexé dès qu’un flux publié le déclare</span></li>
+          <li><strong>TATA</strong><span>Aucune donnée vérifiée : indexé dès qu’un flux publié le déclare</span></li>
+        </ul>
+        <p className="route-network-note">
+          <ShieldCheck size={13} /> La recherche universelle indexe automatiquement toute mobilité publiée : aucun arrêt
+          ni horaire n’est inventé pour les réseaux sans source vérifiée.
+        </p>
       </div>
     </section>
   )
@@ -1420,33 +1740,153 @@ function ClockIcon() {
   return <span className="clock-status-icon"><span /></span>
 }
 
-function ExplorePanel({
-  filter,
+/** Recherche universelle de l’onglet « Trajet » : l’index couvre tous les
+ *  arrêts et stations disponibles (snapshot publié + réseau de référence
+ *  TER/BRT) et l’assistant répond à partir des mêmes données vérifiées. */
+function UniversalSearchCard({
   query,
+  answer,
+  search,
+  onRetry,
+  onClear,
+  onSelectPublishedStop,
+  onSelectReferenceStop,
+  dataAvailable,
+}: {
+  query: string
+  answer: { question: string; answer: string } | null
+  search: StopSearchState
+  onRetry: () => void
+  onClear: () => void
+  onSelectPublishedStop: (stop: PublishedStop) => void
+  onSelectReferenceStop: (stop: CorridorStop) => void
+  dataAvailable: boolean
+}) {
+  const referenceMatches = searchCorridorStops(query).slice(0, 8)
+  const publishedCount = search.status === 'ready' ? search.stops.length : 0
+  const indexedCount = TER_STOPS.length + BRT_STOPS.length + publishedCount
+  return (
+    <section className="panel universal-search-card" aria-label="Recherche universelle">
+      <div className="panel-heading-row">
+        <div>
+          <span className="eyebrow">RECHERCHE UNIVERSELLE · ASSISTANT</span>
+          <h3>Chercher, demander.</h3>
+          <p>
+            L’index couvre tous les arrêts et stations accessibles : {BRT_STOPS.length} stations BRT,
+            {' '}{TER_STOPS.length} gares TER et les arrêts publiés du snapshot actif. Aucun lieu n’est deviné.
+          </p>
+        </div>
+        <span className="explore-icon"><Sparkles size={18} /></span>
+      </div>
+
+      {!query.trim() && (
+        <p className="universal-hint">
+          Saisissez un arrêt, une ligne ou une question dans la barre du haut (⌘ K). L’assistant indexe
+          TER, BRT et les données publiées ; DDD, AFTU et TATA seront indexés dès qu’un flux vérifié les déclarera.
+        </p>
+      )}
+
+      {query.trim() && (
+        <>
+          <div className="universal-query-row">
+            <span>« {query.trim()} »</span>
+            <span className="source-count">{indexedCount} entrées indexées</span>
+            <button type="button" className="icon-button" aria-label="Effacer la recherche" onClick={onClear}><X size={14} /></button>
+          </div>
+
+          {answer && (
+            <div className="assistant-answer">
+              <div className="assistant-answer-head"><Bot size={15} /><strong>Assistant mobilité</strong></div>
+              <p>{answer.answer}</p>
+            </div>
+          )}
+
+          <div className="source-list-heading">
+            <span>ARRÊTS PUBLIÉS CORRESPONDANTS</span>
+            <span className="source-count">
+              {search.status === 'ready' ? `${publishedCount} résultat${publishedCount > 1 ? 's' : ''}` : search.status === 'loading' ? 'recherche…' : dataAvailable ? 'indisponible' : 'aucune publication'}
+            </span>
+          </div>
+          {search.status === 'error' && (
+            <div className="published-inline-error">
+              <AlertTriangle size={14} />
+              <span>{search.error}</span>
+              <button type="button" onClick={onRetry}>Réessayer</button>
+            </div>
+          )}
+          {search.status === 'ready' && publishedCount === 0 && (
+            <p className="stop-card-note">Aucun arrêt publié ne porte ce nom.</p>
+          )}
+          {search.status === 'ready' && publishedCount > 0 && (
+            <ul className="published-stop-list">
+              {search.stops.map((stop) => (
+                <li key={stop.stopId}>
+                  <button type="button" className="published-stop-row" onClick={() => onSelectPublishedStop(stop)}>
+                    <span className="stop-row-icon"><MapPin size={15} /></span>
+                    <span className="stop-row-copy">
+                      <strong>{stop.stopName}</strong>
+                      <small>{stop.stopId}{stop.parentStation ? ` · parent ${stop.parentStation}` : ''} · arrêt publié</small>
+                    </span>
+                    <ArrowRight size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {referenceMatches.length > 0 && (
+            <>
+              <div className="source-list-heading">
+                <span>RÉSEAU DE RÉFÉRENCE TER/BRT</span>
+                <span className="source-count">{referenceMatches.length} correspondance{referenceMatches.length > 1 ? 's' : ''}</span>
+              </div>
+              <ul className="reference-stop-list">
+                {referenceMatches.map((stop) => {
+                  const isTer = stop.id.startsWith('ter')
+                  const Icon = isTer ? TrainFront : BusFront
+                  return (
+                    <li key={stop.id}>
+                      <button type="button" className="published-stop-row" onClick={() => onSelectReferenceStop(stop)}>
+                        <span className={`stop-row-icon reference-icon-${isTer ? 'ter' : 'brt'}`}><Icon size={15} /></span>
+                        <span className="stop-row-copy">
+                          <strong>{stop.name}</strong>
+                          <small>
+                            {CORRIDOR_NETWORKS[isTer ? 'ter' : 'brt'].label} · {linesServingStop(stop.id).map((line) => line.shortName).join(', ')} · référence
+                          </small>
+                        </span>
+                        <ArrowRight size={14} />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+/** Section « Réseaux et données » de Paramètres : catalogue lisible des lignes
+ *  publiées, du réseau de référence TER/BRT et des sources à relier. */
+function DataCatalogSection({
+  filter,
   sources,
   onFilterChange,
   onToggleLayer,
   layerState,
-  onClearSearch,
   dataAvailable,
   lines,
-  search,
-  onSelectStop,
-  onRetrySearch,
   onFocusReferenceStop,
 }: {
   filter: NetworkId | 'all'
-  query: string
   sources: readonly NetworkSource[]
   onFilterChange: (filter: NetworkId | 'all') => void
   onToggleLayer: (id: NetworkId) => void
   layerState: Record<NetworkId, boolean>
-  onClearSearch: () => void
   dataAvailable: boolean
   lines: LinesState
-  search: StopSearchState
-  onSelectStop: (stop: PublishedStop) => void
-  onRetrySearch: () => void
   onFocusReferenceStop: (stop: CorridorStop) => void
 }) {
   const filters: { id: NetworkId | 'all'; label: string }[] = [
@@ -1457,54 +1897,37 @@ function ExplorePanel({
     { id: 'aftu', label: 'AFTU' },
     { id: 'tata', label: 'TATA' },
   ]
+  const referenceStops = filter === 'ter' ? TER_STOPS : filter === 'brt' ? BRT_STOPS : [...TER_STOPS, ...BRT_STOPS]
 
   return (
-    <section className="panel explore-panel" aria-label="Explorer les arrêts et les lignes">
+    <section className="panel explore-panel" aria-label="Réseaux et données publiées">
       <div className="panel-heading-row">
         <div>
           <span className="eyebrow">RÉSEAU DE DAKAR</span>
-          <h2>Explorer.</h2>
-          <p>Les données affichées proviennent du snapshot publié, jamais d’un catalogue inventé.</p>
+          <h2>Réseaux et données.</h2>
+          <p>Les données affichées proviennent du snapshot publié ou du réseau de référence, jamais d’un catalogue inventé.</p>
         </div>
         <span className="explore-icon"><Compass size={19} /></span>
       </div>
 
-      {search.status !== 'idle' && (
-        <div className="search-results-block">
-          <div className="source-list-heading">
-            <span>ARRÊTS PUBLIÉS · « {search.query} »</span>
-            <span className="source-count">
-              {search.status === 'ready' ? `${search.stops.length} résultat${search.stops.length > 1 ? 's' : ''}` : search.status === 'loading' ? 'recherche…' : 'indisponible'}
+      <div className="source-list-heading">
+        <span>MOBILITÉS SUIVIES</span>
+        <span className="source-count">{layerState && Object.values(layerState).filter(Boolean).length} couches actives</span>
+      </div>
+      <div className="layer-options settings-layer-options">
+        {NETWORK_SOURCES.map((network) => (
+          <label className="layer-option" key={network.id}>
+            <input type="checkbox" checked={layerState[network.id]} onChange={() => onToggleLayer(network.id)} />
+            <span className={`layer-icon layer-icon-${network.id}`}><NetworkIcon id={network.id} size={16} /></span>
+            <span className="layer-label">{network.label}</span>
+            <span className="layer-empty">
+              {network.id === 'ter' ? `${TER_STOPS.length} gares (référence)`
+                : network.id === 'brt' ? `${BRT_STOPS.length} stations (référence)`
+                : 'sans données vérifiées'}
             </span>
-          </div>
-          {search.status === 'error' && (
-            <div className="published-inline-error">
-              <AlertTriangle size={14} />
-              <span>{search.error}</span>
-              <button type="button" onClick={onRetrySearch}>Réessayer</button>
-            </div>
-          )}
-          {search.status === 'ready' && search.stops.length === 0 && (
-            <p className="stop-card-note">Aucun arrêt publié ne porte ce nom. La recherche ne devine ni synonyme ni lieu.</p>
-          )}
-          {search.status === 'ready' && search.stops.length > 0 && (
-            <ul className="published-stop-list">
-              {search.stops.map((stop) => (
-                <li key={stop.stopId}>
-                  <button type="button" className="published-stop-row" onClick={() => onSelectStop(stop)}>
-                    <span className="stop-row-icon"><MapPin size={15} /></span>
-                    <span className="stop-row-copy">
-                      <strong>{stop.stopName}</strong>
-                      <small>{stop.stopId}{stop.parentStation ? ` · parent ${stop.parentStation}` : ''}</small>
-                    </span>
-                    <ArrowRight size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+          </label>
+        ))}
+      </div>
 
       {dataAvailable && (
         <div className="published-lines-block">
@@ -1551,16 +1974,14 @@ function ExplorePanel({
         <div className="reference-network-block">
           <div className="source-list-heading">
             <span>RÉSEAU DE RÉFÉRENCE {filter === 'all' ? '· TER + BRT' : `· ${filter.toUpperCase()}`}</span>
-            <span className="source-count">
-              {(filter === 'ter' ? TER_STOPS : filter === 'brt' ? BRT_STOPS : [...TER_STOPS, ...BRT_STOPS]).length} arrêts
-            </span>
+            <span className="source-count">{referenceStops.length} arrêts</span>
           </div>
           <p className="reference-provenance">
             {(filter === 'ter' || filter === 'all') && CORRIDOR_NETWORKS.ter.provenance}{' '}
             {(filter === 'brt' || filter === 'all') && CORRIDOR_NETWORKS.brt.provenance}
           </p>
           <ul className="reference-stop-list">
-            {(filter === 'ter' ? TER_STOPS : filter === 'brt' ? BRT_STOPS : [...TER_STOPS, ...BRT_STOPS]).map((stop) => {
+            {referenceStops.map((stop) => {
               const serving = linesServingStop(stop.id)
               const isTer = stop.id.startsWith('ter')
               const Icon = isTer ? TrainFront : BusFront
@@ -1581,13 +2002,6 @@ function ExplorePanel({
         </div>
       )}
 
-      {query.trim() && (
-        <div className="search-query-notice">
-          <Search size={15} /><span>Recherche : <strong>{query}</strong></span>
-          <button type="button" aria-label="Effacer la recherche" onClick={onClearSearch}><X size={14} /></button>
-        </div>
-      )}
-
       <div className="filter-scroll" role="group" aria-label="Filtrer les réseaux">
         {filters.map((item) => (
           <button key={item.id} type="button" className={`filter-chip${filter === item.id ? ' selected' : ''}`} onClick={() => onFilterChange(item.id)}>{item.label}</button>
@@ -1605,31 +2019,13 @@ function ExplorePanel({
                 <strong>{network.label}</strong>
                 <span>{network.description}</span>
               </div>
-              <div className="network-source-actions">
-                <span className="source-pending"><i /> À RELIER</span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={layerState[network.id]}
-                  aria-label={`${layerState[network.id] ? 'Masquer' : 'Afficher'} la couche ${network.label}`}
-                  className={`switch${layerState[network.id] ? ' on' : ''}`}
-                  onClick={() => onToggleLayer(network.id)}
-                ><span /></button>
-              </div>
             </article>
           )
         })}
       </div>
-
-      <div className="source-governance-note">
-        <ShieldCheck size={16} />
-        <p><strong>Une catégorie n’est pas une ligne.</strong> Aucun service ne sera publié sans opérateur confirmé, source, version et date de validité.</p>
-      </div>
-      {filter === 'tata' && <p className="tata-note"><Info size={14} /> TATA reste séparé d’AFTU tant que sa classification n’est pas confirmée.</p>}
     </section>
   )
 }
-
 function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleInfo: () => void }) {
   return (
     <section className="panel alerts-panel" aria-label="Alertes de service">
@@ -1686,7 +2082,206 @@ function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleIn
   )
 }
 
-function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload: () => void }) {
+/** Section technique de Paramètres : la console locale n’est chargée qu’à
+ *  l’ouverture explicite, et le rôle de chaque onglet reste inchangé. */
+function LocalConsoleSection({
+  open,
+  onToggle,
+  state,
+  onReload,
+}: {
+  open: boolean
+  onToggle: () => void
+  state: GovernanceState
+  onReload: () => void
+}) {
+  return (
+    <section className="panel settings-technical" aria-label="Console d’administration locale">
+      <button type="button" className="technical-toggle" aria-expanded={open} onClick={onToggle}>
+        <span className="technical-icon"><Lock size={16} /></span>
+        <span className="technical-copy">
+          <strong>Console d’administration locale</strong>
+          <small>Staging, revue et publication GTFS · technique, hors ligne par défaut</small>
+        </span>
+        <ChevronDown size={16} className={open ? 'rotate-icon' : ''} />
+      </button>
+      {open && <GovernancePanel state={state} onReload={onReload} />}
+    </section>
+  )
+}
+
+/** Aide : mode d’emploi de l’application, pilier par pilier. */
+function SettingsHelpSection() {
+  const steps: { id: TabId; label: string; text: string }[] = [
+    {
+      id: 'explore',
+      label: 'Explorer',
+      text: 'La carte interactive : géolocalisation, réseau de référence TER/BRT, flux des mobilités à moins de 5 km avec leurs horaires annoncés et assistant IA en bas de carte.',
+    },
+    {
+      id: 'route',
+      label: 'Trajet',
+      text: 'La recherche universelle : index complet des arrêts (BRT, TER, snapshot publié) et calculateur multimodal avec correspondances marchables et temps d’attente estimés.',
+    },
+    {
+      id: 'alerts',
+      label: 'Alertes',
+      text: 'Le fil d’information voyageur. Aucune alerte n’est affichée tant qu’une source fiable n’est pas connectée : l’absence d’alerte ne vaut pas service normal.',
+    },
+    {
+      id: 'settings',
+      label: 'Paramètres',
+      text: 'Ce centre d’aide : mode d’emploi, données publiées, conditions d’utilisation, historique des mises à jour et console technique locale.',
+    },
+  ]
+  return (
+    <section className="panel settings-panel" aria-label="Mode d’emploi">
+      <div className="panel-heading-row">
+        <div>
+          <span className="eyebrow">MODE D’EMPLOI</span>
+          <h2>Paramètres & à propos.</h2>
+          <p>Quatre onglets, un rôle unique chacun. Voici comment exploiter l’application.</p>
+        </div>
+        <span className="explore-icon"><BookOpen size={19} /></span>
+      </div>
+      <ol className="settings-help-list">
+        {steps.map((step) => (
+          <li key={step.id}>
+            <span className="settings-help-number">{NAV_ITEMS.findIndex((item) => item.id === step.id) + 1}</span>
+            <div>
+              <strong>{step.label}</strong>
+              <span>{step.text}</span>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="settings-tips">
+        <span className="eyebrow">BON À SAVOIR</span>
+        <ul>
+          <li><kbd>⌘ K</kbd> / <kbd>Ctrl K</kbd> place le curseur dans la recherche universelle.</li>
+          <li><kbd>P</kbd> bascule la carte entre plein écran et panneau latéral (onglet Explorer).</li>
+          <li>Les données publiées proviennent d’un snapshot GTFS daté ; sans snapshot, l’application l’explique au lieu d’inventer.</li>
+        </ul>
+      </div>
+    </section>
+  )
+}
+
+/** Conditions générales d’utilisation, en français clair. */
+function LegalSection() {
+  const clauses: { title: string; text: string }[] = [
+    {
+      title: 'Objet',
+      text: 'Dakar Bus est une application d’information sur les mobilités de la région de Dakar. Elle affiche des données publiées de manière traçable (snapshot GTFS daté) et un réseau de référence TER/BRT explicitement étiqueté comme tel.',
+    },
+    {
+      title: 'Nature des données',
+      text: 'Aucune donnée temps réel (position de véhicule, retard constaté) n’est fournie. Les horaires affichés sont des horaires théoriques déclarés ou des fréquences annoncées publiquement : ils ne constituent pas un engagement de l’exploitant.',
+    },
+    {
+      title: 'Géolocalisation et données personnelles',
+      text: 'La position est demandée avec votre accord, utilisée uniquement dans l’appareil pour afficher les environs et n’est jamais transmise à un tiers. L’application ne conserve aucun compte, aucune trace de déplacement et aucun identifiant publicitaire.',
+    },
+    {
+      title: 'Sources et licences',
+      text: 'Fond cartographique © OpenStreetMap contributors (ODbL). Listes et positions TER/BRT issues de sources publiques (Sen TER, CETUD/SunuBRT, OpenStreetMap). Toute réutilisation doit conserver ces attributions.',
+    },
+    {
+      title: 'Limites et responsabilité',
+      text: 'Les informations sont fournies en l’état, sans garantie d’exactitude ni de disponibilité. Il appartient à l’usager de vérifier l’information auprès du canal officiel de l’exploitant (SunuBRT, Sen TER, CETUD) avant un déplacement.',
+    },
+    {
+      title: 'Gouvernance des données',
+      text: 'Aucune donnée n’entre dans l’application sans staging, revue traçable et publication authentifiée ; une publication reste un acte humain. L’application ne publie rien d’elle-même.',
+    },
+  ]
+  return (
+    <section className="panel settings-panel" aria-label="Conditions générales d’utilisation">
+      <div className="panel-heading-row">
+        <div>
+          <span className="eyebrow">CGU</span>
+          <h2>Conditions d’utilisation.</h2>
+          <p>Ce que l’application fait, ce qu’elle ne fait pas, et les droits associés.</p>
+        </div>
+        <span className="explore-icon"><ScrollText size={19} /></span>
+      </div>
+      <dl className="legal-list">
+        {clauses.map((clause) => (
+          <div key={clause.title}>
+            <dt>{clause.title}</dt>
+            <dd>{clause.text}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
+/** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
+function ChangelogSection() {
+  const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-08',
+      title: 'Quatre piliers, données BRT exactes',
+      items: [
+        'Navigation en 4 onglets : Explorer (carte + GPS), Trajet (recherche universelle), Alertes, Paramètres.',
+        'Carte montée uniquement dans Explorer ; les panneaux occupent seuls les autres onglets.',
+        'Slogan publicitaire retiré.',
+        '23 stations BRT alignées sur les positions exactes des nœuds OpenStreetMap de la ligne B1 (relation 19961937).',
+        'Panneau des environs porté à 5 km, avec flux des mobilités et horaires annoncés.',
+      ],
+    },
+    {
+      date: '2026-10 (précédent)',
+      title: 'Réseau de référence et assistant',
+      items: [
+        'Réseau de référence TER (13 gares) + BRT, tracé superposé au fond OpenStreetMap avec arrêts cliquables.',
+        'Calculateur multimodal TER + BRT et assistant local répondant sur les mêmes données.',
+        'Itinéraires directs déclarés dans le snapshot publié (une montée, une descente).',
+      ],
+    },
+    {
+      date: '2026-10 (fondation)',
+      title: 'Gouvernance des données',
+      items: [
+        'Pipeline staging → revue → publication avec journal chaîné par empreintes et comptes nominatifs.',
+        'API locale de lecture (/api/network, /api/stops/*, /api/routes, /api/journeys) et console authentifiée.',
+        'Auditeur GTFS Static en lecture seule et page de vérité : « pas de donnée, pas d’affirmation ».',
+      ],
+    },
+  ]
+  return (
+    <section className="panel settings-panel" aria-label="Historique des mises à jour">
+      <div className="panel-heading-row">
+        <div>
+          <span className="eyebrow">HISTORIQUE</span>
+          <h2>Mises à jour.</h2>
+          <p>Chaque version est un commit de ce dépôt : rien n’est publié silencieusement.</p>
+        </div>
+        <span className="explore-icon"><History size={19} /></span>
+      </div>
+      <ol className="changelog-list">
+        {releases.map((release) => (
+          <li key={release.date + release.title}>
+            <span className="changelog-date">{release.date}</span>
+            <strong>{release.title}</strong>
+            <ul>
+              {release.items.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function GovernancePanel({
+  state,
+  onReload,
+}: {
+  state: GovernanceState
+  onReload: () => void
+}) {
   const summary = summarizeCatalog(state.datasets)
   const stageCounts: Record<string, number> = {
     staging: summary.total,
@@ -1697,11 +2292,11 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
   const showCounts = state.status === 'ready'
 
   return (
-    <section className="panel governance-panel" aria-label="Gouvernance des données">
+    <div className="governance-body" aria-label="Gouvernance des données">
       <div className="panel-heading-row">
         <div>
           <span className="eyebrow">PROVENANCE ET REVUE</span>
-          <h2>Gouvernance.</h2>
+          <h3>Catalogue local.</h3>
           <p>Du staging à la publication, chaque étape laisse une trace vérifiable.</p>
         </div>
         <span className="governance-heading-icon"><Database size={19} /></span>
@@ -1737,7 +2332,7 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
         {state.status === 'idle' && (
           <>
             <span className="governance-status-icon"><Database size={15} /></span>
-            <div><strong>Catalogue non chargé</strong><span>Ouvrir cet onglet interroge l’API locale : lecture publique, décisions authentifiées.</span></div>
+            <div><strong>Catalogue non chargé</strong><span>Ouvrir cette console interroge l’API locale : lecture publique, décisions authentifiées.</span></div>
           </>
         )}
       </div>
@@ -1806,7 +2401,7 @@ function GovernancePanel({ state, onReload }: { state: GovernanceState; onReload
         <ShieldCheck size={16} />
         <p><strong>Une approbation ne publie rien.</strong> Les décisions sont enregistrées par un acteur authentifié — console connectée ou CLI — dans un journal chaîné ; la publication est une étape séparée qui gèle un snapshot daté et haché, et un retour en arrière ajoute une entrée sans rien effacer.</p>
       </div>
-    </section>
+    </div>
   )
 }
 

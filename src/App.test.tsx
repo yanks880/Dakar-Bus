@@ -202,12 +202,27 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** L’état de l’API de lecture n’est jamais affiché sur la carte : il vit dans
+ *  l’onglet Paramètres, le seul centre d’état des API et d’aide. */
+async function openReadApiState() {
+  fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+  return screen.findByText(/snapshot publié servi|affichage vérifié/i)
+}
+
+/** La console d’administration locale est une section technique repliée par
+ *  défaut dans Paramètres : on l’ouvre explicitement pour la vérifier. */
+async function openLocalConsole() {
+  fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+  fireEvent.click(await screen.findByRole('button', { name: /console d’administration locale/i }))
+}
+
 describe('Dakar Bus experience safety', () => {
   it('states that transit sources are not connected while nothing is published', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
 
-    expect(await screen.findByText(/aucune source de transport n’est encore reliée/i)).toBeTruthy()
+    await openReadApiState()
+    expect(screen.getByText(/aucune source de transport n’est encore reliée/i)).toBeTruthy()
     expect(screen.getByText(/aucun arrêt, horaire ou tracé n’est simulé/i)).toBeTruthy()
     expect(screen.getByText(/^en attente$/i)).toBeTruthy()
     expect(screen.queryByText(/\bLIVE\b/i)).toBeNull()
@@ -220,8 +235,8 @@ describe('Dakar Bus experience safety', () => {
       { match: '/api/journeys', respond: () => errorResponse(409, 'NOT_PUBLISHED') },
     ])
     render(<App />)
-    await screen.findByText(/aucune source de transport n’est encore reliée/i)
-    fireEvent.click(screen.getByRole('tab', { name: /itinéraire/i }))
+    await openReadApiState()
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
 
     const pointButtons = screen.getAllByRole('button', { name: /choisir un point sur la carte/i })
     fireEvent.click(pointButtons[0])
@@ -245,6 +260,7 @@ describe('Dakar Bus experience safety', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('réseau indisponible'))))
     render(<App />)
 
+    await openReadApiState()
     expect(await screen.findByText(/l’api de lecture locale ne répond pas sur \/api/i)).toBeTruthy()
     expect(screen.queryByText(/arrêts publiés/i)).toBeNull()
     expect(screen.queryByText(/démo — yoff aéroport/i)).toBeNull()
@@ -260,22 +276,183 @@ describe('Dakar Bus experience safety', () => {
   })
 })
 
+describe('isolation de la vue carte', () => {
+  it('ne monte la carte Leaflet que sur l’onglet Explorer', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+
+    expect(screen.getByLabelText('Carte de test')).toBeTruthy()
+    expect(container.querySelector('.app-shell')?.className).not.toContain('is-map-hidden')
+
+    for (const tab of [/trajet/i, /alertes/i, /paramètres/i]) {
+      fireEvent.click(screen.getByRole('tab', { name: tab }))
+      // La carte est démontée du DOM : plus de tuiles, plus de place occupée.
+      expect(screen.queryByLabelText('Carte de test')).toBeNull()
+      expect(container.querySelector('.app-shell')?.className).toContain('is-map-hidden')
+    }
+
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
+    expect(screen.getByLabelText('Carte de test')).toBeTruthy()
+    expect(container.querySelector('.app-shell')?.className).not.toContain('is-map-hidden')
+  })
+
+  it('n’affiche plus le slogan « La ville en mouvement »', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    expect(screen.queryByText(/la ville en mouvement/i)).toBeNull()
+    expect(screen.queryByText(/votre ville, votre rythme/i)).toBeNull()
+  })
+
+  it('emmène choisir un point sur la carte puis ramène à l’itinéraire', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
+
+    // Choisir un point passe par l’onglet Explorer : la carte n’existe que là.
+    expect(screen.getByLabelText('Carte de test')).toBeTruthy()
+    expect(screen.getByText(/choisissez un point de départ sur la carte/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
+
+    // Retour automatique à l’itinéraire, point enregistré.
+    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByText('Point choisi sur la carte')).toBeTruthy()
+  })
+
+  it('réserve le statut de l’API de lecture à l’onglet Paramètres', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    // Onglet Explorer (carte) et Trajet : aucun panneau d’état d’API de lecture.
+    expect(screen.queryByText(/affichage vérifié/i)).toBeNull()
+    expect(screen.queryByText(/api de lecture/i)).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    expect(screen.queryByText(/api de lecture/i)).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    expect(await screen.findByText(/affichage vérifié/i)).toBeTruthy()
+    expect(screen.getByText(/api de lecture · snapshot publié/i)).toBeTruthy()
+  })
+
+  it('permet de choisir un arrêt connu directement depuis l’onglet Itinéraire', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    fireEvent.change(screen.getByLabelText(/départ parmi les arrêts connus/i), { target: { value: 'ref:brt-petersen' } })
+    fireEvent.change(screen.getByLabelText(/destination parmi les arrêts connus/i), { target: { value: 'ref:brt-prefecture-guediawaye' } })
+
+    // Deux arrêts du réseau de référence suffisent : aucun passage par la carte.
+    const submit = screen.getByRole('button', { name: /rechercher un itinéraire/i }) as HTMLButtonElement
+    expect(submit.disabled).toBe(false)
+    expect(screen.queryByLabelText('Carte de test')).toBeNull()
+  })
+})
+
+describe('structure en quatre piliers', () => {
+  it('expose exactement quatre onglets, avec leurs rôles exclusifs', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent)
+    expect(tabs).toEqual(['Explorer', 'Trajet', 'Alertes', 'Paramètres'])
+    // Les anciens libellés ne doivent plus exister comme onglets.
+    expect(screen.queryByRole('tab', { name: /^carte$/i })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /^itinéraire$/i })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /gouvernance/i })).toBeNull()
+  })
+
+  it('réserve la carte, le GPS et le flux des mobilités à l’onglet Explorer', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    expect(screen.getByLabelText('Carte de test')).toBeTruthy()
+    expect(screen.getByText(/rayon de 5 km autour de votre position/i)).toBeTruthy()
+    expect(screen.getByText(/flux des mobilités à proximité/i)).toBeTruthy()
+    for (const network of ['TER', 'BRT (SunuBRT)', 'Dakar Dem Dikk', 'AFTU', 'TATA']) {
+      expect(screen.getAllByText(network).length).toBeGreaterThan(0)
+    }
+    expect(screen.getByText(/passage annoncé toutes les 6 min/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    expect(screen.queryByText(/flux des mobilités à proximité/i)).toBeNull()
+    expect(screen.queryByText(/rayon de 5 km autour de votre position/i)).toBeNull()
+  })
+
+  it('réserve la recherche universelle et le calculateur à l’onglet Trajet', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    expect(screen.queryByText(/recherche universelle/i)).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+
+    expect(await screen.findByText(/recherche universelle · assistant/i)).toBeTruthy()
+    expect(screen.getByText(/réseaux pris en charge/i)).toBeTruthy()
+    expect(screen.getByText(/23 stations · tracé officiel/i)).toBeTruthy()
+    expect(screen.getAllByText(/aucune donnée vérifiée/i).length).toBeGreaterThanOrEqual(3)
+    // Le calculateur multimodal reste dans Trajet, jamais dans Explorer.
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
+    expect(screen.queryByText(/recherche universelle · assistant/i)).toBeNull()
+  })
+
+  it('répond à une question posée dans la recherche universelle, sans quitter Trajet', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i), {
+      target: { value: 'liste des stations BRT' },
+    })
+    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i).closest('form')!)
+
+    expect(await screen.findByText(/assistant mobilité/i)).toBeTruthy()
+    // L’assistant énumère les 23 stations officielles, dans l’ordre.
+    expect(screen.getByText(/1\. Petersen – Papa Gueye Fall/)).toBeTruthy()
+    expect(screen.getByText(/23\. Préfecture de Guédiawaye/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+  })
+
+  it('range l’aide, les CGU, l’historique et la console technique dans Paramètres', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    for (const hidden of [/mode d’emploi/i, /conditions d’utilisation/i, /mises à jour/i, /console d’administration locale/i]) {
+      expect(screen.queryByText(hidden)).toBeNull()
+    }
+
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    expect((await screen.findAllByText(/mode d’emploi/i)).length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: /conditions d’utilisation/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /mises à jour/i })).toBeTruthy()
+    expect(screen.getByText(/aucune donnée temps réel \(position de véhicule, retard constaté\)/i)).toBeTruthy()
+    expect(screen.getByText(/jamais transmise à un tiers/i)).toBeTruthy()
+    // La console technique est repliée : le catalogue n’est pas interrogé tant
+    // que l’utilisateur ne l’ouvre pas.
+    expect(screen.queryByText(/catalogue local vérifié/i)).toBeNull()
+    expect(screen.queryByText(/console hors ligne/i)).toBeNull()
+  })
+})
+
 describe('published snapshot in the app', () => {
   it('shows the published snapshot, its provenance and its theoretical stops', async () => {
     publishedApi()
     render(<App />)
 
-    expect(await screen.findByText(/^snapshot publié servi$/i)).toBeTruthy()
+    await openReadApiState()
+    expect(screen.getByText(/^snapshot publié servi$/i)).toBeTruthy()
     expect(screen.getByText(/^publié$/i)).toBeTruthy()
     expect(screen.getByText(/démonstration locale · version demo-2026-10/i)).toBeTruthy()
     expect(screen.getByText(/horaires théoriques, aucune position de véhicule/i)).toBeTruthy()
     expect(screen.queryByText(/aucune source de transport n’est encore reliée/i)).toBeNull()
 
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
     expect(await screen.findByText(/2 lignes publiées/i)).toBeTruthy()
-    fireEvent.click(screen.getByRole('tab', { name: /explorer/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
     expect(await screen.findByText(/^L1 · Démo — Plateau ↔ Yoff$/)).toBeTruthy()
     expect(screen.getByText(/démo — médina ↔ guédiawaye/i)).toBeTruthy()
-    fireEvent.click(screen.getByRole('tab', { name: /carte/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
 
     fireEvent.click(screen.getAllByRole('button', { name: /me localiser/i })[0])
     expect(await screen.findByText('Démo — Plateau Sud')).toBeTruthy()
@@ -286,11 +463,11 @@ describe('published snapshot in the app', () => {
   it('opens a stop card with the lines and the theoretical window, then uses it as a destination', async () => {
     publishedApi()
     render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
 
-    fireEvent.click(screen.getByLabelText(/rechercher un arrêt, une station ou une ligne/i))
-    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station ou une ligne/i), { target: { value: 'yoff' } })
-    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station ou une ligne/i).closest('form')!)
+    fireEvent.click(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i))
+    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i), { target: { value: 'yoff' } })
+    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i).closest('form')!)
 
     expect(await screen.findByText('Démo — Yoff Aéroport')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /démo — yoff aéroport/i }))
@@ -300,7 +477,8 @@ describe('published snapshot in the app', () => {
     expect(screen.getByText(/ni une position, ni un temps réel/i)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /partir d’ici/i }))
-    expect(await screen.findByText(/arrêt publié/i)).toBeTruthy()
+    // Le point de départ reprend l’arrêt publié et ses coordonnées déclarées.
+    expect(await screen.findByText(/14\.7480, -17\.4900 · arrêt publié/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /aller ici/i }))
     expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
 
@@ -312,15 +490,15 @@ describe('published snapshot in the app', () => {
   it('proposes only declared direct rides, with their theoretical times', async () => {
     const fetchMock = publishedApi()
     render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
 
-    fireEvent.click(screen.getByRole('tab', { name: /itinéraire/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
     expect(await screen.findByText('14.7051, -17.4602')).toBeTruthy()
 
-    fireEvent.click(screen.getByLabelText(/rechercher un arrêt, une station ou une ligne/i))
-    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station ou une ligne/i), { target: { value: 'yoff' } })
-    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station ou une ligne/i).closest('form')!)
+    fireEvent.click(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i))
+    fireEvent.change(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i), { target: { value: 'yoff' } })
+    fireEvent.submit(screen.getByLabelText(/rechercher un arrêt, une station, une ligne ou poser une question/i).closest('form')!)
     fireEvent.click(await screen.findByRole('button', { name: /démo — yoff aéroport/i }))
     fireEvent.click(await screen.findByRole('button', { name: /aller ici/i }))
 
@@ -357,9 +535,9 @@ describe('published snapshot in the app', () => {
       { match: '/api/journeys', respond: () => jsonResponse(JOURNEYS_NO_RIDE) },
     ])
     render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
 
-    fireEvent.click(screen.getByRole('tab', { name: /itinéraire/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
     fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
@@ -379,9 +557,9 @@ describe('published snapshot in the app', () => {
       { match: '/api/journeys', respond: () => errorResponse(409, 'GRAPH_UNAVAILABLE') },
     ])
     render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
 
-    fireEvent.click(screen.getByRole('tab', { name: /itinéraire/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
     fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
@@ -401,9 +579,9 @@ describe('published snapshot in the app', () => {
       { match: '/api/journeys', respond: () => errorResponse(404, 'PLACE_NOT_FOUND') },
     ])
     render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
 
-    fireEvent.click(screen.getByRole('tab', { name: /itinéraire/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
     fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
@@ -426,11 +604,12 @@ describe('published snapshot in the app', () => {
     ])
     render(<App />)
 
-    expect(await screen.findByText(/ne couvre pas aujourd’hui/i)).toBeTruthy()
+    await openReadApiState()
+    expect(screen.getByText(/ne couvre pas aujourd’hui/i)).toBeTruthy()
     expect(screen.getByText(/rien n’est affiché comme actuel/i)).toBeTruthy()
     expect(screen.getByText(/^période dépassée$/i)).toBeTruthy()
     expect(screen.queryByText(/démo — plateau sud/i)).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: /explorer/i }))
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
     expect(screen.getByText(/aucune donnée publiée à explorer/i)).toBeTruthy()
   })
 
@@ -446,8 +625,9 @@ describe('published snapshot in the app', () => {
       { match: '/api/stops/D6', respond: () => (published ? jsonResponse(STOP_D6_DETAIL) : errorResponse(404, 'NOT_PUBLISHED')) },
     ])
     render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
 
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
     fireEvent.click(screen.getAllByRole('button', { name: /me localiser/i })[0])
     fireEvent.click(await screen.findByRole('button', { name: /démo — yoff aéroport/i }))
     expect(await screen.findByRole('region', { name: /arrêt démo — yoff aéroport/i })).toBeTruthy()
@@ -456,18 +636,22 @@ describe('published snapshot in the app', () => {
     // The publication is withdrawn server-side: refreshing must drop the view
     // instead of keeping a snapshot that is no longer served.
     published = false
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
     fireEvent.click(screen.getByRole('button', { name: /actualiser l’état de publication/i }))
 
     expect(await screen.findByText(/aucune source de transport n’est encore reliée/i)).toBeTruthy()
     expect(screen.queryByRole('region', { name: /arrêt démo — yoff aéroport/i })).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
     expect(screen.getByTestId('mapped-stops').textContent).toBe('')
-    expect(screen.queryByText(/^L1 · Démo — Plateau ↔ Yoff$/)).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    expect(screen.getByText(/aucune donnée publiée à explorer/i)).toBeTruthy()
   })
 
   it('keeps the layout switch explicit and remembers the choice', async () => {
     publishedApi()
     const { container } = render(<App />)
-    await screen.findByText(/^snapshot publié servi$/i)
+    await openReadApiState()
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
 
     expect(container.querySelector('.app-shell')?.className).toContain('layout-map')
     fireEvent.click(screen.getByRole('button', { name: /passer au panneau latéral/i }))
@@ -514,7 +698,7 @@ describe('governance console', () => {
   it('says the local console is offline instead of inventing staged datasets', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('réseau indisponible'))))
     render(<App />)
-    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+    await openLocalConsole()
 
     expect(await screen.findByText(/console hors ligne/i)).toBeTruthy()
     expect(screen.queryByText(/ddd-2026-10-abcdef123456/i)).toBeNull()
@@ -530,7 +714,7 @@ describe('governance console', () => {
       { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
     ])
     render(<App />)
-    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+    await openLocalConsole()
 
     expect(await screen.findByText('ddd-2026-10-abcdef123456')).toBeTruthy()
     expect(screen.getByText(/catalogue local vérifié/i)).toBeTruthy()
@@ -559,7 +743,7 @@ describe('governance console', () => {
       { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
     ])
     render(<App />)
-    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+    await openLocalConsole()
 
     expect(await screen.findByText('PUBLISHED')).toBeTruthy()
     const publicationStage = Array.from(document.querySelectorAll('.governance-stage')).find((stage) =>
@@ -575,7 +759,7 @@ describe('governance console', () => {
       { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
     ])
     render(<App />)
-    fireEvent.click(screen.getByRole('tab', { name: /gouvernance/i }))
+    await openLocalConsole()
 
     expect(await screen.findByText(/console hors ligne/i)).toBeTruthy()
     expect(screen.getByText(/une entrée du catalogue est incomplète/i)).toBeTruthy()

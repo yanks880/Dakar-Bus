@@ -277,7 +277,7 @@ button:disabled { cursor: not-allowed; }
 .search-form kbd { display: flex; flex: 0 0 auto; align-items: center; padding: 4px 6px; border: 1px solid #e7ece8; border-radius: 6px; background: #fff; color: #99a49d; font-family: inherit; font-size: 9px; white-space: nowrap; }
 .search-clear { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #8b9890; cursor: pointer; }
 .search-clear:hover { background: #eef4f0; color: #20563d; }
-.desktop-tabs { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 17px; padding: 4px; border-radius: 12px; background: #f4f7f4; gap: 2px; }
+.desktop-tabs { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 17px; padding: 4px; border-radius: 12px; background: #f4f7f4; gap: 2px; }
 .nav-tab { position: relative; display: flex; height: 36px; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: #839188; cursor: pointer; font-size: 10px; font-weight: 650; gap: 6px; transition: background .17s ease, color .17s ease, box-shadow .17s ease; }
 .nav-tab:hover { color: #466354; }
 .nav-tab.active { background: #fff; box-shadow: 0 2px 6px rgba(21, 52, 37, .08); color: #126c4a; }
@@ -500,7 +500,7 @@ button:disabled { cursor: not-allowed; }
   .primary-action { min-height: 41px; margin-top: 10px; font-size: 10px; }
   .secondary-action, .data-state-strip { display: none; }
   .sidebar-footer { display: none; }
-  .mobile-nav { position: absolute; z-index: 700; right: 12px; bottom: max(9px, env(safe-area-inset-bottom)); left: 12px; display: grid; height: 64px; grid-template-columns: repeat(5, 1fr); padding: 5px 4px; border: 1px solid rgba(228, 236, 229, .96); border-radius: 19px; background: rgba(255, 255, 255, .96); box-shadow: 0 8px 26px rgba(19, 50, 32, .14); backdrop-filter: blur(22px); }
+  .mobile-nav { position: absolute; z-index: 700; right: 12px; bottom: max(9px, env(safe-area-inset-bottom)); left: 12px; display: grid; height: 64px; grid-template-columns: repeat(4, 1fr); padding: 5px 4px; border: 1px solid rgba(228, 236, 229, .96); border-radius: 19px; background: rgba(255, 255, 255, .96); box-shadow: 0 8px 26px rgba(19, 50, 32, .14); backdrop-filter: blur(22px); }
   .mobile-nav-item { display: flex; align-items: center; justify-content: center; flex-direction: column; border: 0; border-radius: 13px; background: transparent; color: #87948c; cursor: pointer; font-size: 8px; font-weight: 650; gap: 3px; }
   .mobile-nav-item.active { background: #edf6f0; color: #0e754e; }
   .mobile-nav-icon { position: relative; display: grid; width: 25px; height: 22px; place-items: center; }
@@ -712,6 +712,119 @@ button:disabled { cursor: not-allowed; }
 @media (max-width: 820px) {
   .layout-toggle { display: none; }
 }
+
+/* --- Isolation de la vue carte -----------------------------------------
+   La carte Leaflet n’est montée que sur l’onglet « Carte ». Sur les autres
+   onglets, elle est absente du DOM et le panneau occupe toute la surface. */
+.point-stop-select { width: 100%; margin-top: 3px; padding: 5px 7px; border: 1px solid #e6ece7; border-radius: 9px; background: #fbfdfb; color: #4b6157; font-size: 9.5px; }
+.point-stop-select:focus-visible { border-color: #b9dcc7; outline: 2px solid #e9f5ee; }
+
+@media (min-width: 821px) {
+  .app-shell.is-map-hidden { grid-template-columns: minmax(0, 1fr); }
+  .app-shell.is-map-hidden .sidebar { grid-column: 1 / -1; border-right: 0; box-shadow: none; background: #fff; }
+  .app-shell.is-map-hidden .sidebar-top,
+  .app-shell.is-map-hidden .stop-card,
+  .app-shell.is-map-hidden .stop-card-error,
+  .app-shell.is-map-hidden .panel-content > .panel,
+  .app-shell.is-map-hidden .panel-content > .planner-card { width: 100%; max-width: 1000px; margin-right: auto; margin-left: auto; }
+  .app-shell.is-map-hidden .stop-card { margin-top: 12px; }
+  .app-shell.is-map-hidden .panel-content { padding-bottom: 24px; }
+}
+
+@media (max-width: 820px) {
+  .app-shell.is-map-hidden .sidebar { position: absolute; inset: 0; display: flex; flex-direction: column; background: #fff; pointer-events: auto; }
+  .app-shell.is-map-hidden .sidebar-top { position: static; padding-bottom: 4px; }
+  .app-shell.is-map-hidden .panel-content {
+    position: static;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    padding-bottom: calc(86px + env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  .app-shell.is-map-hidden .stop-card { margin: 10px 14px 0; }
+}
+
+/* Réseaux pris en charge (onglet Trajet) */
+.route-network-strip { margin-top: 14px; padding: 12px; border: 1px solid #e9efea; border-radius: 13px; background: #fdfefd; }
+.route-network-strip ul { display: grid; margin: 9px 0 0; padding: 0; list-style: none; gap: 7px; }
+.route-network-strip li { display: flex; align-items: baseline; justify-content: space-between; padding: 7px 9px; border: 1px solid #eef2ee; border-radius: 10px; background: #fff; gap: 10px; }
+.route-network-strip li strong { flex: 0 0 auto; color: #22422f; font-size: 11px; }
+.route-network-strip li span { color: var(--muted); font-size: 9.5px; line-height: 1.45; text-align: right; }
+.route-network-note { display: flex; align-items: flex-start; margin: 9px 0 0; color: var(--muted); font-size: 9.5px; line-height: 1.5; gap: 6px; }
+.route-network-note svg { flex: 0 0 auto; margin-top: 1px; }
+
+/* --- Nouvelle structure : 4 piliers -------------------------------------
+   Explorer (carte + flux des mobilités), Trajet (recherche universelle),
+   Alertes, Paramètres (aide, données, CGU, historique, console locale). */
+.nearby-radius-note { margin: 6px 0 0; font-size: 9.5px; line-height: 1.5; color: var(--muted); }
+
+/* Flux des mobilités à proximité */
+.mobility-flow { margin-top: 16px; }
+.mobility-flow-list { display: grid; gap: 6px; margin: 9px 0 0; padding: 0; list-style: none; }
+.mobility-row { display: flex; align-items: flex-start; padding: 10px; border: 1px solid #e9efea; border-radius: 13px; background: #fdfefd; gap: 9px; }
+.mobility-icon { display: grid; width: 29px; height: 29px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #eef4ef; color: #33503f; }
+.mobility-ter .mobility-icon { background: #e3f0ff; color: #2f6fb3; }
+.mobility-brt .mobility-icon { background: #e0f2ea; color: #0f8f66; }
+.mobility-copy { display: grid; min-width: 0; flex: 1 1 auto; gap: 1px; }
+.mobility-copy strong { color: #22422f; font-size: 11px; font-weight: 700; }
+.mobility-copy small { color: #859389; font-size: 9.5px; line-height: 1.4; }
+.mobility-detail { color: #5d7367 !important; }
+.mobility-action { align-self: center; flex: 0 0 auto; padding: 5px 8px; border: 1px solid #cfe4d6; border-radius: 9px; background: #f4fbf7; color: #14744f; cursor: pointer; font-size: 9px; font-weight: 700; }
+.mobility-action:hover { background: #e9f6ee; }
+.mobility-note { display: flex; align-items: flex-start; margin: 10px 0 0; color: var(--muted); font-size: 9.5px; line-height: 1.5; gap: 6px; }
+.mobility-note svg { flex: 0 0 auto; margin-top: 1px; }
+
+/* Recherche universelle (onglet Trajet) */
+.universal-search-card { border-bottom: 1px solid #eef2ee; }
+.universal-hint { margin: 12px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.55; }
+.universal-query-row { display: flex; align-items: center; margin: 12px 0 4px; padding: 8px 10px; border: 1px solid #e3ece6; border-radius: 12px; background: #f7fbf8; color: #22422f; font-size: 11px; font-weight: 650; gap: 8px; }
+.universal-query-row > span:first-child { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-answer { margin-top: 10px; padding: 11px 12px; border: 1px solid #d9e8de; border-radius: 13px; background: linear-gradient(180deg, #f6fbf8, #fff); }
+.assistant-answer-head { display: flex; align-items: center; color: #0f7b53; font-size: 10px; letter-spacing: .03em; text-transform: uppercase; gap: 6px; }
+.assistant-answer p { margin: 7px 0 0; color: #33503f; font-size: 10.5px; line-height: 1.6; white-space: pre-line; }
+
+/* Paramètres : aide, CGU, historique, console technique */
+.settings-panel { border-bottom: 1px solid #eef2ee; }
+.settings-help-list { display: grid; margin: 14px 0 0; padding: 0; list-style: none; gap: 9px; }
+.settings-help-list li { display: flex; align-items: flex-start; padding: 11px 12px; border: 1px solid #e9efea; border-radius: 13px; background: #fdfefd; gap: 10px; }
+.settings-help-number { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: #eaf5ee; color: #14744f; font-size: 11px; font-weight: 800; }
+.settings-help-list strong { display: block; color: #22422f; font-size: 11.5px; }
+.settings-help-list span:not(.settings-help-number) { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.settings-tips { margin-top: 14px; padding: 12px; border: 1px solid #e3ece6; border-radius: 13px; background: #f7fbf8; }
+.settings-tips ul { display: grid; margin: 8px 0 0; padding-left: 16px; color: #425d4c; font-size: 10px; line-height: 1.6; gap: 5px; }
+.settings-tips kbd { padding: 1px 5px; border: 1px solid #d8e3da; border-radius: 5px; background: #fff; font-size: 9px; font-weight: 700; }
+.settings-layer-options { margin-top: 9px; }
+.legal-list { display: grid; margin: 14px 0 0; gap: 10px; }
+.legal-list > div { padding: 11px 12px; border: 1px solid #e9efea; border-radius: 13px; background: #fdfefd; }
+.legal-list dt { color: #22422f; font-size: 11.5px; font-weight: 750; }
+.legal-list dd { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.changelog-list { display: grid; margin: 14px 0 0; padding: 0; list-style: none; gap: 12px; }
+.changelog-list > li { padding: 11px 12px; border: 1px solid #e9efea; border-radius: 13px; background: #fdfefd; }
+.changelog-date { display: inline-block; margin-bottom: 4px; padding: 2px 7px; border-radius: 7px; background: #eaf5ee; color: #14744f; font-size: 9px; font-weight: 800; letter-spacing: .04em; }
+.changelog-list strong { display: block; color: #22422f; font-size: 11.5px; }
+.changelog-list ul { margin: 7px 0 0; padding-left: 16px; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.changelog-list li li { margin-top: 3px; }
+.settings-technical { padding-bottom: 20px; }
+.technical-toggle { display: flex; width: 100%; align-items: center; padding: 12px; border: 1px solid #e3ece6; border-radius: 14px; background: #f8fbf9; color: inherit; cursor: pointer; gap: 10px; text-align: left; }
+.technical-toggle:hover { border-color: #cfe4d6; }
+.technical-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #eef4ef; color: #425d4c; }
+.technical-copy { min-width: 0; flex: 1 1 auto; }
+.technical-copy strong { display: block; color: #22422f; font-size: 11.5px; }
+.technical-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9.5px; }
+.technical-toggle svg:last-child { flex: 0 0 auto; color: #859389; transition: transform .18s ease; }
+.rotate-icon { transform: rotate(180deg); }
+.governance-body { margin-top: 14px; padding: 0 2px; }
+.governance-body h3 { margin: 5px 0 7px; color: #183b2c; font-family: Manrope, sans-serif; font-size: 16px; font-weight: 750; letter-spacing: -.03em; }
 
 /* --- Itinéraires : courses directes déclarées --------------------------- */
 .route-unavailable-note { color: #9a8358 !important; font-style: italic; }
