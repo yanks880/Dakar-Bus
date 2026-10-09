@@ -2218,8 +2218,8 @@ function ReferenceJourneyOutcome({ outcome, notice, originLabel, destinationLabe
         <span>{outcome.transfers} correspondance{outcome.transfers > 1 ? 's' : ''}</span>
         <span className="strip-divider" />
         <span><Footprints size={13} /> {formatMeters(outcome.totalWalkM)}</span>
-        <span className="strip-divider" />
-        <span>{outcome.boardedLines.join(' + ')}</span>
+        {outcome.boardedLines.length > 0 && <span className="strip-divider" />}
+        {outcome.boardedLines.length > 0 && <span>{outcome.boardedLines.join(' + ')}</span>}
       </div>
       <ol className="planner-legs">
         {outcome.legs.map((leg, index) => {
@@ -2229,7 +2229,9 @@ function ReferenceJourneyOutcome({ outcome, notice, originLabel, destinationLabe
             ? `${leg.line?.shortName ?? 'Ligne'} · ${leg.from} → ${leg.to}`
             : leg.kind === 'walk_transfer'
               ? `Correspondance à pied · ${leg.from} → ${leg.to}`
-              : `Marche${leg.to ? ` vers ${leg.to}` : ''}`
+              : leg.kind === 'walk_direct'
+                ? `À pied · ${leg.from} → ${leg.to}`
+                : `Marche${leg.to ? ` vers ${leg.to}` : ''}`
           const detail = leg.kind === 'ride'
             ? `~${leg.minutes} min${leg.intermediateStops?.length ? ` · via ${leg.intermediateStops.join(', ')}` : ''}`
             : `${formatMeters(leg.distanceM)} · ~${leg.minutes} min${leg.note ? ` · ${leg.note}` : ''}`
@@ -2261,9 +2263,9 @@ function JourneyCard({ journey, localDay, now }: { journey: Journey; localDay: s
         <span className="journey-mode">{describeRouteType(journey.routeType)}</span>
         {journey.routeLongName && <span className="journey-route-name">{journey.routeLongName}</span>}
         {countdownMinutes !== null && (
-          <span className="journey-countdown" role="status" aria-label={`Départ programmé dans ${countdownMinutes} minutes`}>
+          <span className="journey-countdown" role="status" aria-label={`Départ programmé dans ${countdownMinutes} minute${countdownMinutes > 1 ? 's' : ''}`}>
             <span className="live-dot" aria-hidden="true" />
-            Départ programmé dans {countdownMinutes} min
+            Départ programmé dans {formatPassageCountdown(countdownMinutes)}
           </span>
         )}
         {scheduledDepartureExpired && (
