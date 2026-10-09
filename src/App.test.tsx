@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, cleanup } from '@testing-library/react'
+import { act, fireEvent, render, screen, cleanup, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
@@ -41,6 +41,20 @@ function stubApi(routes: { match: string; respond: () => ApiResponse }[]) {
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+/**
+ * Choisit un arrêt dans la barre de recherche du Trajet : l'index couvre les
+ * mobilités et tous les arrêts déclarés de Dakar.
+ */
+function chooseStopInField(title: string, query: string, optionName: RegExp) {
+  const input = screen.getByLabelText(new RegExp(`^${title} du trajet$`, 'i'))
+  fireEvent.focus(input)
+  fireEvent.change(input, { target: { value: query } })
+  // Le sélecteur du planificateur avancé contient aussi des options : on se
+  // limite à la liste déroulante du champ concerné.
+  const listbox = screen.getByRole('listbox', { name: new RegExp(`${title} : arrêts et mobilités`, 'i') })
+  fireEvent.click(within(listbox).getByRole('option', { name: optionName }))
 }
 
 function stubGeolocation(latitude = 14.7051, longitude = -17.4602) {
@@ -246,10 +260,10 @@ describe('Dakar Bus experience safety', () => {
     const pointButtons = screen.getAllByRole('button', { name: /choisir un point sur la carte/i })
     fireEvent.click(pointButtons[0])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-    fireEvent.click(screen.getByRole('button', { name: /choisir un point sur la carte/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[1])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
 
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
     expect(await screen.findByText(/aucun trajet ter\/brt de référence trouvé/i)).toBeTruthy()
     expect(screen.getAllByText(/aucun jeu de transport publié/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/départ et la destination sont identiques/i).length).toBeGreaterThan(0)
@@ -263,9 +277,9 @@ describe('Dakar Bus experience safety', () => {
     ])
     render(<App />)
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
-    fireEvent.change(screen.getByLabelText(/départ parmi les arrêts connus/i), { target: { value: 'ref:brt-petersen' } })
-    fireEvent.change(screen.getByLabelText(/destination parmi les arrêts connus/i), { target: { value: 'ref:ter-mbao' } })
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    chooseStopInField('Départ', 'petersen', /petersen/i)
+    chooseStopInField('Destination', 'mbaye', /keur mbaye fall/i)
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
 
     expect(await screen.findByRole('region', { name: 'Estimation de trajet TER/BRT' })).toBeTruthy()
     expect(screen.getByText(/serveur d’horaires est indisponible/i)).toBeTruthy()
@@ -341,7 +355,7 @@ describe('isolation de la vue carte', () => {
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
 
     // Retour automatique à l’itinéraire, point enregistré.
-    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
     expect(screen.getByText('Point choisi sur la carte')).toBeTruthy()
   })
 
@@ -366,11 +380,11 @@ describe('isolation de la vue carte', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
-    fireEvent.change(screen.getByLabelText(/départ parmi les arrêts connus/i), { target: { value: 'ref:brt-petersen' } })
-    fireEvent.change(screen.getByLabelText(/destination parmi les arrêts connus/i), { target: { value: 'ref:brt-prefecture-guediawaye' } })
+    chooseStopInField('Départ', 'petersen', /petersen/i)
+    chooseStopInField('Destination', 'guediawaye', /préfecture de guédiawaye/i)
 
     // Deux arrêts du réseau de référence suffisent : aucun passage par la carte.
-    const submit = screen.getByRole('button', { name: /rechercher un itinéraire/i }) as HTMLButtonElement
+    const submit = screen.getByRole('button', { name: /rechercher mon itinéraire/i }) as HTMLButtonElement
     expect(submit.disabled).toBe(false)
     expect(screen.queryByLabelText('Carte de test')).toBeNull()
   })
@@ -382,15 +396,19 @@ describe('structure en quatre piliers', () => {
     render(<App />)
 
     expect(screen.getByRole('region', { name: 'Réseaux de référence' })).toBeTruthy()
-    expect(screen.getByText('10–20 min')).toBeTruthy()
-    expect(screen.getByText('6 min')).toBeTruthy()
-    expect(screen.getAllByText('Fréquence de référence')).toHaveLength(2)
-    expect(screen.getByText('Référence catalogue')).toBeTruthy()
+    // TER et BRT publient une fréquence : leur décompte est affiché et vivant.
     expect(document.querySelectorAll('.network-summary-dot.is-referenced')).toHaveLength(5)
-    expect(screen.queryByText(/prochain passage|temps réel/i)).toBeNull()
+    expect(document.querySelectorAll('.network-summary-dot.is-counting')).toHaveLength(2)
+    expect(screen.getAllByText(/créneau \d{2}:\d{2} · \d+ min/)).toHaveLength(2)
+    // DDD, AFTU et TATA ne publient pas de fréquence : rien n’est inventé.
+    expect(screen.getAllByText('Non déclaré')).toHaveLength(3)
+    expect(screen.getByText(/décompte théorique · pas de temps réel/i)).toBeTruthy()
     expect(screen.queryByText(/vérification en ligne non documentée/i)).toBeNull()
     expect(screen.queryByText(/validité calendaire/i)).toBeNull()
     expect(screen.queryByText(/38 lignes · 400 bus/)).toBeNull()
+    // Aucune affirmnation de temps réel : l’écran ne revendique jamais le direct.
+    expect(document.querySelector('.is-live')).toBeNull()
+    expect(screen.queryByText(/^LIVE$/i)).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
     fireEvent.click(screen.getByText(/^état des données$/i))
@@ -440,8 +458,8 @@ describe('structure en quatre piliers', () => {
     expect(screen.queryByText(/résultats de recherche/i)).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
 
-    expect(screen.getByRole('heading', { name: /préparer un trajet/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /planifier un trajet/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
     expect(screen.queryByRole('search')).toBeNull()
     expect(screen.queryByText(/réseaux pris en charge/i)).toBeNull()
     expect(container.querySelector('.advanced-planner')?.hasAttribute('open')).toBe(false)
@@ -462,7 +480,7 @@ describe('structure en quatre piliers', () => {
     // L’assistant énumère les 23 stations officielles, dans l’ordre.
     expect(screen.getByText(/1\. Petersen – Papa Gueye Fall/)).toBeTruthy()
     expect(screen.getByText(/23\. Préfecture de Guédiawaye/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
     expect(screen.queryByRole('search')).toBeNull()
   })
 
@@ -537,9 +555,9 @@ describe('published snapshot in the app', () => {
     // Le point de départ reprend l’arrêt publié et ses coordonnées déclarées.
     expect(await screen.findByText(/14\.7480, -17\.4900 · arrêt publié/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /aller ici/i }))
-    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
     expect(await screen.findByText(/horaires théoriques déclarés/i)).toBeTruthy()
     expect(screen.queryByText(/moteur d’itinéraires pas encore en place/i)).toBeNull()
   })
@@ -560,13 +578,13 @@ describe('published snapshot in the app', () => {
     fireEvent.click(await screen.findByRole('button', { name: /démo — yoff aéroport/i }))
     fireEvent.click(await screen.findByRole('button', { name: /aller ici/i }))
 
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
 
     expect(await screen.findByText(/horaires théoriques déclarés/i)).toBeTruthy()
     expect(screen.getAllByText(/1 course directe/i).length).toBeGreaterThan(0)
     expect(screen.getByText('06:00')).toBeTruthy()
     expect(screen.getByText('06:42')).toBeTruthy()
-    expect(screen.getByText('42 min')).toBeTruthy()
+    expect(screen.getByText(/≈ 42 min/)).toBeTruthy()
     expect(screen.getByText('Démo — Plateau Nord')).toBeTruthy()
     expect(screen.getByText('Démo — Plateau Sud')).toBeTruthy()
     expect(screen.getByText(/31 m à pied/i)).toBeTruthy()
@@ -608,9 +626,9 @@ describe('published snapshot in the app', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-    fireEvent.click(screen.getByRole('button', { name: /choisir un point sur la carte/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[1])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
 
     await act(async () => {
       await Promise.resolve()
@@ -641,9 +659,11 @@ describe('published snapshot in the app', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
-    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
+    // Le départ est déjà la position GPS : c’est donc le champ Destination
+    // (deuxième bouton) que l’on désigne sur la carte.
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[1])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
 
     expect((await screen.findAllByText(/aucune course directe déclarée/i)).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/aucun trajet indirect n’est proposé/i).length).toBeGreaterThan(0)
@@ -663,9 +683,11 @@ describe('published snapshot in the app', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
-    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
+    // Le départ est déjà la position GPS : c’est donc le champ Destination
+    // (deuxième bouton) que l’on désigne sur la carte.
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[1])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
 
     expect(await screen.findByText(/itinéraire impossible pour le moment/i)).toBeTruthy()
     expect(screen.getAllByText(/graphe d’itinéraires n’est pas construit/i).length).toBeGreaterThan(0)
@@ -685,9 +707,11 @@ describe('published snapshot in the app', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
     fireEvent.click(screen.getByRole('button', { name: /utiliser ma position comme départ/i }))
-    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[0])
+    // Le départ est déjà la position GPS : c’est donc le champ Destination
+    // (deuxième bouton) que l’on désigne sur la carte.
+    fireEvent.click(screen.getAllByRole('button', { name: /choisir un point sur la carte/i })[1])
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
-    fireEvent.click(screen.getByRole('button', { name: /rechercher un itinéraire/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
 
     expect(await screen.findByText(/itinéraire impossible pour le moment/i)).toBeTruthy()
     expect(screen.getAllByText(/aucun lieu n’est deviné/i).length).toBeGreaterThan(0)
@@ -765,7 +789,7 @@ describe('published snapshot in the app', () => {
     expect(container.querySelector('.map-pick-banner')?.textContent).toMatch(/touchez la carte pour définir maison/i)
     fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
 
-    expect(screen.getByRole('button', { name: /rechercher un itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
     expect(screen.getByText('Maison')).toBeTruthy()
     expect(JSON.parse(window.localStorage.getItem('dakar-bus:destinations') ?? '{}').home).toMatchObject({
       lat: 14.7001,
@@ -882,5 +906,207 @@ describe('governance console', () => {
 
     expect(await screen.findByText(/console hors ligne/i)).toBeTruthy()
     expect(screen.getByText(/une entrée du catalogue est incomplète/i)).toBeTruthy()
+  })
+})
+
+describe('décomptes dynamiques de l’Explorer', () => {
+  it('fait descendre en temps réel le décompte des réseaux de référence', async () => {
+    vi.useFakeTimers()
+    // Jeudi 8 octobre 2026, 12:00 UTC : BRT toutes les 6 min, TER toutes les 10 min.
+    vi.setSystemTime(new Date('2026-10-08T12:00:00.000Z'))
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    // Deux réseaux publient une fréquence officielle : deux décomptes vivants.
+    expect(document.querySelectorAll('.network-summary-dot.is-counting')).toHaveLength(2)
+    expect(screen.getByText('6 min')).toBeTruthy()
+    expect(screen.getByText('10 min')).toBeTruthy()
+    expect(screen.getByText(/créneau 12:06 · 6 min/)).toBeTruthy()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000)
+    })
+
+    // Le temps a passé : les minutes ont diminué, sans rechargement.
+    expect(screen.getByText('5 min')).toBeTruthy()
+    expect(screen.getByText('9 min')).toBeTruthy()
+  })
+
+  it('place « Mes destinations » au-dessus des réseaux de référence', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+
+    const destinations = container.querySelector('.destination-shortcuts')
+    const networks = container.querySelector('.network-summary-section')
+    expect(destinations).toBeTruthy()
+    expect(networks).toBeTruthy()
+    // DOCUMENT_POSITION_FOLLOWING : les réseaux suivent les destinations dans le DOM.
+    expect(destinations!.compareDocumentPosition(networks!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+describe('barre de recherche du Trajet', () => {
+  it('couvre toutes les mobilités et tous les arrêts déclarés de Dakar', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+
+    const input = screen.getByLabelText(/^départ du trajet$/i)
+    fireEvent.focus(input)
+    const list = screen.getByRole('listbox', { name: /départ : arrêts et mobilités/i })
+
+    // Chaque mobilité est trouvable par son sigle comme par son autorité.
+    for (const [query, expected] of [
+      ['aftu', /AFTU/],
+      ['cetud', /DDD/],
+      ['senter', /TER/],
+      ['sunubrt', /BRT/],
+      ['dakar dem dikk', /DDD/],
+      ['tata', /TATA/],
+    ] as const) {
+      fireEvent.change(input, { target: { value: query } })
+      expect(within(list).getAllByRole('option').length).toBeGreaterThan(0)
+      expect(within(list).getByRole('option', { name: expected })).toBeTruthy()
+    }
+
+    // Les arrêts déclarés aussi : gares TER et stations BRT.
+    fireEvent.change(input, { target: { value: 'guediawaye' } })
+    expect(within(list).getByRole('option', { name: /Préfecture de Guédiawaye/ })).toBeTruthy()
+    fireEvent.change(input, { target: { value: 'thiaroye' } })
+    expect(within(list).getByRole('option', { name: /Thiaroye/ })).toBeTruthy()
+  })
+
+  it('explique au lieu d’inventer quand un réseau n’a aucun arrêt déclaré', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+
+    const input = screen.getByLabelText(/^départ du trajet$/i)
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'aftu' } })
+    const list = screen.getByRole('listbox', { name: /départ : arrêts et mobilités/i })
+    fireEvent.click(within(list).getByRole('option', { name: /AFTU/ }))
+
+    // Aucun point n’est créé : le réseau dit pourquoi il n’est pas utilisable.
+    expect(screen.getByText(/aucun arrêt n’est inventé/i)).toBeTruthy()
+    expect(screen.getByLabelText(/^départ du trajet$/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toHaveProperty('disabled', true)
+  })
+
+  it('affiche durée, correspondances et prochain départ avec son point vert', async () => {
+    stubApi([
+      { match: '/api/network', respond: () => jsonResponse(NETWORK_PUBLISHED) },
+      { match: '/api/routes', respond: () => jsonResponse(ROUTES_PAYLOAD) },
+      { match: '/api/stops/near', respond: () => jsonResponse(NEARBY_PAYLOAD) },
+      {
+        match: '/api/journeys',
+        respond: () =>
+          jsonResponse({
+            ...JOURNEYS_PAYLOAD,
+            requested_at: '2026-10-08T12:00:00.000Z',
+            results: [{ ...JOURNEYS_PAYLOAD.results[0], next_departure_at: '2026-10-08T12:06:00Z', departure_status: 'SCHEDULED' }],
+          }),
+      },
+    ])
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-08T12:00:00.000Z'))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('tab', { name: /^trajet$/i }))
+    chooseStopInField('Départ', 'petersen', /petersen/i)
+    chooseStopInField('Destination', 'guediawaye', /préfecture de guédiawaye/i)
+    fireEvent.click(screen.getByRole('button', { name: /rechercher mon itinéraire/i }))
+    await act(async () => {
+      for (let tick = 0; tick < 8; tick += 1) await Promise.resolve()
+    })
+
+    expect(screen.getByText(/≈ 42 min/)).toBeTruthy()
+    expect(screen.getByText(/sans correspondance/i)).toBeTruthy()
+    expect(screen.getByText(/départ programmé dans 6 min/i)).toBeTruthy()
+    expect(document.querySelectorAll('.journey-countdown .live-dot')).toHaveLength(1)
+  })
+})
+
+describe('Direct rue', () => {
+  function openStreetView() {
+    fireEvent.click(screen.getByRole('tab', { name: /alertes/i }))
+    fireEvent.click(screen.getByRole('button', { name: /direct rue/i }))
+  }
+
+  it('reste séparé des alertes officielles et dit ce qu’il est', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    openStreetView()
+    expect(screen.getByText(/signalements d’usagers, non vérifiés/i)).toBeTruthy()
+    expect(screen.getByText(/aucun signalement actif/i)).toBeTruthy()
+    // Les canaux officiels restent dans la vue « Alertes officielles ».
+    expect(screen.queryByText(/aucune alerte vérifiée pour le moment/i)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /alertes officielles/i }))
+    expect(screen.getByText(/aucune alerte vérifiée pour le moment/i)).toBeTruthy()
+  })
+
+  it('publie un signalement local, le conserve et permet de le retirer', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    openStreetView()
+
+    // La portion de route est obligatoire : rien n’est publié sans elle.
+    fireEvent.click(screen.getByRole('button', { name: /publier le signalement/i }))
+    expect(screen.getByRole('alert').textContent).toMatch(/portion de route/i)
+
+    fireEvent.change(screen.getByLabelText(/portion de route/i), { target: { value: 'Patte d’Oie → Aéroport' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Embouteillage$/ }))
+    fireEvent.change(screen.getByLabelText(/réseau concerné/i), { target: { value: 'ddd' } })
+    fireEvent.change(screen.getByLabelText(/précision/i), { target: { value: 'File ininterrompue' } })
+    fireEvent.click(screen.getByRole('button', { name: /publier le signalement/i }))
+
+    expect(await screen.findByText('Patte d’Oie → Aéroport')).toBeTruthy()
+    expect(screen.getByText('File ininterrompue')).toBeTruthy()
+    expect(screen.getAllByText(/embouteillage/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('DDD').length).toBeGreaterThan(0)
+    expect(screen.getByText(/à l’instant/)).toBeTruthy()
+    expect(screen.getAllByText(/non vérifié/).length).toBeGreaterThan(0)
+
+    // Local à l’appareil : seul le stockage du navigateur est écrit.
+    const stored = JSON.parse(window.localStorage.getItem('dakar-bus:street-reports') ?? '[]')
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ place: 'Patte d’Oie → Aéroport', networkId: 'ddd', source: 'COMMUNITY' })
+    expect(screen.getByRole('button', { name: /direct rue/i }).textContent).toContain('1')
+
+    fireEvent.click(screen.getByRole('button', { name: /retirer le signalement/i }))
+    expect(screen.getByText(/aucun signalement actif/i)).toBeTruthy()
+    expect(JSON.parse(window.localStorage.getItem('dakar-bus:street-reports') ?? '[]')).toHaveLength(0)
+  })
+})
+
+describe('boutons : une action va jusqu’au bout', () => {
+  it('ouvre le mode d’emploi depuis le badge Dakar Bus', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: /à propos de dakar bus/i }))
+    expect(screen.getByRole('tab', { name: /paramètres/i }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getAllByText(/mode d’emploi/i).length).toBeGreaterThan(0)
+  })
+
+  it('lance le calcul jusqu’au bout depuis un raccourci enregistré', async () => {
+    const fetchMock = stubApi([
+      { match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) },
+      { match: '/api/journeys', respond: () => jsonResponse(JOURNEYS_NO_RIDE) },
+    ])
+    render(<App />)
+
+    // Enregistrer « Maison » sur la carte.
+    fireEvent.click(screen.getByRole('button', { name: /définir la maison sur la carte/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choisir le point actif sur la carte/i }))
+
+    // Le raccourci part de la position connue et calcule sans clic supplémentaire.
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^ma position$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /rentrer à la maison/i }))
+    expect(screen.getByRole('tab', { name: /^trajet$/i }).getAttribute('aria-selected')).toBe('true')
+    expect((await screen.findAllByText(/aucune course directe déclarée/i)).length).toBeGreaterThan(0)
+    expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.startsWith('/api/journeys'))).toBe(true)
   })
 })

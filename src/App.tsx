@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -9,6 +9,7 @@ import {
   BusFront,
   ChevronDown,
   CircleAlert,
+  Clock3,
   Compass,
   Database,
   FileCheck2,
@@ -21,6 +22,7 @@ import {
   Layers3,
   LocateFixed,
   MapPin,
+  Megaphone,
   Minus,
   Plus,
   RefreshCw,
@@ -35,6 +37,8 @@ import {
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
 import { AssistantChat } from './components/AssistantChat'
 import { MultimodalPlanner } from './components/MultimodalPlanner'
+import { StopCombobox } from './components/StopCombobox'
+import { StreetReportPanel } from './components/StreetReportPanel'
 import { answerAssistant, type AssistantContext } from './domain/assistant'
 import {
   BRT_STOPS,
@@ -59,6 +63,17 @@ import {
 import { formatMeters, planReferenceJourney, type PlannerOutcome } from './domain/planner'
 import { NETWORK_SOURCES, type NetworkId, type NetworkSource } from './domain/network'
 import { NETWORK_REFERENCE_DATA, formatFrequencyPeriod, formatSourceVerification } from './domain/frequencies'
+import { formatPassageCountdown, nextCountdownTickDelay, nextReferencePassage, type NextPassage } from './domain/headways'
+import { buildStopIndex, type StopOption } from './domain/stops'
+import {
+  createStreetReport,
+  isReportExpired,
+  readStreetReports,
+  removeStreetReport,
+  writeStreetReports,
+  type StreetReport,
+  type StreetReportDraft,
+} from './domain/streetReports'
 import { getRemainingMinutes } from './domain/truth'
 import { ConsolePanel } from './Console'
 import {
@@ -145,6 +160,15 @@ type GpsState = 'idle' | 'loading' | 'ready' | 'denied' | 'error'
 type MapPoint = Coordinates & { label: string; kind?: 'map' | 'stop'; stopId?: string }
 
 const SAVED_DESTINATIONS_KEY = 'dakar-bus:destinations'
+
+/** Le stockage local peut être refusé (navigation privée) : rien ne doit casser. */
+function safeLocalStorage(): Storage | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
 const DESTINATION_SHORTCUTS: {
   id: DestinationShortcutId
   label: string
@@ -282,6 +306,9 @@ const NAV_ITEMS: { id: TabId; label: string; icon: typeof Compass }[] = [
   { id: 'settings', label: 'Paramètres', icon: Settings },
 ]
 
+/** Mobilités résumées dans Explorer, dans l’ordre d’affichage. */
+const COMPACT_NETWORK_IDS: readonly NetworkId[] = ['ter', 'brt', 'ddd', 'aftu', 'tata']
+
 const NETWORK_ICONS: Record<NetworkId, typeof TrainFront> = {
   ter: TrainFront,
   brt: BusFront,
@@ -326,6 +353,10 @@ function App() {
   const [routeAttempted, setRouteAttempted] = useState(false)
   const [journey, setJourney] = useState<JourneyState>(IDLE_JOURNEY)
   const [countdownNow, setCountdownNow] = useState(() => Date.now())
+  /** Vue de l’onglet Alertes : informations officielles, ou « Direct rue ». */
+  const [alertsView, setAlertsView] = useState<'official' | 'street'>('official')
+  /** Signalements d’usagers : locaux à l’appareil, jamais transmis. */
+  const [streetReports, setStreetReports] = useState<StreetReport[]>(() => readStreetReports(safeLocalStorage()))
   const [toast, setToast] = useState<string | null>(null)
   const [gpsMessage, setGpsMessage] = useState<string | null>(null)
   const [exploreFilter, setExploreFilter] = useState<NetworkId | 'all'>('all')
@@ -367,17 +398,44 @@ function App() {
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
 
-  // Le compte à rebours est rafraîchi chaque seconde, uniquement tant qu’au
-  // moins un départ GTFS exact est futur ; le timeout est nettoyé au démontage.
+  /**
+   * Décomptes de référence : pour chaque mobilité qui publie une fréquence
+   * officielle, le prochain créneau de la grille déclarée est calculé à partir
+   * de l’horloge courante. Le décompte n’est donc jamais figé : il descend
+   * jusqu’au créneau, puis passe au suivant. Ce n’est pas du temps réel.
+   */
+  const referencePassages = useMemo(
+    () =>
+      COMPACT_NETWORK_IDS.map((id) => {
+        const network = NETWORK_SOURCES.find((candidate) => candidate.id === id)
+        const passage = nextReferencePassage(network?.referenceData?.officialFrequencies ?? [], countdownNow)
+        return { id, network, passage }
+      }).filter((entry): entry is { id: NetworkId; network: NetworkSource; passage: NextPassage | null } =>
+        Boolean(entry.network),
+      ),
+    [countdownNow],
+  )
+
+  // Une seule temporisation est armée : elle vise l’instant précis où l’une des
+  // valeurs affichées doit diminuer (départ GTFS programmé ou créneau de
+  // référence). Elle est nettoyée au démontage et à chaque réveil.
+  const countdownDeadlines = useMemo(() => {
+    const deadlines: string[] = []
+    for (const item of journey.search?.results ?? []) {
+      if (item.departureStatus === 'SCHEDULED' && item.nextDepartureAt) deadlines.push(item.nextDepartureAt)
+    }
+    for (const entry of referencePassages) {
+      if (entry.passage) deadlines.push(entry.passage.nextDepartureAt)
+    }
+    return deadlines
+  }, [journey.search, referencePassages])
+
   useEffect(() => {
-    const hasUpcomingScheduledDeparture = journey.search?.results.some((item) =>
-      item.departureStatus === 'SCHEDULED' && item.nextDepartureAt !== null &&
-      getRemainingMinutes(item.nextDepartureAt, countdownNow) !== null,
-    ) ?? false
-    if (!hasUpcomingScheduledDeparture) return
-    const timer = window.setTimeout(() => setCountdownNow(Date.now()), 1_000)
+    const delay = nextCountdownTickDelay(countdownDeadlines, countdownNow)
+    if (delay === null) return
+    const timer = window.setTimeout(() => setCountdownNow(Date.now()), delay)
     return () => window.clearTimeout(timer)
-  }, [journey.search, countdownNow])
+  }, [countdownDeadlines, countdownNow])
 
   // Les raccourcis clavier passent par une référence : le gestionnaire voit
   // toujours l’état courant (onglet de retour, point en cours de choix…).
@@ -572,14 +630,15 @@ function App() {
       announce('Cet arrêt n’a pas de coordonnées déclarées : il ne peut pas servir de point.')
       return
     }
-    setRoutePoints((current) => ({
-      ...current,
-      [key]: { lat: stop.lat!, lng: stop.lon!, label: stop.stopName, kind: 'stop', stopId: stop.stopId },
-    }))
+    const point: MapPoint = { lat: stop.lat!, lng: stop.lon!, label: stop.stopName, kind: 'stop', stopId: stop.stopId }
+    const other = key === 'origin' ? routePoints.destination : routePoints.origin
+    setRoutePoints((current) => ({ ...current, [key]: point }))
     setRouteAttempted(false)
     setJourney(IDLE_JOURNEY)
     setActiveTab('route')
     announce(key === 'origin' ? `${stop.stopName} défini comme départ.` : `${stop.stopName} défini comme destination.`)
+    // Les deux points sont connus : le trajet part aussitôt.
+    if (other) completeJourneyIfReady(key === 'origin' ? { origin: point, destination: other } : { origin: other, destination: point })
   }
 
   const runStopSearch = useCallback(async (query: string) => {
@@ -645,11 +704,16 @@ function App() {
     const shortcut = DESTINATION_SHORTCUTS.find((candidate) => candidate.id === id)!
     const saved = savedDestinations[id]
     if (saved) {
-      setRoutePoints((current) => ({ ...current, destination: saved }))
+      // Un raccourci enregistré déclenche le trajet jusqu’au bout : la position
+      // courante sert de départ lorsqu’elle est connue, sinon le départ déjà
+      // choisi dans l’onglet Trajet.
+      const origin = location ? { lat: location.lat, lng: location.lng, label: 'Ma position' } : routePoints.origin
+      setRoutePoints((current) => ({ ...current, ...(origin ? { origin } : {}), destination: saved }))
       setRouteAttempted(false)
       setJourney(IDLE_JOURNEY)
       setActiveTab('route')
       announce(`Destination ${shortcut.label} choisie.`)
+      if (origin) void runJourneySearch(origin, saved)
       return
     }
 
@@ -691,6 +755,11 @@ function App() {
     setPickReturnTab(null)
     if (target && target !== 'explore') setActiveTab(target)
     announce(shortcut ? `${shortcut.label} enregistrée comme destination.` : picked === 'origin' ? 'Point de départ enregistré.' : 'Destination enregistrée.')
+    // Les deux points sont réunis : le calcul se lance sans attendre un clic de plus.
+    const other = picked === 'origin' ? routePoints.destination : routePoints.origin
+    if (other) {
+      completeJourneyIfReady(picked === 'origin' ? { origin: nextPoint, destination: other } : { origin: other, destination: nextPoint })
+    }
   }
 
   function requestLocation(purpose: 'center' | 'origin' = 'center') {
@@ -713,11 +782,13 @@ function App() {
         setGpsMessage(position.coords.accuracy > 100 ? 'Position approximative' : 'Position localisée')
         if (dataAvailable) void loadNearbyStops(coords)
         if (purpose === 'origin') {
-          setRoutePoints((current) => ({ ...current, origin: { ...coords, label: 'Ma position' } }))
+          const origin: MapPoint = { ...coords, label: 'Ma position' }
+          setRoutePoints((current) => ({ ...current, origin }))
           setActiveTab('route')
           setRouteAttempted(false)
           setJourney(IDLE_JOURNEY)
           announce('Votre position a été choisie comme point de départ.')
+          if (routePoints.destination) void runJourneySearch(origin, routePoints.destination)
         } else {
           announce(position.coords.accuracy > 100 ? 'Position approximative affichée sur la carte.' : 'Votre position est affichée sur la carte.')
         }
@@ -747,58 +818,56 @@ function App() {
     setNetworkLayers((current) => ({ ...current, [id]: !current[id] }))
   }
 
-  /** Arrêts choisis dans l’onglet Trajet sans passer par la carte :
-   *  les arrêts publiés déjà lus par l’application, puis le réseau de
-   *  référence TER/BRT. Aucun lieu n’est deviné : la liste est exhaustive. */
-  const selectablePublishedStops = [...nearby.stops, ...stopSearch.stops].filter(
-    (stop, index, all) =>
-      stop.lat !== null && stop.lon !== null && all.findIndex((candidate) => candidate.stopId === stop.stopId) === index,
+  /** Index de recherche du Trajet : toutes les mobilités suivies et tous les
+   *  arrêts déclarés (arrêts publiés lus par l’application, gares TER/SETER,
+   *  stations BRT/SunuBRT). Aucun lieu n’est deviné : la liste est exhaustive. */
+  const routeStopOptions = useMemo<StopOption[]>(
+    () => buildStopIndex([...nearby.stops, ...stopSearch.stops]),
+    [nearby.stops, stopSearch.stops],
   )
-  const routeStopOptions: StopOption[] = [
-    ...selectablePublishedStops.map((stop) => ({ value: `published:${stop.stopId}`, label: `${stop.stopName} (publié)`, group: 'Arrêts publiés' })),
-    ...BRT_STOPS.map((stop) => ({ value: `ref:${stop.id}`, label: `BRT · ${stop.name}`, group: 'Réseau de référence BRT' })),
-    ...TER_STOPS.map((stop) => ({ value: `ref:${stop.id}`, label: `TER · ${stop.name}`, group: 'Réseau de référence TER' })),
-  ]
 
-  function selectRoutePoint(key: RoutePointKey, value: string) {
-    if (!value) return
-    const separator = value.indexOf(':')
-    const kind = value.slice(0, separator)
-    const id = value.slice(separator + 1)
-    let next: MapPoint | null = null
-    if (kind === 'published') {
-      const stop = selectablePublishedStops.find((candidate) => candidate.stopId === id)
-      if (stop && stop.lat !== null && stop.lon !== null) {
-        next = { lat: stop.lat, lng: stop.lon, label: stop.stopName, kind: 'stop', stopId: stop.stopId }
-      }
-    } else {
-      const stop = getCorridorStop(id)
-      if (stop) next = { lat: stop.lat, lng: stop.lon, label: stop.name }
-    }
-    if (!next) {
-      announce('Cet arrêt n’est plus disponible : choisissez-en un autre.')
+  /** Pose un point choisi dans l’index, ou explique pourquoi il est inutilisable. */
+  function selectRoutePoint(key: RoutePointKey, option: StopOption) {
+    if (!option.selectable || option.lat === null || option.lon === null) {
+      announce(`${option.label} : ${option.hint}. Aucun arrêt n’est inventé : choisissez un arrêt publié, un arrêt de référence ou un point sur la carte.`)
       return
     }
-    setRoutePoints((current) => ({ ...current, [key]: next! }))
+    const next: MapPoint = {
+      lat: option.lat,
+      lng: option.lon,
+      label: option.label,
+      ...(option.kind === 'published' ? { kind: 'stop' as const, stopId: option.stopId ?? undefined } : { stopId: option.stopId ?? undefined }),
+    }
+    setRoutePoints((current) => ({ ...current, [key]: next }))
     setRouteAttempted(false)
     setJourney(IDLE_JOURNEY)
-    announce(key === 'origin' ? `${next.label} défini comme départ.` : `${next.label} défini comme destination.`)
+    announce(key === 'origin' ? `${option.label} défini comme départ.` : `${option.label} défini comme destination.`)
+  }
+
+  function clearRoutePoint(key: RoutePointKey) {
+    setRoutePoints((current) => {
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+    setRouteAttempted(false)
+    setJourney(IDLE_JOURNEY)
   }
 
   function swapRoutePoints() {
-    setRoutePoints((current) => ({ origin: current.destination, destination: current.origin }))
-    setRouteAttempted(false)
-    setJourney(IDLE_JOURNEY)
-  }
-
-  async function submitRoute(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
     const origin = routePoints.origin
     const destination = routePoints.destination
-    if (!origin || !destination) {
-      announce('Choisissez un départ et une destination sur la carte avant de continuer.')
-      return
-    }
+    setRoutePoints({ origin: destination, destination: origin })
+    setRouteAttempted(false)
+    setJourney(IDLE_JOURNEY)
+    // L’inversion est une action complète : si les deux points existent, le
+    // trajet est recalculé aussitôt.
+    if (origin && destination) void runJourneySearch(destination, origin)
+  }
+
+  /** Lance le calcul pour deux points explicites. Partagé par le formulaire et
+   *  par toutes les actions qui définissent un trajet d’un seul geste. */
+  const runJourneySearch = useCallback(async (origin: MapPoint, destination: MapPoint) => {
     setRouteAttempted(true)
     setJourney({ status: 'loading', search: null, error: null, errorCode: null })
 
@@ -849,7 +918,62 @@ function App() {
         ? `${found} course${found > 1 ? 's' : ''} directe${found > 1 ? 's' : ''} déclarée${found > 1 ? 's' : ''} trouvée${found > 1 ? 's' : ''}.`
         : 'Aucune course directe déclarée ne relie ces deux points. Aucun trajet indirect n’est proposé.',
     )
+  }, [])
+
+  /** Un geste qui complète un trajet va jusqu’au calcul, sans s’arrêter au
+   *  milieu : c’est la règle « aucun bouton mort ». */
+  function completeJourneyIfReady(next: Partial<Record<RoutePointKey, MapPoint>>) {
+    const origin = next.origin ?? null
+    const destination = next.destination ?? null
+    if (origin && destination) void runJourneySearch(origin, destination)
   }
+
+  async function submitRoute(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const origin = routePoints.origin
+    const destination = routePoints.destination
+    if (!origin || !destination) {
+      announce('Choisissez un départ et une destination avant de continuer.')
+      return
+    }
+    await runJourneySearch(origin, destination)
+  }
+
+
+  /** « Direct rue » : les signalements restent sur l’appareil, ne sont envoyés
+   *  à aucun serveur et ne sont jamais présentés comme une alerte officielle. */
+  function publishStreetReport(draft: StreetReportDraft) {
+    const report = createStreetReport(draft)
+    if (!report) {
+      announce('Indiquez la portion de route concernée pour publier un signalement.')
+      return
+    }
+    setStreetReports((current) => {
+      const next = [report, ...current]
+      writeStreetReports(safeLocalStorage(), next)
+      return next
+    })
+    announce('Signalement publié sur cet appareil · visible 90 minutes · non vérifié.')
+  }
+
+  function deleteStreetReport(id: string) {
+    setStreetReports((current) => {
+      const next = removeStreetReport(current, id)
+      writeStreetReports(safeLocalStorage(), next)
+      return next
+    })
+  }
+
+  // Les signalements périmés disparaissent d’eux-mêmes à chaque réveil de
+  // l’horloge : une information vieille de plus de 90 minutes n’est plus montrée.
+  useEffect(() => {
+    setStreetReports((current) => {
+      const next = current.filter((report) => !isReportExpired(report, countdownNow))
+      if (next.length === current.length) return current
+      writeStreetReports(safeLocalStorage(), next)
+      return next
+    })
+  }, [countdownNow])
 
   const visibleSources = exploreFilter === 'all'
     ? NETWORK_SOURCES
@@ -980,7 +1104,14 @@ function App() {
                 <span className="brand-subtitle">LA MOBILITÉ, EN CLAIR</span>
               </div>
             </div>
-            <button type="button" className="profile-button" aria-label="À propos de Dakar Bus" onClick={() => setActiveTab('explore')}>
+            {/* Le badge ouvre le mode d’emploi : un bouton de plus qui ne fait
+                rien serait un bouton mort. */}
+            <button
+              type="button"
+              className="profile-button"
+              aria-label="À propos de Dakar Bus : mode d’emploi et sources"
+              onClick={() => { setActiveTab('settings'); setConsoleOpen(false); announce('Mode d’emploi, sources et CGU dans Paramètres.') }}
+            >
               <span>DB</span>
             </button>
           </header>
@@ -1040,6 +1171,7 @@ function App() {
               searchInputRef={searchInputRef}
               savedDestinations={savedDestinations}
               onChooseShortcut={chooseDestinationShortcut}
+              now={countdownNow}
             />
           )}
 
@@ -1067,6 +1199,7 @@ function App() {
                 onUseLocation={() => requestLocation('origin')}
                 onSwap={swapRoutePoints}
                 onClear={() => { setRoutePoints({}); setRouteAttempted(false); setPickingPoint(null); setJourney(IDLE_JOURNEY) }}
+                onClearPoint={clearRoutePoint}
                 onSubmit={submitRoute}
                 dataAvailable={dataAvailable}
                 journey={journey}
@@ -1080,7 +1213,18 @@ function App() {
           )}
 
           {activeTab === 'alerts' && (
-            <AlertsPanel infoOpen={alertInfoOpen} onToggleInfo={() => setAlertInfoOpen((open) => !open)} />
+            <AlertsPanel
+              infoOpen={alertInfoOpen}
+              onToggleInfo={() => setAlertInfoOpen((open) => !open)}
+              view={alertsView}
+              onViewChange={setAlertsView}
+              streetReports={streetReports}
+              now={countdownNow}
+              location={location ? { lat: location.lat, lng: location.lng } : null}
+              onLocate={() => requestLocation()}
+              onSubmitStreetReport={publishStreetReport}
+              onRemoveStreetReport={deleteStreetReport}
+            />
           )}
 
           {activeTab === 'settings' && (
@@ -1220,6 +1364,7 @@ function ExplorerPanel({
   searchInputRef,
   savedDestinations,
   onChooseShortcut,
+  now,
 }: {
   gpsState: GpsState
   gpsMessage: string | null
@@ -1234,6 +1379,7 @@ function ExplorerPanel({
   searchInputRef: { current: HTMLInputElement | null }
   savedDestinations: Partial<Record<DestinationShortcutId, MapPoint>>
   onChooseShortcut: (id: DestinationShortcutId) => void
+  now: number
 }) {
   const locationHint = gpsState === 'loading'
     ? 'Recherche de votre position…'
@@ -1305,8 +1451,8 @@ function ExplorerPanel({
         </section>
       )}
 
-      <ReferenceNetworkSummary />
-
+      {/* « Mes destinations » passe au-dessus des réseaux : les favoris de
+          l’usager sont atteints dès l’ouverture de l’application. */}
       <div className="destination-shortcuts" aria-label="Destinations enregistrées">
         <strong className="destination-shortcuts-title">Mes destinations</strong>
         <div className="destination-shortcuts-row">
@@ -1330,41 +1476,70 @@ function ExplorerPanel({
           })}
         </div>
       </div>
+
+      <ReferenceNetworkSummary now={now} />
     </section>
   )
 }
 
-const COMPACT_NETWORK_IDS: readonly NetworkId[] = ['ter', 'brt', 'ddd', 'aftu', 'tata']
 const REFERENCE_NETWORK_CARD_IDS = ['ter', 'brt', 'ddd', 'aftu'] as const
 
-function compactFrequencyLabel(network: NetworkSource): string {
-  if (network.id === 'tata') return 'Référence catalogue'
-  const headways = [...new Set(network.referenceData?.officialFrequencies.map((item) => item.headwayMinutes) ?? [])]
-    .sort((a, b) => a - b)
-  if (headways.length === 1) return `${headways[0]} min`
-  if (headways.length > 1) return `${headways[0]}–${headways[headways.length - 1]} min`
-  return 'Fréquence de référence'
+/** Mention secondaire des réseaux qui ne publient pas de fréquence exploitable. */
+function networkMetaLabel(network: NetworkSource): string {
+  if (network.id === 'tata') return 'Réseau indépendant'
+  const lines = network.referenceData?.lineCount
+  return lines ? `${lines} lignes` : 'Réseau de référence'
 }
 
-/** Résumé Explorer : fréquences de référence uniquement, jamais un prochain passage. */
-function ReferenceNetworkSummary() {
+/** Résumé Explorer : le décompte descend en temps réel, sans jamais devenir du temps réel. */
+function ReferenceNetworkSummary({ now }: { now: number }) {
   const networks = COMPACT_NETWORK_IDS
     .map((id) => NETWORK_SOURCES.find((network) => network.id === id))
     .filter((network): network is NetworkSource => Boolean(network))
+  const passages = networks.map((network) =>
+    nextReferencePassage(network.referenceData?.officialFrequencies ?? [], now),
+  )
+  // Une grille qui exclut les jours fériés n'a pas de grille déclarée pour ces
+  // jours-là : mieux vaut le dire que laisser croire au même intervalle.
+  const holidayCaveat = passages.some((passage) => passage?.holidayCaveat === true)
 
   return (
     <section className="network-summary-section" aria-label="Réseaux de référence">
       <div className="network-summary-heading">
         <strong>Réseaux de référence</strong>
+        <span className="network-summary-legend">
+          Décompte théorique · pas de temps réel{holidayCaveat ? ' · jours fériés non déclarés' : ''}
+        </span>
       </div>
       <ul className="network-summary-list">
-        {networks.map((network) => (
-          <li key={network.id}>
-            <span className="network-summary-dot is-referenced" aria-hidden="true" />
-            <span className="network-summary-name">{network.referenceData?.shortName ?? network.label}</span>
-            <strong>{compactFrequencyLabel(network)}</strong>
-          </li>
-        ))}
+        {networks.map((network, index) => {
+          const passage = passages[index]
+          return (
+            <li key={network.id}>
+              <span
+                className={`network-summary-dot is-referenced${passage ? ' is-counting' : ''}`}
+                aria-hidden="true"
+              />
+              <span className="network-summary-name">{network.referenceData?.shortName ?? network.label}</span>
+              {passage ? (
+                <span
+                  className="network-summary-passage"
+                  role="status"
+                  title={passage.note}
+                  aria-label={`${network.referenceData?.shortName ?? network.label} : prochain créneau théorique à ${passage.clockLabel}, dans ${passage.minutes} minute${passage.minutes > 1 ? 's' : ''}. Ce n’est pas du temps réel.`}
+                >
+                  <strong>{formatPassageCountdown(passage.minutes)}</strong>
+                  <small>créneau {passage.clockLabel} · {passage.headwayMinutes} min</small>
+                </span>
+              ) : (
+                <span className="network-summary-passage is-undeclared">
+                  <strong>Non déclaré</strong>
+                  <small>{networkMetaLabel(network)}</small>
+                </span>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </section>
   )
@@ -1423,67 +1598,39 @@ function ReferenceFrequencyCards() {
   )
 }
 
-interface StopOption {
-  value: string
-  label: string
-  group: string
-}
-
-function PointField({
+/** Champ de recherche d'un point : toutes les mobilités et tous les arrêts
+ *  déclarés de Dakar sont cherchables (gares TER/SETER, stations BRT/SunuBRT,
+ *  arrêts publiés) ; un réseau sans arrêt publié s'explique au lieu de se
+ *  transformer en point inventé. */
+function PointComboboxField({
   title,
   point,
   pointKey,
   isPicking,
   stopOptions,
-  onSelect,
-  onSelectStop,
+  onPick,
+  onClear,
+  onPickOnMap,
 }: {
   title: string
   point?: MapPoint
   pointKey: RoutePointKey
   isPicking: boolean
   stopOptions: readonly StopOption[]
-  onSelect: (key: RoutePointKey) => void
-  onSelectStop: (key: RoutePointKey, value: string) => void
+  onPick: (key: RoutePointKey, option: StopOption) => void
+  onClear: (key: RoutePointKey) => void
+  onPickOnMap: (key: RoutePointKey) => void
 }) {
-  const groups = Array.from(new Set(stopOptions.map((option) => option.group)))
   return (
-    <div className={`point-field${isPicking ? ' picking' : ''}`}>
-      <span className={`point-symbol ${pointKey === 'origin' ? 'origin-symbol' : 'destination-symbol'}`}><i /></span>
-      <div className="point-field-content">
-        <span className="point-title">{title}</span>
-        <button type="button" className="point-picker" onClick={() => onSelect(pointKey)}>
-          <span>{point ? point.label : 'Choisir un point sur la carte'}</span>
-          {point && (
-            <small>
-              {formatCoordinates(point)}
-              {point.kind === 'stop' ? ' · arrêt publié' : ''}
-            </small>
-          )}
-          {!point && <MapPin size={14} />}
-        </button>
-        {stopOptions.length > 0 && (
-          <select
-            className="point-stop-select"
-            aria-label={`${title} parmi les arrêts connus`}
-            value=""
-            onChange={(event) => onSelectStop(pointKey, event.target.value)}
-          >
-            <option value="">Choisir un arrêt par son nom…</option>
-            {groups.map((group) => (
-              <optgroup key={group} label={group}>
-                {stopOptions
-                  .filter((option) => option.group === group)
-                  .map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-              </optgroup>
-            ))}
-          </select>
-        )}
-      </div>
-      {isPicking && <span className="picking-label">Touchez la carte</span>}
-    </div>
+    <StopCombobox
+      title={title}
+      point={point ? { label: point.label, detail: `${formatCoordinates(point)}${point.kind === 'stop' ? ' · arrêt publié' : ''}` } : null}
+      options={stopOptions}
+      isPicking={isPicking}
+      onPick={(option) => onPick(pointKey, option)}
+      onClear={() => onClear(pointKey)}
+      onPickOnMap={() => onPickOnMap(pointKey)}
+    />
   )
 }
 
@@ -1497,6 +1644,7 @@ function RoutePanel({
   onUseLocation,
   onSwap,
   onClear,
+  onClearPoint,
   onSubmit,
   dataAvailable,
   journey,
@@ -1506,11 +1654,12 @@ function RoutePanel({
   pickingPoint: RoutePointKey | null
   routeAttempted: boolean
   onSelectPoint: (key: RoutePointKey) => void
-  onSelectStop: (key: RoutePointKey, value: string) => void
+  onSelectStop: (key: RoutePointKey, option: StopOption) => void
   stopOptions: readonly StopOption[]
   onUseLocation: () => void
   onSwap: () => void
   onClear: () => void
+  onClearPoint: (key: RoutePointKey) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   dataAvailable: boolean
   journey: JourneyState
@@ -1521,8 +1670,8 @@ function RoutePanel({
       <div className="panel-heading-row">
         <div>
           <span className="eyebrow">GUIDE DE TRAJET</span>
-          <h2>Préparer un trajet</h2>
-          <p>Choisissez votre départ et votre destination.</p>
+          <h2>Planifier un trajet</h2>
+          <p className="route-coverage" aria-label="Mobilités couvertes">TER · BRT · DDD · TATA · AFTU</p>
         </div>
         {(routePoints.origin || routePoints.destination) && <button type="button" className="icon-button clear-route" aria-label="Effacer le trajet" onClick={onClear}><X size={16} /></button>}
       </div>
@@ -1530,24 +1679,26 @@ function RoutePanel({
       <form onSubmit={onSubmit}>
         <div className="route-fields-wrap">
           <div className="route-connector" aria-hidden="true"><i /><span /><i /></div>
-          <PointField
+          <PointComboboxField
             title="Départ"
             point={routePoints.origin}
             pointKey="origin"
             isPicking={pickingPoint === 'origin'}
             stopOptions={stopOptions}
-            onSelect={onSelectPoint}
-            onSelectStop={onSelectStop}
+            onPick={onSelectStop}
+            onClear={() => onClearPoint('origin')}
+            onPickOnMap={onSelectPoint}
           />
           <button type="button" className="swap-route" aria-label="Inverser départ et destination" onClick={onSwap}><ArrowDownUp size={15} /></button>
-          <PointField
+          <PointComboboxField
             title="Destination"
             point={routePoints.destination}
             pointKey="destination"
             isPicking={pickingPoint === 'destination'}
             stopOptions={stopOptions}
-            onSelect={onSelectPoint}
-            onSelectStop={onSelectStop}
+            onPick={onSelectStop}
+            onClear={() => onClearPoint('destination')}
+            onPickOnMap={onSelectPoint}
           />
         </div>
 
@@ -1556,7 +1707,7 @@ function RoutePanel({
         </button>
 
         <button className="primary-action route-submit" type="submit" disabled={!routePoints.origin || !routePoints.destination}>
-          <Search size={17} /><span>Rechercher un itinéraire</span><ArrowRight size={16} />
+          <Search size={17} /><span>Rechercher mon itinéraire</span><ArrowRight size={16} />
         </button>
       </form>
 
@@ -1576,6 +1727,7 @@ function RoutePanel({
     </section>
   )
 }
+
 
 function RouteOutcome({ journey, routePoints, dataAvailable, countdownNow }: {
   journey: JourneyState
@@ -1675,14 +1827,19 @@ function RouteOutcome({ journey, routePoints, dataAvailable, countdownNow }: {
         ))}
       </ul>
 
-      <p className="journey-footnote">
-        {search.limitations ?? 'Courses directes déclarées uniquement : aucune correspondance n’est proposée.'}
-      </p>
-      <p className="journey-footnote journey-footnote-strong">
-        {dataAvailable
-          ? 'Aucune position de véhicule et aucun temps réel : ces heures sont celles déclarées dans le flux publié.'
-          : 'Aucune donnée publiée n’est servie : ces heures proviennent exclusivement du flux publié.'}
-      </p>
+      {/* Les détails de provenance restent accessibles sans alourdir l’écran :
+          ils sont repliés, jamais supprimés. */}
+      <details className="journey-sources">
+        <summary>Détails et sources</summary>
+        <p className="journey-footnote">
+          {search.limitations ?? 'Courses directes déclarées uniquement : aucune correspondance n’est proposée.'}
+        </p>
+        <p className="journey-footnote journey-footnote-strong">
+          {dataAvailable
+            ? 'Aucune position de véhicule et aucun temps réel : ces heures sont celles déclarées dans le flux publié.'
+            : 'Aucune donnée publiée n’est servie : ces heures proviennent exclusivement du flux publié.'}
+        </p>
+      </details>
     </section>
   )
 }
@@ -1763,12 +1920,24 @@ function JourneyCard({ journey, localDay, now }: { journey: Journey; localDay: s
         {journey.routeLongName && <span className="journey-route-name">{journey.routeLongName}</span>}
         {countdownMinutes !== null && (
           <span className="journey-countdown" role="status" aria-label={`Départ programmé dans ${countdownMinutes} minutes`}>
+            <span className="live-dot" aria-hidden="true" />
             Départ programmé dans {countdownMinutes} min
           </span>
         )}
         {scheduledDepartureExpired && (
           <span className="journey-expired-note" role="status">Départ passé · relancez la recherche pour consulter une autre course déclarée.</span>
         )}
+      </div>
+
+      {/* Récapitulatif : durée, correspondances et ligne empruntée, en une ligne. */}
+      <div className="journey-card-metrics">
+        <span className="journey-metric"><Clock3 size={13} aria-hidden="true" /><strong>≈ {journey.durationMin} min</strong></span>
+        <span className="strip-divider" />
+        {/* Le moteur ne renvoie que des courses directes déclarées : « sans
+            correspondance » est une propriété du service, pas une estimation. */}
+        <span className="journey-metric"><strong>Sans correspondance</strong><small>course directe</small></span>
+        <span className="strip-divider" />
+        <span className="journey-metric"><strong>{journeyRouteLabel(journey)}</strong><small>ligne empruntée</small></span>
       </div>
 
       <div className="journey-timeline">
@@ -2117,7 +2286,29 @@ function DataCatalogSection({
     </section>
   )
 }
-function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleInfo: () => void }) {
+function AlertsPanel({
+  infoOpen,
+  onToggleInfo,
+  view,
+  onViewChange,
+  streetReports,
+  now,
+  location,
+  onLocate,
+  onSubmitStreetReport,
+  onRemoveStreetReport,
+}: {
+  infoOpen: boolean
+  onToggleInfo: () => void
+  view: 'official' | 'street'
+  onViewChange: (view: 'official' | 'street') => void
+  streetReports: readonly StreetReport[]
+  now: number
+  location: { lat: number; lng: number } | null
+  onLocate: () => void
+  onSubmitStreetReport: (draft: StreetReportDraft) => void
+  onRemoveStreetReport: (id: string) => void
+}) {
   return (
     <section className="panel alerts-panel" aria-label="Alertes de service">
       <div className="panel-heading-row">
@@ -2129,6 +2320,39 @@ function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleIn
         <span className="alert-heading-icon"><Bell size={20} /></span>
       </div>
 
+      {/* « Direct rue » vit dans Alertes : deux vues d’un même écran, pas un
+          cinquième onglet. Les signalements d’usagers restent séparés des
+          informations officielles, qui n’existent pas encore. */}
+      <div className="alerts-switch" role="group" aria-label="Choisir la vue des alertes">
+        <button
+          type="button"
+          className={`alerts-switch-button${view === 'official' ? ' selected' : ''}`}
+          aria-pressed={view === 'official'}
+          onClick={() => onViewChange('official')}
+        >
+          <Bell size={14} /> Alertes officielles
+        </button>
+        <button
+          type="button"
+          className={`alerts-switch-button${view === 'street' ? ' selected' : ''}`}
+          aria-pressed={view === 'street'}
+          onClick={() => onViewChange('street')}
+        >
+          <Megaphone size={14} /> Direct rue
+          {streetReports.length > 0 && <span className="alerts-switch-count">{streetReports.length}</span>}
+        </button>
+      </div>
+
+      {view === 'street' ? (
+        <StreetReportPanel
+          reports={streetReports}
+          now={now}
+          location={location}
+          onLocate={onLocate}
+          onSubmit={onSubmitStreetReport}
+          onRemove={onRemoveStreetReport}
+        />
+      ) : (
       <div className="alerts-unavailable-card">
         <div className="alerts-status-icon"><CircleAlert size={22} /></div>
         <span className="eyebrow">PAS DE FLUX CONNECTÉ</span>
@@ -2154,6 +2378,7 @@ function AlertsPanel({ infoOpen, onToggleInfo }: { infoOpen: boolean; onToggleIn
           </div>
         )}
       </div>
+      )}
     </section>
   )
 }
@@ -2202,7 +2427,7 @@ function SettingsHelpSection() {
     {
       id: 'alerts',
       label: 'Alertes',
-      text: 'Consultez les informations et les canaux des réseaux.'
+      text: 'Canaux officiels des réseaux, et « Direct rue » : signalez ou lisez ce que les usagers voient sur la route.'
     },
     {
       id: 'settings',
@@ -2300,6 +2525,19 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-09',
+      title: 'Décomptes vivants, Trajet repensé, Direct rue',
+      items: [
+        'Explorer : le décompte de chaque mobilité descend en temps réel (créneau théorique calculé depuis la fréquence officielle déclarée) — jamais du temps réel.',
+        'Explorer : « Mes destinations » passe au-dessus des réseaux de référence, pour un accès immédiat à Maison, Boulot et Adresse.',
+        'Alertes : nouvelle vue « Direct rue » — les usagers signalent embouteillages, incidents, travaux et routes coupées. Signalements locaux à l’appareil, non vérifiés, effacés après 90 minutes.',
+        'Trajet : titre « Planifier un trajet », couverture TER · BRT · DDD · TATA · AFTU, deux encadrés Départ/Destination avec inversion, et bouton « Rechercher mon itinéraire ».',
+        'Trajet : la barre de recherche couvre les cinq mobilités et tous les arrêts déclarés (gares TER/SETER, stations BRT/SunuBRT, arrêts du snapshot). Un réseau sans arrêt déclaré l’explique au lieu d’être inventé.',
+        'Résultats : durée, correspondances, ligne empruntée et prochain départ avec son point vert. Les détails de provenance sont repliés dans « Détails et sources ».',
+        'Charte : vert signature renforcé sur les bordures, puces actives et boutons principaux ; les textes longs sont relégués dans Paramètres → État des données.',
+      ],
+    },
     {
       date: '2026-10-08',
       title: 'Un guide plus simple',
