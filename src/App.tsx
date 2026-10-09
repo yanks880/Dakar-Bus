@@ -503,11 +503,11 @@ function App() {
     triggerHaptic(12)
     const next = selectedExploreNetwork === id ? null : id
     setSelectedExploreNetwork(next)
+    // Ouvrir ou fermer le volet des horaires n'affiche que la couche du réseau :
+    // la carte ne bouge pas (pas de zoom ni de recentrage). Elle ne se recentre
+    // que si l'usager touche explicitement une gare.
     if (next === 'ter' || next === 'brt') {
-      setNetworkLayers((layers) => ({ ...layers, [next]: true }))
-      const stops = next === 'ter' ? TER_STOPS : BRT_STOPS
-      const middle = stops[Math.floor(stops.length / 2)]
-      if (middle) setRecenterTo({ lat: middle.lat, lng: middle.lon })
+      setNetworkLayers((layers) => (layers[next] ? layers : { ...layers, [next]: true }))
     }
   }
 
@@ -1710,38 +1710,35 @@ function ReferenceNetworkSummary({
               key={network.id}
               data-network={network.id}
               className={`network-summary-item network-item-${network.id}${isSelected ? ' is-selected' : ''}`}
-              role="button"
-              tabIndex={0}
-              aria-expanded={isSelected}
-              onClick={() => onSelectNetwork(network.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  onSelectNetwork(network.id)
-                }
-              }}
             >
-              <span
-                className={`network-summary-dot is-referenced${passage ? ' is-counting' : ''}`}
-                aria-hidden="true"
-              />
-              <span className="network-summary-name">{refData?.shortName ?? network.label}</span>
-              {passage ? (
+              <button
+                type="button"
+                className="network-summary-header"
+                aria-expanded={isSelected}
+                onClick={() => onSelectNetwork(network.id)}
+              >
                 <span
-                  className="network-summary-passage"
-                  role="status"
-                  title={passage.note}
-                  aria-label={`${refData?.shortName ?? network.label} : prochain créneau théorique à ${passage.clockLabel}, dans ${passage.minutes} minute${passage.minutes > 1 ? 's' : ''}. Ce n’est pas du temps réel.`}
-                >
-                  <strong>{formatPassageCountdown(passage.minutes)}</strong>
-                  <small>créneau {passage.clockLabel} · {passage.headwayMinutes} min</small>
-                </span>
-              ) : (
-                <span className="network-summary-passage is-undeclared">
-                  <strong>Non déclaré</strong>
-                  <small>{networkMetaLabel(network)}</small>
-                </span>
-              )}
+                  className={`network-summary-dot is-referenced${passage ? ' is-counting' : ''}`}
+                  aria-hidden="true"
+                />
+                <span className="network-summary-name">{refData?.shortName ?? network.label}</span>
+                {passage ? (
+                  <span
+                    className="network-summary-passage"
+                    role="status"
+                    title={passage.note}
+                    aria-label={`${refData?.shortName ?? network.label} : prochain créneau théorique à ${passage.clockLabel}, dans ${passage.minutes} minute${passage.minutes > 1 ? 's' : ''}. Ce n’est pas du temps réel.`}
+                  >
+                    <strong>{formatPassageCountdown(passage.minutes)}</strong>
+                    <small>créneau {passage.clockLabel} · {passage.headwayMinutes} min</small>
+                  </span>
+                ) : (
+                  <span className="network-summary-passage is-undeclared">
+                    <strong>Non déclaré</strong>
+                    <small>{networkMetaLabel(network)}</small>
+                  </span>
+                )}
+              </button>
               {isSelected && (
                 <div className="network-summary-detail station-board-detail">
                   <span className="station-board-context">
@@ -1768,19 +1765,12 @@ function ReferenceNetworkSummary({
 
 /** Cellule de créneau d’une station : le design et le format du décompte
  *  restent exactement ceux du résumé des réseaux (« 5 min / créneau 08:10 »). */
-function StationPassageCell({
-  passage,
-  terminusLabel,
-}: {
-  passage: NextPassage | null
-  /** Terminus du sens concerné, pour la cellule sans départ possible. */
-  terminusLabel: string
-}) {
+function StationPassageCell({ passage }: { passage: NextPassage | null }) {
   if (!passage) {
     return (
       <span className="network-summary-passage is-undeclared station-board-passage">
         <strong>Terminus</strong>
-        <small>vers {terminusLabel}</small>
+        <small>arrivée</small>
       </span>
     )
   }
@@ -1792,24 +1782,67 @@ function StationPassageCell({
   )
 }
 
-/** Phrase lue par les lecteurs d’écran : une station, ses deux sens. */
-function stationRowAriaLabel(row: StationRow, originLabel: string, destinationLabel: string): string {
-  const describe = (label: string, passage: NextPassage | null, direction: string) =>
-    passage
-      ? `${direction} vers ${label} : ${formatPassageCountdown(passage.minutes)}, créneau théorique ${passage.clockLabel}`
-      : `${direction} : aucun départ, terminus ${label}`
-  return [
-    row.stop.name,
-    describe(destinationLabel, row.outbound, 'sens aller'),
-    describe(originLabel, row.inbound, 'sens retour'),
-    'créneaux théoriques, pas de temps réel',
-  ].join(' · ')
+/** Phrase lue par les lecteurs d’écran : une station, un sens. */
+function stationRowAriaLabel(stopName: string, passage: NextPassage | null, destinationLabel: string): string {
+  return passage
+    ? `${stopName} · vers ${destinationLabel} : ${formatPassageCountdown(passage.minutes)}, créneau théorique ${passage.clockLabel} · pas de temps réel`
+    : `${stopName} · aucun départ, terminus ${destinationLabel}`
 }
 
-/** Tableau d’une ligne de référence : chaque station, chaque sens, son créneau
- *  théorique. Toucher une station la recentre sur la carte sans replier le
- *  tableau. La structure est identique pour tout réseau qui publiera ses
- *  lignes (AFTU, TATA…). */
+/** Un sens de circulation : titre explicite (« Dakar ➔ Diamniadio »), puis une
+ *  gare par ligne, empilées verticalement avec leur décompte isolé. */
+function StationDirectionSection({
+  line,
+  direction,
+  fromLabel,
+  toLabel,
+  rows,
+  onFocusStation,
+}: {
+  line: string
+  direction: 'outbound' | 'inbound'
+  fromLabel: string
+  toLabel: string
+  rows: readonly StationRow[]
+  onFocusStation: (stop: CorridorStop) => void
+}) {
+  const directionName = direction === 'outbound' ? 'Aller' : 'Retour'
+  return (
+    <section
+      className={`station-direction station-direction-${direction}`}
+      aria-label={`${line} – Direction ${directionName} : ${fromLabel} vers ${toLabel}`}
+    >
+      <h4 className="station-direction-title">
+        <span className="station-direction-kicker">{line} – Direction {directionName}</span>
+        <span className="station-direction-route">{fromLabel} ➔ {toLabel}</span>
+      </h4>
+      <ul className="station-board-list">
+        {rows.map((row) => {
+          const passage = direction === 'outbound' ? row.outbound : row.inbound
+          return (
+            <li key={row.stop.id}>
+              <button
+                type="button"
+                className="station-board-row"
+                aria-label={stationRowAriaLabel(row.stop.name, passage, toLabel)}
+                title={`${row.stop.name} — voir sur la carte`}
+                onClick={() => onFocusStation(row.stop)}
+              >
+                <span className="station-board-stop" title={row.stop.name}>{row.stop.name}</span>
+                <StationPassageCell passage={passage} />
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+/** Tableau d’une ligne de référence : deux sections distinctes (aller, retour),
+ *  chaque gare avec son décompte. Toucher une gare la recentre sur la carte
+ *  sans replier le tableau. La structure est identique pour tout réseau qui
+ *  publiera ses lignes (AFTU, TATA…). */
 function StationBoardView({
   board,
   onFocusStation,
@@ -1819,40 +1852,32 @@ function StationBoardView({
 }) {
   const originLabel = stationShortName(board.originStop)
   const destinationLabel = stationShortName(board.destinationStop)
+  const line = board.line.shortName
   return (
     <div
       className="station-board"
-      aria-label={`Créneaux théoriques par station, ${board.line.shortName} ${originLabel} ↔ ${destinationLabel}, sens aller et retour`}
+      aria-label={`Créneaux théoriques par station, ${line} ${originLabel} ↔ ${destinationLabel}, sens aller et retour`}
     >
       <div className="station-board-head">
-        <strong>{board.line.shortName} · {originLabel} ↔ {destinationLabel}</strong>
+        <strong>{line} · {originLabel} ↔ {destinationLabel}</strong>
         <small>{board.rows.length} {board.line.network === 'ter' ? (board.rows.length > 1 ? 'gares' : 'gare') : (board.rows.length > 1 ? 'stations' : 'station')} · 2 sens</small>
       </div>
-      <div className="station-board-columns" aria-hidden="true">
-        <span>Station</span>
-        <span>Aller → {destinationLabel}</span>
-        <span>Retour → {originLabel}</span>
-      </div>
-      <ul className="station-board-list">
-        {board.rows.map((row) => (
-          <li key={row.stop.id}>
-            <button
-              type="button"
-              className="station-board-row"
-              aria-label={stationRowAriaLabel(row, originLabel, destinationLabel)}
-              title={`${row.stop.name} — voir sur la carte`}
-              onClick={(event) => {
-                event.stopPropagation()
-                onFocusStation(row.stop)
-              }}
-            >
-              <span className="station-board-stop" title={row.stop.name}>{row.stop.name}</span>
-              <StationPassageCell passage={row.outbound} terminusLabel={destinationLabel} />
-              <StationPassageCell passage={row.inbound} terminusLabel={originLabel} />
-            </button>
-          </li>
-        ))}
-      </ul>
+      <StationDirectionSection
+        line={line}
+        direction="outbound"
+        fromLabel={originLabel}
+        toLabel={destinationLabel}
+        rows={board.rows}
+        onFocusStation={onFocusStation}
+      />
+      <StationDirectionSection
+        line={line}
+        direction="inbound"
+        fromLabel={destinationLabel}
+        toLabel={originLabel}
+        rows={[...board.rows].reverse()}
+        onFocusStation={onFocusStation}
+      />
       <p className="station-board-footnote">
         Créneaux théoriques : grille déclarée au départ de chaque terminus + parcours de référence
         ({board.line.speedKph} km/h). Pas de temps réel.
