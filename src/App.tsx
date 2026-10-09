@@ -66,6 +66,7 @@ import { formatMeters, planReferenceJourney, type PlannerOutcome } from './domai
 import { NETWORK_SOURCES, type NetworkId, type NetworkSource } from './domain/network'
 import { NETWORK_REFERENCE_DATA, formatFrequencyPeriod, formatSourceVerification } from './domain/frequencies'
 import { formatPassageCountdown, nextCountdownTickDelay, nextReferencePassage, type NextPassage } from './domain/headways'
+import { boardLinesForNetwork, buildStationBoard, stationShortName, type StationBoard, type StationRow } from './domain/stationBoard'
 import { buildStopIndex, type StopOption } from './domain/stops'
 import {
   createStreetReport,
@@ -461,6 +462,7 @@ function App() {
   const isLatestRequest = useCallback((key: RequestKey, id: number): boolean => requestIds.current[key] === id, [])
 
   function handleSelectCorridorStop(stop: CorridorStop) {
+    triggerHaptic(8)
     setRecenterTo({ lat: stop.lat, lng: stop.lon })
     const lines = linesServingStop(stop.id)
     announce(
@@ -529,6 +531,17 @@ function App() {
     [countdownNow],
   )
 
+  /** Tableau des créneaux par station et par sens du réseau sélectionné.
+   *  Mémorisé sur l’horloge des décomptes : il descend au même rythme qu’eux.
+   *  Aujourd’hui TER et BRT publient des lignes de référence ; DDD, AFTU et
+   *  TATA entreront ici dès que des lignes leur seront publiées. */
+  const selectedNetworkBoards = useMemo(() => {
+    if (!selectedExploreNetwork) return []
+    return boardLinesForNetwork(selectedExploreNetwork)
+      .map((line) => buildStationBoard(line, countdownNow))
+      .filter((board): board is StationBoard => board !== null)
+  }, [selectedExploreNetwork, countdownNow])
+
   // Une seule temporisation est armée : elle vise l’instant précis où l’une des
   // valeurs affichées doit diminuer (départ GTFS programmé ou créneau de
   // référence). Elle est nettoyée au démontage et à chaque réveil.
@@ -540,8 +553,15 @@ function App() {
     for (const entry of referencePassages) {
       if (entry.passage) deadlines.push(entry.passage.nextDepartureAt)
     }
+    // Tableau par station : chaque créneau affiché doit vivre au même rythme.
+    for (const board of selectedNetworkBoards) {
+      for (const row of board.rows) {
+        if (row.outbound) deadlines.push(row.outbound.nextDepartureAt)
+        if (row.inbound) deadlines.push(row.inbound.nextDepartureAt)
+      }
+    }
     return deadlines
-  }, [journey.search, referencePassages])
+  }, [journey.search, referencePassages, selectedNetworkBoards])
 
   useEffect(() => {
     const delay = nextCountdownTickDelay(countdownDeadlines, countdownNow)
@@ -1314,6 +1334,8 @@ function App() {
               onChooseShortcut={chooseDestinationShortcut}
               selectedNetwork={selectedExploreNetwork}
               onSelectNetwork={handleSelectExploreNetwork}
+              boards={selectedNetworkBoards}
+              onFocusStation={stableCorridorStop}
               now={countdownNow}
             />
           )}
@@ -1509,6 +1531,8 @@ function ExplorerPanel({
   onChooseShortcut,
   selectedNetwork,
   onSelectNetwork,
+  boards,
+  onFocusStation,
   now,
 }: {
   gpsState: GpsState
@@ -1526,6 +1550,10 @@ function ExplorerPanel({
   onChooseShortcut: (id: DestinationShortcutId) => void
   selectedNetwork: NetworkId | null
   onSelectNetwork: (id: NetworkId) => void
+  /** Tableaux par station du réseau sélectionné (TER/BRT aujourd’hui). */
+  boards: readonly StationBoard[]
+  /** Recentre la carte sur une station du tableau, sans replier celui-ci. */
+  onFocusStation: (stop: CorridorStop) => void
   now: number
 }) {
   const locationHint = gpsState === 'loading'
@@ -1615,9 +1643,9 @@ function ExplorerPanel({
                 title={isSaved ? shortcut.goLabel : shortcut.setupLabel}
                 onClick={() => onChooseShortcut(shortcut.id)}
               >
-                <Icon size={14} strokeWidth={2} aria-hidden="true" />
+                <Icon size={12} strokeWidth={2} aria-hidden="true" />
                 <span>{shortcut.label}</span>
-                {isSaved ? <ArrowRight size={12} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}
+                {isSaved ? <ArrowRight size={11} aria-hidden="true" /> : <Plus size={11} aria-hidden="true" />}
               </button>
             )
           })}
@@ -1628,6 +1656,8 @@ function ExplorerPanel({
         now={now}
         selectedNetwork={selectedNetwork}
         onSelectNetwork={onSelectNetwork}
+        boards={boards}
+        onFocusStation={onFocusStation}
       />
     </section>
   )
@@ -1642,15 +1672,21 @@ function networkMetaLabel(network: NetworkSource): string {
   return lines ? `${lines} lignes` : 'Réseau de référence'
 }
 
-/** Résumé Explorer : le décompte descend en temps réel, sans jamais devenir du temps réel. */
+/** Résumé Explorer : le décompte descend en temps réel, sans jamais devenir du temps réel.
+ *  Le réseau sélectionné décline ses créneaux station par station et sens par
+ *  sens ; les réseaux sans ligne publiée l’expliquent au lieu d’inventer. */
 function ReferenceNetworkSummary({
   now,
   selectedNetwork,
   onSelectNetwork,
+  boards,
+  onFocusStation,
 }: {
   now: number
   selectedNetwork: NetworkId | null
   onSelectNetwork: (id: NetworkId) => void
+  boards: readonly StationBoard[]
+  onFocusStation: (stop: CorridorStop) => void
 }) {
   const networks = COMPACT_NETWORK_IDS
     .map((id) => NETWORK_SOURCES.find((network) => network.id === id))
@@ -1707,8 +1743,19 @@ function ReferenceNetworkSummary({
                 </span>
               )}
               {isSelected && (
-                <div className="network-summary-detail">
-                  <span>{refData ? `${refData.coverage} · Service ${refData.serviceWindow}` : network.description}</span>
+                <div className="network-summary-detail station-board-detail">
+                  <span className="station-board-context">
+                    {refData ? `${refData.coverage} · Service ${refData.serviceWindow}` : network.description}
+                  </span>
+                  {boards.length > 0 ? (
+                    boards.map((board) => <StationBoardView key={board.line.id} board={board} onFocusStation={onFocusStation} />)
+                  ) : (
+                    <p className="station-board-pending">
+                      Horaires par station : aucune ligne {refData?.shortName ?? network.label} n’est encore publiée.
+                      Les créneaux par arrêt et par sens s’afficheront ici dès qu’une ligne sera disponible —
+                      aucun horaire n’est inventé en attendant.
+                    </p>
+                  )}
                 </div>
               )}
             </li>
@@ -1716,6 +1763,101 @@ function ReferenceNetworkSummary({
         })}
       </ul>
     </section>
+  )
+}
+
+/** Cellule de créneau d’une station : le design et le format du décompte
+ *  restent exactement ceux du résumé des réseaux (« 5 min / créneau 08:10 »). */
+function StationPassageCell({
+  passage,
+  terminusLabel,
+}: {
+  passage: NextPassage | null
+  /** Terminus du sens concerné, pour la cellule sans départ possible. */
+  terminusLabel: string
+}) {
+  if (!passage) {
+    return (
+      <span className="network-summary-passage is-undeclared station-board-passage">
+        <strong>Terminus</strong>
+        <small>vers {terminusLabel}</small>
+      </span>
+    )
+  }
+  return (
+    <span className="network-summary-passage station-board-passage" title={passage.note}>
+      <strong>{formatPassageCountdown(passage.minutes)}</strong>
+      <small>créneau {passage.clockLabel} · {passage.headwayMinutes} min</small>
+    </span>
+  )
+}
+
+/** Phrase lue par les lecteurs d’écran : une station, ses deux sens. */
+function stationRowAriaLabel(row: StationRow, originLabel: string, destinationLabel: string): string {
+  const describe = (label: string, passage: NextPassage | null, direction: string) =>
+    passage
+      ? `${direction} vers ${label} : ${formatPassageCountdown(passage.minutes)}, créneau théorique ${passage.clockLabel}`
+      : `${direction} : aucun départ, terminus ${label}`
+  return [
+    row.stop.name,
+    describe(destinationLabel, row.outbound, 'sens aller'),
+    describe(originLabel, row.inbound, 'sens retour'),
+    'créneaux théoriques, pas de temps réel',
+  ].join(' · ')
+}
+
+/** Tableau d’une ligne de référence : chaque station, chaque sens, son créneau
+ *  théorique. Toucher une station la recentre sur la carte sans replier le
+ *  tableau. La structure est identique pour tout réseau qui publiera ses
+ *  lignes (AFTU, TATA…). */
+function StationBoardView({
+  board,
+  onFocusStation,
+}: {
+  board: StationBoard
+  onFocusStation: (stop: CorridorStop) => void
+}) {
+  const originLabel = stationShortName(board.originStop)
+  const destinationLabel = stationShortName(board.destinationStop)
+  return (
+    <div
+      className="station-board"
+      aria-label={`Créneaux théoriques par station, ${board.line.shortName} ${originLabel} ↔ ${destinationLabel}, sens aller et retour`}
+    >
+      <div className="station-board-head">
+        <strong>{board.line.shortName} · {originLabel} ↔ {destinationLabel}</strong>
+        <small>{board.rows.length} {board.line.network === 'ter' ? (board.rows.length > 1 ? 'gares' : 'gare') : (board.rows.length > 1 ? 'stations' : 'station')} · 2 sens</small>
+      </div>
+      <div className="station-board-columns" aria-hidden="true">
+        <span>Station</span>
+        <span>Aller → {destinationLabel}</span>
+        <span>Retour → {originLabel}</span>
+      </div>
+      <ul className="station-board-list">
+        {board.rows.map((row) => (
+          <li key={row.stop.id}>
+            <button
+              type="button"
+              className="station-board-row"
+              aria-label={stationRowAriaLabel(row, originLabel, destinationLabel)}
+              title={`${row.stop.name} — voir sur la carte`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onFocusStation(row.stop)
+              }}
+            >
+              <span className="station-board-stop" title={row.stop.name}>{row.stop.name}</span>
+              <StationPassageCell passage={row.outbound} terminusLabel={destinationLabel} />
+              <StationPassageCell passage={row.inbound} terminusLabel={originLabel} />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="station-board-footnote">
+        Créneaux théoriques : grille déclarée au départ de chaque terminus + parcours de référence
+        ({board.line.speedKph} km/h). Pas de temps réel.
+      </p>
+    </div>
   )
 }
 
@@ -2700,6 +2842,16 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-09',
+      title: 'Horaires par station et par sens',
+      items: [
+        'Explorer : chaque réseau de référence se décline station par station — TER (13 gares, de Dakar à Diamniadio) et BRT (23 stations, de Petersen à Guédiawaye) affichent pour chaque arrêt le prochain créneau théorique dans chaque sens (aller et retour), dans le format de décompte habituel. Toucher une station la recentre sur la carte.',
+        'Explorer : les créneaux par station descendent au même rythme que les décomptes des réseaux, projetés depuis la grille officielle déclarée et les temps de parcours de référence — jamais du temps réel.',
+        'Explorer : AFTU, TATA et DDD entrent dans la même structure — leurs horaires par arrêt et par sens s’afficheront dès que des lignes seront publiées ; en attendant, aucun horaire n’est inventé.',
+        'Explorer : raccourcis Maison, Boulot et Adresse plus compacts, et rapprochement des sections (recherche, destinations, réseaux) pour maximiser la zone visible des horaires.',
+      ],
+    },
     {
       date: '2026-10-09',
       title: 'Audit de sécurité et fiabilité',

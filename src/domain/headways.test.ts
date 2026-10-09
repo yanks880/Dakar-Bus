@@ -101,6 +101,35 @@ describe('prochains créneaux théoriques', () => {
     expect(nextReferencePassage([], Date.now())).toBeNull()
     expect(nextReferencePassage([{ ...BRT[0], headwayMinutes: 0 }], Date.now())).toBeNull()
   })
+
+  it('projette le créneau à distance de l’origine avec un décalage de parcours', () => {
+    // Jeudi 8 octobre 2026, 12:00 : la grille BRT part de 06:00 toutes les
+    // 6 min. Le départ de grille 11:54 atteint une station à 8 minutes de
+    // parcours à 12:02 : c'est le prochain créneau projeté (2 min d'attente).
+    const now = at('2026-10-08T12:00:00Z')
+    const projected = nextReferencePassage(BRT, now, 8)!
+    expect(projected.clockLabel).toBe('12:02')
+    expect(projected.minutes).toBe(2)
+    expect(projected.headwayMinutes).toBe(6)
+    // La fenêtre de service s'apprécie au terminus, origine de la grille :
+    // le créneau 12:02 reste porté par le départ 11:54 de la grille déclarée.
+    expect(projected.status).toBe('RUNNING')
+  })
+
+  it('peut afficher un créneau projeté dont le départ du terminus vient de passer', () => {
+    // À 12:07, le départ de grille 12:06 vient de passer : une station à
+    // 4 minutes de parcours voit encore ce passage, projeté à 12:10.
+    const now = at('2026-10-08T12:07:00Z')
+    const projected = nextReferencePassage(BRT, now, 4)!
+    expect(projected.clockLabel).toBe('12:10')
+    expect(projected.minutes).toBe(3)
+  })
+
+  it('garde un décalage nul strictement équivalent au comportement historique', () => {
+    const now = at('2026-10-08T12:00:00Z')
+    expect(nextReferencePassage(BRT, now, 0)!.clockLabel).toBe('12:06')
+    expect(nextReferencePassage(BRT, now)!.clockLabel).toBe('12:06')
+  })
 })
 
 describe('formatage du décompte', () => {
