@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Ban,
@@ -57,6 +57,7 @@ export function ConsolePanel({ datasets, onChanged }: { datasets: readonly Catal
   const [actorId, setActorId] = useState('')
   const [secret, setSecret] = useState('')
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [open, setOpen] = useState<OpenForm | null>(null)
   const [attestations, setAttestations] = useState<Record<string, AttestationInput>>(emptyAttestations)
@@ -139,20 +140,27 @@ export function ConsolePanel({ datasets, onChanged }: { datasets: readonly Catal
   }
 
   const run = async (dataset: CatalogDataset, label: string) => {
-    if (!session || !open) return
+    // Garde synchrone : un double clic ne doit pas lancer deux écritures serveur.
+    if (!session || !open || busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     const request = { datasetId: dataset.datasetId, state: session, note: note || null, reason: reason || null }
-    const outcome =
-      open.kind === 'approve'
-        ? await approveVersion({ ...request, attestations })
-        : open.kind === 'reject'
-          ? await rejectVersion(request)
-          : open.kind === 'revert'
-            ? await revertVersionDecision({ ...request, entryId })
-            : open.kind === 'publish'
-              ? await publishVersion(request)
-              : await revertPublication({ state: session, reason, snapshotId: dataset.publicationSnapshotId })
-    setBusy(false)
+    const outcome = await (async () => {
+      try {
+        return open.kind === 'approve'
+          ? await approveVersion({ ...request, attestations })
+          : open.kind === 'reject'
+            ? await rejectVersion(request)
+            : open.kind === 'revert'
+              ? await revertVersionDecision({ ...request, entryId })
+              : open.kind === 'publish'
+                ? await publishVersion(request)
+                : await revertPublication({ state: session, reason, snapshotId: dataset.publicationSnapshotId })
+      } finally {
+        busyRef.current = false
+        setBusy(false)
+      }
+    })()
 
     if (!outcome.ok) {
       reportRefusal(outcome.message, outcome.blockers)
@@ -285,7 +293,7 @@ export function ConsolePanel({ datasets, onChanged }: { datasets: readonly Catal
                   <dl className="governance-dataset-meta">
                     <div><dt>Version</dt><dd>{dataset.datasetVersion ?? 'inconnue'}</dd></div>
                     <div><dt>Décision active</dt><dd>{dataset.reviewEntryId ?? 'aucune'}</dd></div>
-                    <div><dt>Rélecteur</dt><dd>{dataset.reviewerId ?? 'aucun'}</dd></div>
+                    <div><dt>Relecteur</dt><dd>{dataset.reviewerId ?? 'aucun'}</dd></div>
                     <div><dt>Publication</dt><dd>{dataset.publicationStatus}{dataset.publicationSnapshotId ? ` · ${dataset.publicationSnapshotId}` : ''}</dd></div>
                   </dl>
 

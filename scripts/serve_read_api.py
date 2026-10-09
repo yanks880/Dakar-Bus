@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 try:  # Works both as `python -m scripts.serve_read_api` and as a file script.
     from .network_graph import (
@@ -140,8 +140,19 @@ def _single_text(parameters: dict[str, list[str]], name: str, *, required: bool 
 
 
 def _identifier(raw: str, label: str) -> str:
-    candidate = raw.strip()
-    if not candidate or len(candidate) > MAX_IDENTIFIER_LENGTH or "/" in candidate or "\\" in candidate:
+    """Identifiant d'arrêt ou de ligne issu de l'URL.
+
+    L'URL est décodée avant contrôle : « %2F » ou « %5C » ne peuvent pas contourner
+    le refus des séparateurs de chemin.
+    """
+    candidate = unquote(raw).strip()
+    if (
+        not candidate
+        or len(candidate) > MAX_IDENTIFIER_LENGTH
+        or "/" in candidate
+        or "\\" in candidate
+        or any(ord(char) < 32 for char in candidate)
+    ):
         raise _not_found(f"{label} invalide.")
     return candidate
 

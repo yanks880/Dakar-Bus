@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Bot, Send, Sparkles, X } from 'lucide-react'
 import { answerAssistant, getAssistantCountdownMinutes, type AssistantContext, type AssistantMessage } from '../domain/assistant'
 
@@ -11,9 +11,12 @@ const SUGGESTIONS: readonly string[] = [
 
 let nextMessageId = 1
 
-function firstGreeting(context: AssistantContext): AssistantMessage {
+/** Message d’accueil dérivé du contexte courant (il suit le chargement des données). */
+const GREETING_ID = 0
+
+function greetingFor(context: AssistantContext): AssistantMessage {
   return {
-    id: nextMessageId++,
+    id: GREETING_ID,
     role: 'assistant',
     text: answerAssistant('bonjour', context),
   }
@@ -55,9 +58,10 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
  */
 export function AssistantChat({ context }: { context: AssistantContext }) {
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<AssistantMessage[]>(() => [firstGreeting(context)])
+  const [exchanges, setExchanges] = useState<AssistantMessage[]>([])
   const [draft, setDraft] = useState('')
   const listRef = useRef<HTMLDivElement | null>(null)
+  const messages = useMemo(() => [greetingFor(context), ...exchanges], [context, exchanges])
 
   useEffect(() => {
     if (!open) return
@@ -65,26 +69,21 @@ export function AssistantChat({ context }: { context: AssistantContext }) {
     if (list) list.scrollTop = list.scrollHeight
   }, [open, messages])
 
+  function ask(question: string) {
+    const reply = createReply(question, context)
+    setExchanges((current) => [
+      ...current,
+      { id: nextMessageId++, role: 'user', text: question },
+      reply,
+    ])
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const question = draft.trim()
     if (!question) return
-    const reply = createReply(question, context)
-    setMessages((current) => [
-      ...current,
-      { id: nextMessageId++, role: 'user', text: question },
-      reply,
-    ])
+    ask(question)
     setDraft('')
-  }
-
-  function ask(question: string) {
-    const reply = createReply(question, context)
-    setMessages((current) => [
-      ...current,
-      { id: nextMessageId++, role: 'user', text: question },
-      reply,
-    ])
   }
 
   return (

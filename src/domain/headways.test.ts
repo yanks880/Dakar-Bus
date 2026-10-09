@@ -29,6 +29,16 @@ describe('prochains créneaux théoriques', () => {
     expect(nextReferencePassage(BRT, start + 6 * 60_000)!.clockLabel).toBe('12:12')
   })
 
+  it('ne déclare pas un service en cours quand le jour courant n’est pas desservi', () => {
+    // Lundi 5 octobre 2026, 23:00 UTC : la fréquence ne circule que le mardi,
+    // mais sa plage horaire du lundi couvre encore 23:00. Le service n’est pas
+    // en cours (aucune course lundi) : le créneau suivant est un mardi.
+    const tuesdayOnly = [{ ...TER[0], days: ['TUE'] as const, serviceStart: '05:00', serviceEnd: '23:30', headwayMinutes: 10 }]
+    const passage = nextReferencePassage(tuesdayOnly, at('2026-10-05T23:00:00Z'))!
+    expect(passage.status).toBe('AFTER_SERVICE')
+    expect(passage.clockLabel).toBe('05:00')
+  })
+
   it('n’affiche jamais un créneau inférieur à une minute', () => {
     const passage = nextReferencePassage(BRT, at('2026-10-08T12:05:59Z'))!
     expect(passage.clockLabel).toBe('12:06')

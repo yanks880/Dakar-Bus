@@ -1,6 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Info, MapPin, Search, X } from 'lucide-react'
 import { searchStopIndex, type StopOption } from '../domain/stops'
+import { BRT_STOPS, TER_STOPS } from '../domain/corridors'
+
+/** Compteurs dérivés des données réelles : ils ne peuvent plus diverger du réseau affiché. */
+const TER_COUNT = TER_STOPS.length
+const BRT_COUNT = BRT_STOPS.length
 
 /**
  * Champ de recherche d'un point de trajet.
@@ -28,6 +33,7 @@ export function StopCombobox({
   onPickOnMap: () => void
 }) {
   const listId = useId()
+  const optionId = (index: number) => `${listId}-option-${index}`
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
@@ -40,8 +46,6 @@ export function StopCombobox({
     () => (query.trim() ? searchStopIndex(options, query, 14) : options.slice(0, 16)),
     [options, query],
   )
-
-  useEffect(() => setActiveIndex(0), [query])
 
   // Une fermeture au clic extérieur : la liste ne reste jamais ouverte au-dessus
   // d'un autre champ.
@@ -108,12 +112,14 @@ export function StopCombobox({
             aria-label={`${title} du trajet`}
             aria-expanded={open}
             aria-controls={listId}
+            aria-activedescendant={open && matches[activeIndex] ? optionId(activeIndex) : undefined}
             aria-autocomplete="list"
             autoComplete="off"
             placeholder="Arrêt, station ou mobilité…"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
+              setActiveIndex(0)
               setOpen(true)
             }}
             onFocus={() => setOpen(true)}
@@ -145,9 +151,10 @@ export function StopCombobox({
           {matches.length > 0 ? (
             <ul className="point-option-list" id={listId} role="listbox" aria-label={`${title} : arrêts et mobilités`}>
               {matches.map((option, index) => (
-                <li key={option.value}>
+                <li key={option.value} role="none">
                   <button
                     type="button"
+                    id={optionId(index)}
                     role="option"
                     aria-selected={index === activeIndex}
                     className={`point-option${index === activeIndex ? ' is-active' : ''}${option.selectable ? '' : ' is-informative'}`}
@@ -173,7 +180,7 @@ export function StopCombobox({
             </p>
           )}
           <p className="point-options-note">
-            Arrêts disponibles : TER (13 gares SETER), BRT (23 stations SunuBRT) et arrêts du snapshot publié.
+            Arrêts disponibles : TER ({TER_COUNT} gares SETER), BRT ({BRT_COUNT} stations SunuBRT) et arrêts du snapshot publié.
             AFTU, DDD et TATA sont référencés mais leurs arrêts ne sont pas publiés.
           </p>
         </div>
