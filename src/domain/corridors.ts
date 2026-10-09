@@ -163,6 +163,12 @@ export const BRT_STOPS: readonly CorridorStop[] = [
   { id: 'brt-prefecture-guediawaye', name: 'Préfecture de Guédiawaye', shortName: 'Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 22, aliases: ['prefecture guediawaye', 'guédiawaye', 'guediawaye', 'pole guediawaye', 'pem guediawaye'], note: 'Pôle d’échange · terminus', osmNodeId: 11739850129 },
 ]
 
+/** Plus grand headway officiel déclaré, en minutes : l'entrée prudente du
+ *  calculateur, dérivée de la source unique plutôt que recopiée. */
+function maxOfficialHeadway(frequencies: readonly OfficialFrequency[]): number {
+  return frequencies.reduce((max, frequency) => Math.max(max, frequency.headwayMinutes), 0)
+}
+
 export const CORRIDOR_LINES: readonly CorridorLine[] = [
   {
     id: 'ter-dakar-diamniadio',
@@ -172,9 +178,10 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     color: '#2f6fb3',
     stopIds: TER_STOPS.map((stop) => stop.id),
     // L'estimateur de correspondance n'a pas d'heure/jour de départ : il
-    // retient prudemment le maximum officiel (20 min), sans l'afficher comme
-    // une cadence permanente. Les fenêtres ci-dessous restent la référence.
-    headwayMin: 20,
+    // retient prudemment le maximum officiel, sans l'afficher comme une cadence
+    // permanente. La valeur est dérivée des fréquences officielles plutôt que
+    // ressaisie ici : un seul endroit déclare les minutes.
+    headwayMin: maxOfficialHeadway(OFFICIAL_REFERENCE_FREQUENCIES.ter),
     frequencyStatus: 'OFFICIAL_REFERENCE',
     frequencySource: FREQUENCY_SOURCES.ter,
     officialFrequencies: OFFICIAL_REFERENCE_FREQUENCIES.ter,
@@ -193,7 +200,7 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     longName: 'Petersen – Papa Gueye Fall ↔ Préfecture de Guédiawaye (omnibus)',
     color: '#0f8f66',
     stopIds: BRT_STOPS.map((stop) => stop.id),
-    headwayMin: 6,
+    headwayMin: maxOfficialHeadway(OFFICIAL_REFERENCE_FREQUENCIES.brt),
     frequencyStatus: 'OFFICIAL_REFERENCE',
     frequencySource: FREQUENCY_SOURCES.brt,
     officialFrequencies: OFFICIAL_REFERENCE_FREQUENCIES.brt,
