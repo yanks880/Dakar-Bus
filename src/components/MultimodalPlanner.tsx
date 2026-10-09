@@ -19,6 +19,10 @@ interface MultimodalPlannerProps {
 const MAP_ORIGIN_VALUE = '__map_origin__'
 const MAP_DESTINATION_VALUE = '__map_destination__'
 
+function pointKey(point: PlannerPoint | null | undefined): string {
+  return point ? `${point.lat},${point.lng}` : ''
+}
+
 function endpointFromSelection(value: string, mapPoint: PlannerPoint | null, kind: 'origin' | 'destination'): PlannerEndpoint | null {
   if (value === (kind === 'origin' ? MAP_ORIGIN_VALUE : MAP_DESTINATION_VALUE)) {
     if (!mapPoint) return null
@@ -41,9 +45,18 @@ function LegIcon({ kind, network }: { kind: string; network?: 'ter' | 'brt' }) {
  * modifie la recherche de courses directes publiée existante.
  */
 export function MultimodalPlanner({ mapOrigin = null, mapDestination = null }: MultimodalPlannerProps) {
-  const [originValue, setOriginValue] = useState<string>(TER_STOPS[0].id)
-  const [destinationValue, setDestinationValue] = useState<string>(BRT_STOPS[BRT_STOPS.length - 1].id)
-  const [outcome, setOutcome] = useState<PlannerOutcome | null>(null)
+  const [pickedOrigin, setOriginValue] = useState<string>(TER_STOPS[0].id)
+  const [pickedDestination, setDestinationValue] = useState<string>(BRT_STOPS[BRT_STOPS.length - 1].id)
+  // Si le point choisi sur la carte disparaît, le champ revient à un arrêt réel
+  // (sinon le <select> afficherait une option absente de la liste).
+  const originValue = pickedOrigin === MAP_ORIGIN_VALUE && !mapOrigin ? TER_STOPS[0].id : pickedOrigin
+  const destinationValue = pickedDestination === MAP_DESTINATION_VALUE && !mapDestination ? BRT_STOPS[BRT_STOPS.length - 1].id : pickedDestination
+  const [result, setResult] = useState<{ key: string; outcome: PlannerOutcome } | null>(null)
+
+  // Le résultat n’est affiché que tant que les points demandés sont inchangés :
+  // un point modifié sur la carte ou dans la liste n’affiche jamais l’ancien trajet.
+  const selectionKey = [originValue, destinationValue, pointKey(mapOrigin), pointKey(mapDestination)].join('|')
+  const outcome = result && result.key === selectionKey ? result.outcome : null
 
   const originOptions = useMemo(
     () => [
@@ -67,10 +80,10 @@ export function MultimodalPlanner({ mapOrigin = null, mapDestination = null }: M
     const origin = endpointFromSelection(originValue, mapOrigin, 'origin')
     const destination = endpointFromSelection(destinationValue, mapDestination, 'destination')
     if (!origin || !destination) {
-      setOutcome({ ok: false, reason: 'SAME_POINT', message: 'Choisissez un départ et une destination valides.' })
+      setResult({ key: selectionKey, outcome: { ok: false, reason: 'SAME_POINT', message: 'Choisissez un départ et une destination valides.' } })
       return
     }
-    setOutcome(planReferenceJourney(origin, destination))
+    setResult({ key: selectionKey, outcome: planReferenceJourney(origin, destination) })
   }
 
   return (

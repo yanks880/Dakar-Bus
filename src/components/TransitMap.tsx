@@ -1,9 +1,10 @@
-import { useEffect, useMemo } from 'react'
+import { memo, useEffect, useMemo } from 'react'
 import { Circle, CircleMarker, MapContainer, Marker, Polyline, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L, { type DivIcon } from 'leaflet'
 import type { PublishedStop, SnapshotBounds } from '../domain/published'
 import type { CorridorLine, CorridorStop } from '../domain/corridors'
 import { formatFrequencyPeriod, formatSourceVerification } from '../domain/frequencies'
+import { safeHttpUrl } from '../domain/http'
 
 export interface Coordinates {
   lat: number
@@ -107,16 +108,21 @@ function MapInitialFit({ bounds }: { bounds: RegionBounds | null }) {
   return null
 }
 
+/** Échappe une valeur avant de l’insérer dans le HTML d’une icône Leaflet. */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`)
+}
+
 function makeMarker(className: string, label: string, color: string): DivIcon {
   return L.divIcon({
     className: 'dakar-marker-shell',
-    html: `<span class="${className}" style="--marker-color:${color}" role="img" aria-label="${label}"><span></span></span>`,
+    html: `<span class="${escapeHtml(className)}" style="--marker-color:${escapeHtml(color)}" role="img" aria-label="${escapeHtml(label)}"><span></span></span>`,
     iconSize: [34, 34],
     iconAnchor: [17, 17],
   })
 }
 
-export function TransitMap({
+function TransitMapView({
   location,
   routePoints,
   pickingPoint,
@@ -194,9 +200,11 @@ export function TransitMap({
                 {line.frequencyStatus === 'OFFICIAL_REFERENCE' ? 'Fréquence officielle de référence' : 'Fréquence inconnue'}
                 {' · '}{formatSourceVerification(line.frequencySource)}
               </small>
-              <a className="map-frequency-source" href={line.frequencySource.sourceUrl} target="_blank" rel="noreferrer">
-                Source : {line.frequencySource.authority}
-              </a>
+              {safeHttpUrl(line.frequencySource.sourceUrl) && (
+                <a className="map-frequency-source" href={safeHttpUrl(line.frequencySource.sourceUrl) ?? undefined} target="_blank" rel="noreferrer">
+                  Source : {line.frequencySource.authority}
+                </a>
+              )}
               <span className="map-frequency-disclaimer">Fréquence de service uniquement · pas un prochain passage.</span>
             </div>
           </Tooltip>
@@ -229,8 +237,8 @@ export function TransitMap({
                     {' · '}{formatSourceVerification(line.frequencySource)}
                   </small>
                 )}
-                {line && (
-                  <a className="map-frequency-source" href={line.frequencySource.sourceUrl} target="_blank" rel="noreferrer">
+                {line && safeHttpUrl(line.frequencySource.sourceUrl) && (
+                  <a className="map-frequency-source" href={safeHttpUrl(line.frequencySource.sourceUrl) ?? undefined} target="_blank" rel="noreferrer">
                     Source : {line.frequencySource.authority}
                   </a>
                 )}
@@ -299,3 +307,6 @@ export function TransitMap({
     </MapContainer>
   )
 }
+
+/** Carte mémorisée : elle ne se redessine que si ses données ou ses rappels changent. */
+export const TransitMap = memo(TransitMapView)

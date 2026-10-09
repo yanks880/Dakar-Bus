@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -77,6 +77,7 @@ import {
   type StreetReportDraft,
 } from './domain/streetReports'
 import { getRemainingMinutes } from './domain/truth'
+import { isValidLatLng, readJsonBody, safeHttpUrl, timedRequest } from './domain/http'
 import { ConsolePanel } from './Console'
 import {
   describeRouteType,
@@ -221,9 +222,9 @@ function readSavedDestinations(): Partial<Record<DestinationShortcutId, MapPoint
       const value = (parsed as Record<string, unknown>)[shortcut.id]
       if (!value || typeof value !== 'object') continue
       const point = value as Record<string, unknown>
-      if (typeof point.lat !== 'number' || !Number.isFinite(point.lat)) continue
-      if (typeof point.lng !== 'number' || !Number.isFinite(point.lng)) continue
-      destinations[shortcut.id] = { lat: point.lat, lng: point.lng, label: shortcut.label, kind: 'map' }
+      // Une coordonnée stockée hors du globe est ignorée, jamais affichée.
+      if (!isValidLatLng(point.lat, point.lng)) continue
+      destinations[shortcut.id] = { lat: point.lat as number, lng: point.lng as number, label: shortcut.label, kind: 'map' }
     }
     return destinations
   } catch {
@@ -240,27 +241,41 @@ const ROUTE_MAX_WALK_M = 900
 
 type ApiResult = { ok: true; payload: unknown } | { ok: false; status: number; code: string | null }
 
-/** The browser only ever calls relative URLs; Vite relays /api to the local API. */
+/** The browser only ever calls relative URLs; Vite relays /api to the local API.
+ *  A request that never answers within the delay is reported as an absent server. */
 async function fetchApi(path: string): Promise<ApiResult> {
   try {
-    const response = await fetch(path, { headers: { Accept: 'application/json' } })
-    if (!response.ok) {
-      let code: string | null = null
-      try {
-        const body: unknown = await response.json()
+    return await timedRequest(path, {}, async (response): Promise<ApiResult> => {
+      if (!response.ok) {
+        let code: string | null = null
+        const body = await readJsonBody(response)
         if (body && typeof body === 'object' && 'error' in body) {
           const candidate = (body as { error: unknown }).error
           if (typeof candidate === 'string') code = candidate
         }
-      } catch {
-        code = null
+        return { ok: false, status: response.status, code }
       }
-      return { ok: false, status: response.status, code }
-    }
-    return { ok: true, payload: await response.json() }
+      return { ok: true, payload: await response.json() }
+    })
   } catch {
     return { ok: false, status: 0, code: null }
   }
+}
+
+/** Identifiants de requête : seule la dernière réponse d’une famille est affichée. */
+type RequestKey = 'published' | 'lines' | 'nearby' | 'stopSearch' | 'openStop' | 'journey' | 'governance'
+
+/** Liste publiée vide, constante : évite de re-rendre la carte à chaque tic. */
+const NO_PUBLISHED_STOPS: readonly PublishedStop[] = []
+
+/** Pont stable : la fonction reçue reste la même pour la carte mémorisée, tout en
+ *  appelant toujours la version la plus récente (état à jour). */
+function useStableCallback<A extends unknown[], R>(callback: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(callback)
+  useLayoutEffect(() => {
+    ref.current = callback
+  })
+  return useCallback((...args: A) => ref.current(...args), [])
 }
 
 /** Honest wording for every refusal the routing API can return. */
@@ -405,17 +420,45 @@ function App() {
   const [showCoverage, setShowCoverage] = useState(true)
   const toastTimer = useRef<number | undefined>(undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  /** Numéro de la dernière requête lancée par famille : une réponse plus ancienne
+   *  que la dernière demande est ignorée, elle ne remplace jamais un résultat récent. */
+  const requestIds = useRef<Record<RequestKey, number>>({
+    published: 0,
+    lines: 0,
+    nearby: 0,
+    stopSearch: 0,
+    openStop: 0,
+    journey: 0,
+    governance: 0,
+  })
+  /** Dernière valeur des points de trajet, lue par les rappels asynchrones (GPS). */
+  const routePointsRef = useRef(routePoints)
   const network = published.network
   const dataAvailable = network !== null && isCurrentSnapshot(network)
-  const mappablePublishedStops = dataAvailable ? nearby.stops : []
+  const mappablePublishedStops = dataAvailable ? nearby.stops : NO_PUBLISHED_STOPS
 
   // Réseau de référence TER/BRT : tracés et arrêts superposés au fond OSM,
-  // pilotés par les interrupteurs de couche existants.
-  const visibleCorridorLines = CORRIDOR_LINES.filter((line) => networkLayers[line.network])
-  const visibleCorridorStops: CorridorStop[] = [
-    ...(networkLayers.ter ? TER_STOPS : []),
-    ...(networkLayers.brt ? BRT_STOPS : []),
-  ]
+  // pilotés par les interrupteurs de couche existants. Mémorisés : la carte ne
+  // doit pas être recalculée à chaque tic de l’horloge.
+  const visibleCorridorLines = useMemo(
+    () => CORRIDOR_LINES.filter((line) => networkLayers[line.network]),
+    [networkLayers],
+  )
+  const visibleCorridorStops = useMemo<CorridorStop[]>(
+    () => [...(networkLayers.ter ? TER_STOPS : []), ...(networkLayers.brt ? BRT_STOPS : [])],
+    [networkLayers.ter, networkLayers.brt],
+  )
+
+  useEffect(() => {
+    routePointsRef.current = routePoints
+  }, [routePoints])
+
+  /** Ouvre une nouvelle requête de la famille et renvoie son numéro. */
+  const beginRequest = useCallback((key: RequestKey): number => {
+    requestIds.current[key] += 1
+    return requestIds.current[key]
+  }, [])
+  const isLatestRequest = useCallback((key: RequestKey, id: number): boolean => requestIds.current[key] === id, [])
 
   function handleSelectCorridorStop(stop: CorridorStop) {
     setRecenterTo({ lat: stop.lat, lng: stop.lon })
@@ -445,29 +488,25 @@ function App() {
 
   function toggleTheme() {
     triggerHaptic(10)
-    setTheme((current) => {
-      const next: ThemeMode = current === 'dark' ? 'light' : 'dark'
-      try {
-        safeLocalStorage()?.setItem(THEME_STORAGE_KEY, next)
-      } catch {
-        // Stockage indisponible : le thème reste actif en mémoire.
-      }
-      return next
-    })
+    const next: ThemeMode = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    try {
+      safeLocalStorage()?.setItem(THEME_STORAGE_KEY, next)
+    } catch {
+      // Stockage indisponible : le thème reste actif en mémoire.
+    }
   }
 
   function handleSelectExploreNetwork(id: NetworkId) {
     triggerHaptic(12)
-    setSelectedExploreNetwork((current) => {
-      const next = current === id ? null : id
-      if (next === 'ter' || next === 'brt') {
-        setNetworkLayers((layers) => ({ ...layers, [next]: true }))
-        const stops = next === 'ter' ? TER_STOPS : BRT_STOPS
-        const middle = stops[Math.floor(stops.length / 2)]
-        if (middle) setRecenterTo({ lat: middle.lat, lng: middle.lon })
-      }
-      return next
-    })
+    const next = selectedExploreNetwork === id ? null : id
+    setSelectedExploreNetwork(next)
+    if (next === 'ter' || next === 'brt') {
+      setNetworkLayers((layers) => ({ ...layers, [next]: true }))
+      const stops = next === 'ter' ? TER_STOPS : BRT_STOPS
+      const middle = stops[Math.floor(stops.length / 2)]
+      if (middle) setRecenterTo({ lat: middle.lat, lng: middle.lon })
+    }
   }
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
@@ -540,41 +579,38 @@ function App() {
   }
 
   const loadGovernance = useCallback(async () => {
+    const id = beginRequest('governance')
     setGovernance((current) => ({ ...current, status: 'loading', error: null }))
+    const fetchJson = (path: string) =>
+      timedRequest(path, {}, async (response) => ({
+        status: response.status,
+        ok: response.ok,
+        body: response.ok ? await response.json() : undefined,
+      }))
+    const offline = (error: string) => ({ status: 'offline' as const, datasets: [], pipeline: null, error })
     try {
-      const [catalogResponse, pipelineResponse] = await Promise.all([
-        fetch('/api/catalog', { headers: { Accept: 'application/json' } }),
-        fetch('/api/pipeline', { headers: { Accept: 'application/json' } }),
-      ])
+      const [catalogResponse, pipelineResponse] = await Promise.all([fetchJson('/api/catalog'), fetchJson('/api/pipeline')])
+      if (!isLatestRequest('governance', id)) return
       if (!catalogResponse.ok || !pipelineResponse.ok) {
-        setGovernance({
-          status: 'offline',
-          datasets: [],
-          pipeline: null,
-          error: `L’API d’administration a répondu ${catalogResponse.status} / ${pipelineResponse.status}.`,
-        })
+        setGovernance(offline(`L’API d’administration a répondu ${catalogResponse.status} / ${pipelineResponse.status}.`))
         return
       }
-      const catalog = parseCatalogPayload(await catalogResponse.json())
-      const pipeline = parsePipelinePayload(await pipelineResponse.json())
+      const catalog = parseCatalogPayload(catalogResponse.body)
+      const pipeline = parsePipelinePayload(pipelineResponse.body)
       if (!catalog.ok) {
-        setGovernance({ status: 'offline', datasets: [], pipeline: null, error: catalog.reason })
+        setGovernance(offline(catalog.reason))
         return
       }
       if (!pipeline.ok) {
-        setGovernance({ status: 'offline', datasets: [], pipeline: null, error: pipeline.reason })
+        setGovernance(offline(pipeline.reason))
         return
       }
       setGovernance({ status: 'ready', datasets: catalog.value, pipeline: pipeline.value, error: null })
     } catch {
-      setGovernance({
-        status: 'offline',
-        datasets: [],
-        pipeline: null,
-        error: 'L’API d’administration locale ne répond pas sur /api.',
-      })
+      if (!isLatestRequest('governance', id)) return
+      setGovernance(offline('L’API d’administration locale ne répond pas sur /api.'))
     }
-  }, [])
+  }, [beginRequest, isLatestRequest])
 
   // Le catalogue local (staging, revue, publications) n’est interrogé que
   // lorsque la section technique de Paramètres est ouverte.
@@ -584,8 +620,10 @@ function App() {
   }, [activeTab, consoleOpen, governance.status, loadGovernance])
 
   const loadPublishedNetwork = useCallback(async () => {
+    const id = beginRequest('published')
     setPublished((current) => ({ ...current, status: 'loading', error: null }))
     const result = await fetchApi('/api/network')
+    if (!isLatestRequest('published', id)) return
     if (!result.ok) {
       setPublished({
         status: 'error',
@@ -607,8 +645,10 @@ function App() {
   }, [loadPublishedNetwork])
 
   const loadPublishedLines = useCallback(async () => {
+    const id = beginRequest('lines')
     setLines({ status: 'loading', routes: [], error: null })
     const result = await fetchApi('/api/routes?limit=100')
+    if (!isLatestRequest('lines', id)) return
     if (!result.ok) {
       setLines({ status: 'error', routes: [], error: result.code === 'NOT_PUBLISHED' ? 'Aucune ligne publiée pour le moment.' : 'Les lignes publiées n’ont pas pu être lues.' })
       return
@@ -636,8 +676,12 @@ function App() {
   }, [dataAvailable])
 
   const loadNearbyStops = useCallback(async (origin: Coordinates) => {
+    const id = beginRequest('nearby')
     setNearby({ status: 'loading', stops: [], radius: NEARBY_RADIUS_M, error: null })
-    const result = await fetchApi(`/api/stops/near?lat=${origin.lat}&lon=${origin.lng}&radius=${NEARBY_RADIUS_M}&limit=${NEARBY_LIMIT}`)
+    const result = await fetchApi(
+      `/api/stops/near?lat=${encodeURIComponent(origin.lat)}&lon=${encodeURIComponent(origin.lng)}&radius=${NEARBY_RADIUS_M}&limit=${NEARBY_LIMIT}`,
+    )
+    if (!isLatestRequest('nearby', id)) return
     if (!result.ok) {
       setNearby({
         status: 'error',
@@ -661,8 +705,10 @@ function App() {
   }, [dataAvailable, location, nearby.status, loadNearbyStops])
 
   async function openStop(stop: PublishedStop) {
+    const id = beginRequest('openStop')
     setSelectedStopError(null)
     const result = await fetchApi(`/api/stops/${encodeURIComponent(stop.stopId)}`)
+    if (!isLatestRequest('openStop', id)) return
     if (!result.ok) {
       setSelectedStop(null)
       setSelectedStopError(result.code === 'NOT_PUBLISHED' ? 'Cet arrêt n’est plus servi : la publication a été annulée.' : 'La fiche de cet arrêt n’a pas pu être lue.')
@@ -700,11 +746,12 @@ function App() {
   }
 
   function useStopAsRoutePoint(stop: PublishedStopDetail, key: RoutePointKey) {
-    if (stop.lat === null || stop.lon === null) {
+    const { lat, lon } = stop
+    if (lat === null || lon === null) {
       announce('Cet arrêt n’a pas de coordonnées déclarées : il ne peut pas servir de point.')
       return
     }
-    const point: MapPoint = { lat: stop.lat!, lng: stop.lon!, label: stop.stopName, kind: 'stop', stopId: stop.stopId }
+    const point: MapPoint = { lat, lng: lon, label: stop.stopName, kind: 'stop', stopId: stop.stopId }
     const other = key === 'origin' ? routePoints.destination : routePoints.origin
     setRoutePoints((current) => ({ ...current, [key]: point }))
     setRouteAttempted(false)
@@ -717,12 +764,14 @@ function App() {
 
   const runStopSearch = useCallback(async (query: string) => {
     const trimmed = query.trim()
+    const id = beginRequest('stopSearch')
     if (!trimmed) {
       setStopSearch({ status: 'idle', query: '', stops: [], error: null })
       return
     }
     setStopSearch({ status: 'loading', query: trimmed, stops: [], error: null })
     const result = await fetchApi(`/api/stops/search?q=${encodeURIComponent(trimmed)}&limit=20`)
+    if (!isLatestRequest('stopSearch', id)) return
     if (!result.ok) {
       setStopSearch({
         status: 'error',
@@ -738,7 +787,7 @@ function App() {
       return
     }
     setStopSearch({ status: 'ready', query: trimmed, stops: parsed.value, error: null })
-  }, [])
+  }, [beginRequest, isLatestRequest])
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -812,15 +861,7 @@ function App() {
     setRoutePoints((current) => ({ ...current, [picked]: nextPoint }))
     if (pendingShortcut) {
       const savedId = pendingShortcut
-      setSavedDestinations((current) => {
-        const next = { ...current, [savedId]: nextPoint }
-        try {
-          window.localStorage.setItem(SAVED_DESTINATIONS_KEY, JSON.stringify(next))
-        } catch {
-          // La destination reste utilisable en mémoire même si le stockage est indisponible.
-        }
-        return next
-      })
+      setSavedDestinations((current) => ({ ...current, [savedId]: nextPoint }))
     }
     setRouteAttempted(false)
     setJourney(IDLE_JOURNEY)
@@ -863,7 +904,8 @@ function App() {
           setRouteAttempted(false)
           setJourney(IDLE_JOURNEY)
           announce('Votre position a été choisie comme point de départ.')
-          if (routePoints.destination) void runJourneySearch(origin, routePoints.destination)
+          const destination = routePointsRef.current.destination
+          if (destination) void runJourneySearch(origin, destination)
         } else {
           announce(position.coords.accuracy > 100 ? 'Position approximative affichée sur la carte.' : 'Votre position est affichée sur la carte.')
         }
@@ -943,6 +985,7 @@ function App() {
   /** Lance le calcul pour deux points explicites. Partagé par le formulaire et
    *  par toutes les actions qui définissent un trajet d’un seul geste. */
   const runJourneySearch = useCallback(async (origin: MapPoint, destination: MapPoint) => {
+    const id = beginRequest('journey')
     setRouteAttempted(true)
     setJourney({ status: 'loading', search: null, error: null, errorCode: null })
 
@@ -963,6 +1006,8 @@ function App() {
     parameters.set('max_walk_m', String(ROUTE_MAX_WALK_M))
 
     const result = await fetchApi(`/api/journeys?${parameters.toString()}`)
+    // Un calcul plus ancien que le dernier ne doit ni afficher ni annoncer son résultat.
+    if (!isLatestRequest('journey', id)) return
     if (!result.ok) {
       if (shouldUseReferenceFallback(result)) {
         const referenceOutcome = planReferencePoints(origin, destination)
@@ -993,7 +1038,7 @@ function App() {
         ? `${found} course${found > 1 ? 's' : ''} directe${found > 1 ? 's' : ''} déclarée${found > 1 ? 's' : ''} trouvée${found > 1 ? 's' : ''}.`
         : 'Aucune course directe déclarée ne relie ces deux points. Aucun trajet indirect n’est proposé.',
     )
-  }, [])
+  }, [beginRequest, isLatestRequest])
 
   /** Un geste qui complète un trajet va jusqu’au calcul, sans s’arrêter au
    *  milieu : c’est la règle « aucun bouton mort ». */
@@ -1023,20 +1068,12 @@ function App() {
       announce('Indiquez la portion de route concernée pour publier un signalement.')
       return
     }
-    setStreetReports((current) => {
-      const next = [report, ...current]
-      writeStreetReports(safeLocalStorage(), next)
-      return next
-    })
+    setStreetReports((current) => [report, ...current])
     announce('Signalement publié sur cet appareil · visible 90 minutes · non vérifié.')
   }
 
   function deleteStreetReport(id: string) {
-    setStreetReports((current) => {
-      const next = removeStreetReport(current, id)
-      writeStreetReports(safeLocalStorage(), next)
-      return next
-    })
+    setStreetReports((current) => removeStreetReport(current, id))
   }
 
   // Les signalements périmés disparaissent d’eux-mêmes à chaque réveil de
@@ -1044,11 +1081,23 @@ function App() {
   useEffect(() => {
     setStreetReports((current) => {
       const next = current.filter((report) => !isReportExpired(report, countdownNow))
-      if (next.length === current.length) return current
-      writeStreetReports(safeLocalStorage(), next)
-      return next
+      return next.length === current.length ? current : next
     })
   }, [countdownNow])
+
+  // Persistance locale d’après l’état affiché : aucune écriture dans un
+  // calcul de mise à jour, et ce qui est affiché est ce qui est stocké.
+  useEffect(() => {
+    writeStreetReports(safeLocalStorage(), streetReports)
+  }, [streetReports])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SAVED_DESTINATIONS_KEY, JSON.stringify(savedDestinations))
+    } catch {
+      // La destination reste utilisable en mémoire même si le stockage est indisponible.
+    }
+  }, [savedDestinations])
 
   const visibleSources = exploreFilter === 'all'
     ? NETWORK_SOURCES
@@ -1058,6 +1107,11 @@ function App() {
   // démontée du DOM. Dans Explorer, elle occupe le tiers supérieur de l’écran.
   const mapVisible = activeTab === 'explore'
   const showStopCard = activeTab === 'explore' || activeTab === 'route'
+
+  // Rappels stables pour la carte mémorisée : un tic de l’horloge ne la redessine pas.
+  const stableMapPick = useStableCallback(handleMapPick)
+  const stableOpenStop = useStableCallback((stop: PublishedStop) => void openStop(stop))
+  const stableCorridorStop = useStableCallback(handleSelectCorridorStop)
 
   return (
     <main className={`app-shell tab-${activeTab} theme-${theme}${mapVisible ? '' : ' is-map-hidden'}`}>
@@ -1069,16 +1123,16 @@ function App() {
           pickingPoint={pickingPoint}
           recenterTo={recenterTo}
           zoomAction={zoomAction}
-          onChoosePoint={handleMapPick}
+          onChoosePoint={stableMapPick}
           publishedStops={mappablePublishedStops}
           selectedStopId={selectedStop?.stopId ?? null}
           coverage={dataAvailable ? network?.snapshot?.bounds ?? null : null}
           showCoverage={showCoverage}
-          onSelectStop={(stop) => void openStop(stop)}
+          onSelectStop={stableOpenStop}
           initialBounds={DAKAR_REGION_BOUNDS}
           corridorLines={visibleCorridorLines}
           corridorStops={visibleCorridorStops}
-          onSelectCorridorStop={handleSelectCorridorStop}
+          onSelectCorridorStop={stableCorridorStop}
         />
 
         <div className="map-heading-overlay">
@@ -1360,7 +1414,7 @@ function App() {
               type="button"
               className={`mobile-nav-item${activeTab === item.id ? ' active' : ''}`}
               aria-current={activeTab === item.id ? 'page' : undefined}
-              onClick={() => { setActiveTab(item.id); setPickingPoint(null); setPendingShortcut(null); setPickReturnTab(null) }}
+              onClick={() => { triggerHaptic(8); setActiveTab(item.id); setPickingPoint(null); setPendingShortcut(null); setPickReturnTab(null); setLayersOpen(false) }}
             >
               <span className="mobile-nav-icon"><Icon size={19} strokeWidth={1.9} />{item.id === 'alerts' && <i />}</span>
               <span>{item.label}</span>
@@ -1610,7 +1664,7 @@ function ReferenceNetworkSummary({
       <div className="network-summary-heading">
         <strong>Réseaux de référence</strong>
       </div>
-      <ul className="network-summary-list">
+      <ul className="network-summary-list" role="none">
         {networks.map((network, index) => {
           const passage = passages[index]
           const isSelected = selectedNetwork === network.id
@@ -1620,6 +1674,7 @@ function ReferenceNetworkSummary({
               key={network.id}
               data-network={network.id}
               className={`network-summary-item network-item-${network.id}${isSelected ? ' is-selected' : ''}`}
+              role="button"
               tabIndex={0}
               aria-expanded={isSelected}
               onClick={() => onSelectNetwork(network.id)}
@@ -1682,6 +1737,7 @@ function ReferenceFrequencyCards() {
             network.gieCount === null ? null : `${network.gieCount} GIE`,
           ].filter((value): value is string => value !== null)
           const sourceLabel = id === 'brt' ? 'CETUD / SunuBRT' : id === 'ter' ? 'TER / SETER' : 'CETUD'
+          const sourceHref = safeHttpUrl(network.source.sourceUrl)
           return (
             <article className={`network-reference-card reference-${id}`} key={id}>
               <header className="network-reference-card-head">
@@ -1705,7 +1761,7 @@ function ReferenceFrequencyCards() {
                 </ul>
               )}
               <p className="network-reference-source">
-                Source : <a href={network.source.sourceUrl} target="_blank" rel="noreferrer">{sourceLabel}</a>
+                Source : {sourceHref ? <a href={sourceHref} target="_blank" rel="noreferrer">{sourceLabel}</a> : sourceLabel}
                 {' · '}{formatSourceVerification(network.source)}
               </p>
               <p className="network-reference-validity">Validité calendaire : dates non précisées dans la référence locale.</p>
@@ -2095,7 +2151,7 @@ function StopCard({
   onUseAsOrigin: () => void
   onUseAsDestination: () => void
 }) {
-  const window = stop.scheduledWindow
+  const scheduled = stop.scheduledWindow
   return (
     <section className="stop-card" aria-label={`Arrêt ${stop.stopName}`}>
       <div className="stop-card-head">
@@ -2125,9 +2181,9 @@ function StopCard({
         <p className="stop-card-note">Aucune ligne ne dessert cet arrêt dans le snapshot publié.</p>
       )}
 
-      {window && (window.firstDeclaredDeparture || window.lastDeclaredDeparture) && (
+      {scheduled && (scheduled.firstDeclaredDeparture || scheduled.lastDeclaredDeparture) && (
         <p className="stop-card-note">
-          Heures théoriques déclarées : {window.firstDeclaredDeparture ?? '—'} → {window.lastDeclaredDeparture ?? '—'}. {window.note}
+          Heures théoriques déclarées : {scheduled.firstDeclaredDeparture ?? '—'} → {scheduled.lastDeclaredDeparture ?? '—'}. {scheduled.note}
         </p>
       )}
 
@@ -2290,12 +2346,12 @@ function DataCatalogSection({
 
       <div className="source-list-heading">
         <span>MOBILITÉS SUIVIES</span>
-        <span className="source-count">{layerState && Object.values(layerState).filter(Boolean).length} couches actives</span>
+        <span className="source-count">{Object.values(layerState ?? {}).filter(Boolean).length} couches actives</span>
       </div>
       <div className="layer-options settings-layer-options">
         {NETWORK_SOURCES.map((network) => (
           <label className="layer-option" key={network.id}>
-            <input type="checkbox" checked={layerState[network.id]} onChange={() => onToggleLayer(network.id)} />
+            <input type="checkbox" checked={Boolean(layerState?.[network.id])} onChange={() => onToggleLayer(network.id)} />
             <span className={`layer-icon layer-icon-${network.id}`}><NetworkIcon id={network.id} size={16} /></span>
             <span className="layer-label">{network.label}</span>
             <span className="layer-empty">
@@ -2644,6 +2700,17 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-09',
+      title: 'Audit de sécurité et fiabilité',
+      items: [
+        'Réseau : les requêtes lentes sont annulées au bout de 12 secondes et l’application signale l’indisponibilité au lieu de rester figée.',
+        'Sécurité : liens de source limités aux adresses http(s), coordonnées sauvegardées validées, en-têtes de sécurité et politique de contenu au déploiement.',
+        'Horaires : « service en cours » tient compte du jour courant, et non du jour recherché.',
+        'Trajet : le résultat affiché correspond toujours aux points choisis ; une recherche plus récente remplace une recherche encore en cours.',
+        'Accessibilité : listes et champs de recherche annoncés correctement aux lecteurs d’écran ; une erreur inattendue affiche un message de reprise.',
+      ],
+    },
     {
       date: '2026-10-09',
       title: 'Refonte UI/UX Ultra-Premium, pastilles compactes et mode sombre',

@@ -27,7 +27,7 @@ import argparse
 import hmac
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -112,6 +112,15 @@ AdminApiError = ApiError
 
 CSRF_HEADER = "X-Dakar-CSRF"
 MAX_BODY_BYTES = 256 * 1024
+# Un secret de compte ne dépasse jamais quelques dizaines de caractères : au-delà,
+# on refuse avant le calcul scrypt (protection contre un déni de service).
+MAX_SECRET_CHARS = 1024
+# Délai de lecture d'une connexion : évite qu'un client lent immobilise un thread.
+HANDLER_TIMEOUT_SECONDS = 15
+# Seuls ces noms d'hôte (plus ceux passés à --allowed-host) sont acceptés dans l'en-tête Host.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+# Politique appliquée à toutes les réponses JSON de l'API : aucune ressource chargeable.
+API_CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
 DATASET_ACTION_RE = re.compile(
     rf"^{re.escape(API_PREFIX)}/datasets/(?P<dataset_id>[^/]+)/(?P<action>decision|revert|publication)$"
 )
@@ -175,6 +184,24 @@ UNPROCESSABLE_CODES = {
     "INVALID_TIMESTAMP",
     "WEAK_SECRET",
 }
+
+
+def _host_name(value: str) -> str:
+    """Nom d'hôte seul, sans port, en minuscules (gère « [::1]:8787 »)."""
+    candidate = value.strip().lower()
+    if candidate.startswith("["):
+        return candidate[1:candidate.find("]")] if "]" in candidate else ""
+    if candidate.count(":") == 1:
+        return candidate.split(":", 1)[0]
+    return candidate
+
+
+def host_allowed(host_header: str | None, extra_hosts: Iterable[str] = ()) -> bool:
+    """Protège contre le « DNS rebinding » : seul l'hôte de la console est accepté."""
+    name = _host_name(host_header or "")
+    if not name:
+        return False
+    return name in LOOPBACK_HOSTS or name in {_host_name(host) for host in extra_hosts}
 
 
 def _known_routes() -> str:
@@ -344,6 +371,7 @@ def dataset_loader(root: Path, dataset_id: str) -> Callable[[], dict[str, Any]]:
 def make_router(root: Path, published_root: Path) -> dict[str, Callable[[], dict[str, Any]]]:
     """Exact-match governance routes; identifiers are validated before touching disk."""
     return {
+        # Seuls les noms des dossiers sont publiés, jamais leur chemin absolu sur la machine.
         "/healthz": lambda: {
             "status": "ok",
             "service": "dakar-bus-admin-api",
@@ -351,8 +379,8 @@ def make_router(root: Path, published_root: Path) -> dict[str, Callable[[], dict
             "read_only_public_data": True,
             "decisions": "compte local authentifié (session console ou jeton CLI)",
             "authentication": "sessions en mémoire + jeton Bearer pour le CLI ; aucune décision anonyme",
-            "governance_root": str(root),
-            "published_root": str(published_root),
+            "governance_root": Path(root).name,
+            "published_root": Path(published_root).name,
         },
         f"{API_PREFIX}/pipeline": lambda: pipeline_summary(root, published_root=published_root),
         f"{API_PREFIX}/catalog": lambda: catalog_payload(root, published_root=published_root),
@@ -368,25 +396,50 @@ def _cookie_value(header: str | None, name: str) -> str | None:
     return None
 
 
-def session_cookie(session: Session, *, ttl_seconds: int) -> str:
-    """`HttpOnly` + `SameSite=Strict` + `Path=/api`: the browser cannot read it back to JS."""
-    return (
-        f"{SESSION_COOKIE}={session.session_id}; Path={API_PREFIX}; HttpOnly; "
-        f"SameSite=Strict; Max-Age={int(ttl_seconds)}"
-    )
+def session_cookie(session: Session, *, ttl_seconds: int, secure: bool = False) -> str:
+    """`HttpOnly` + `SameSite=Strict` + `Path=/api`: the browser cannot read it back to JS.
+
+    `Secure` is added when the console is reached over HTTPS, so the cookie never travels in clear.
+    """
+    attributes = f"{SESSION_COOKIE}={session.session_id}; Path={API_PREFIX}; HttpOnly; SameSite=Strict; Max-Age={int(ttl_seconds)}"
+    return f"{attributes}; Secure" if secure else attributes
 
 
-def cleared_session_cookie() -> str:
-    return f"{SESSION_COOKIE}=; Path={API_PREFIX}; HttpOnly; SameSite=Strict; Max-Age=0"
+def cleared_session_cookie(*, secure: bool = False) -> str:
+    attributes = f"{SESSION_COOKIE}=; Path={API_PREFIX}; HttpOnly; SameSite=Strict; Max-Age=0"
+    return f"{attributes}; Secure" if secure else attributes
 
 
 class AdminApiHandler(BaseHTTPRequestHandler):
     server_version = "DakarBusAdminApi/2.0"
+    # Délai par connexion (secondes) : un client lent ne bloque pas le serveur.
+    timeout = HANDLER_TIMEOUT_SECONDS
     root: Path
     published_root: Path
     actors_root: Path
     sessions: SessionStore
     base_router: dict[str, Callable[[], dict[str, Any]]]
+    allowed_hosts: tuple[str, ...] = ()
+
+    def parse_request(self) -> bool:
+        """Refuse toute requête dont l'en-tête Host n'est pas celui de la console."""
+        if not super().parse_request():
+            return False
+        if host_allowed(self.headers.get("Host"), self.allowed_hosts):
+            return True
+        self.close_connection = True
+        self._send(
+            421,
+            {
+                "error": "HOST_REFUSED",
+                "message": "En-tête Host non autorisé : la console n’accepte que son propre hôte (boucle locale ou --allowed-host).",
+            },
+        )
+        return False
+
+    def _is_secure_context(self) -> bool:
+        """Vrai quand le navigateur est en HTTPS (son en-tête Origin le dit)."""
+        return (self.headers.get("Origin") or "").lower().startswith("https://")
 
     # ------------------------------------------------------------------ read #
 
@@ -404,6 +457,8 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", API_CONTENT_SECURITY_POLICY)
         for cookie in cookies or []:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
@@ -445,9 +500,15 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         except ApiError as error:
             self._send_refusal(error)
         except ValueError as error:
+            # Le détail reste dans le journal serveur ; le navigateur ne reçoit qu'un message générique.
+            self.log_error("catalogue indisponible : %s", error)
             self._send(
                 500,
-                {"error": "CATALOG_UNAVAILABLE", "message": str(error), "publication_status": self._publication_status()},
+                {
+                    "error": "CATALOG_UNAVAILABLE",
+                    "message": "Le catalogue local est indisponible. Consultez le journal du serveur.",
+                    "publication_status": self._publication_status(),
+                },
             )
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
@@ -473,9 +534,6 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         )
 
     def _read_json(self) -> dict[str, Any]:
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type and content_type != "application/json":
-            raise ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Le corps de la requête doit être du JSON (application/json).")
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError as error:
@@ -484,6 +542,10 @@ class AdminApiHandler(BaseHTTPRequestHandler):
             raise ApiError(413, "REQUEST_TOO_LARGE", f"Corps de requête trop volumineux (maximum {MAX_BODY_BYTES} octets).")
         if length == 0:
             return {}
+        # Type exigé dès qu'il y a un corps : un formulaire ou un texte brut ne passe pas.
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            raise ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Le corps de la requête doit être du JSON (application/json).")
         raw = self.rfile.read(length)
         try:
             payload = json.loads(raw.decode("utf-8"))
@@ -525,8 +587,8 @@ class AdminApiHandler(BaseHTTPRequestHandler):
             "realtime": False,
         }
 
-    def _csrf_proof(self, session: Session) -> None:
-        """A write must carry the session's CSRF token and come from this origin."""
+    def _refuse_foreign_origin(self) -> None:
+        """Une requête issue d'une autre origine (page tierce) n'est jamais acceptée."""
         origin = self.headers.get("Origin")
         if origin:
             host = (self.headers.get("Host") or "").strip()
@@ -536,6 +598,10 @@ class AdminApiHandler(BaseHTTPRequestHandler):
                     "CROSS_ORIGIN_REFUSED",
                     f"Écriture refusée : origine « {origin} » différente de l’hôte « {host} ».",
                 )
+
+    def _csrf_proof(self, session: Session) -> None:
+        """A write must carry the session's CSRF token and come from this origin."""
+        self._refuse_foreign_origin()
         supplied = self.headers.get(CSRF_HEADER) or ""
         if not supplied:
             raise refusal(
@@ -572,11 +638,14 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         return session
 
     def _login(self) -> dict[str, Any]:
+        self._refuse_foreign_origin()
         payload = self._read_json()
         actor_id = str(payload.get("actor_id") or "").strip().casefold()
         secret = payload.get("secret")
         if not actor_id or not isinstance(secret, str) or not secret:
             raise ApiError(400, "INVALID_REQUEST", "Identifiant et secret sont exigés pour ouvrir une session.")
+        if len(secret) > MAX_SECRET_CHARS:
+            raise ApiError(400, "INVALID_REQUEST", f"Le secret ne peut pas dépasser {MAX_SECRET_CHARS} caractères.")
         if self.sessions.failures(actor_id) >= MAX_LOGIN_FAILURES:
             raise refusal(
                 "TOO_MANY_ATTEMPTS",
@@ -613,7 +682,7 @@ class AdminApiHandler(BaseHTTPRequestHandler):
                 "method": "console-session",
                 "secret_stored": "hash scrypt uniquement (aucun secret en clair sur le disque)",
             },
-            cookies=[session_cookie(session, ttl_seconds=self.sessions.ttl_seconds)],
+            cookies=[session_cookie(session, ttl_seconds=self.sessions.ttl_seconds, secure=self._is_secure_context())],
         )
         return {}
 
@@ -629,7 +698,7 @@ class AdminApiHandler(BaseHTTPRequestHandler):
                 "message": "Session fermée ; le cookie a été effacé.",
                 "realtime": False,
             },
-            cookies=[cleared_session_cookie()],
+            cookies=[cleared_session_cookie(secure=self._is_secure_context())],
         )
         return {}
 
@@ -799,9 +868,14 @@ class AdminApiHandler(BaseHTTPRequestHandler):
         except (ReviewError, PublicationError, LedgerLockTimeout, SnapshotError, ActorError) as error:
             self._send_refusal(refusal(error.code, error.message, getattr(error, "blockers", [])))
         except ValueError as error:
+            self.log_error("gouvernance indisponible : %s", error)
             self._send(
                 500,
-                {"error": "GOVERNANCE_UNAVAILABLE", "message": str(error), "publication_status": self._publication_status()},
+                {
+                    "error": "GOVERNANCE_UNAVAILABLE",
+                    "message": "La gouvernance locale est indisponible. Consultez le journal du serveur.",
+                    "publication_status": self._publication_status(),
+                },
             )
 
     do_POST = _handle_write  # noqa: N815 - http.server API
@@ -827,6 +901,7 @@ def create_server(
     published_root: str | Path | None = None,
     actors_root: str | Path | None = None,
     session_ttl_seconds: int = SESSION_TTL_SECONDS,
+    allowed_hosts: Iterable[str] = (),
     quiet: bool = False,
 ) -> ThreadingHTTPServer:
     resolved_root = Path(root)
@@ -841,6 +916,7 @@ def create_server(
             "actors_root": resolved_actors,
             "sessions": SessionStore(ttl_seconds=session_ttl_seconds),
             "base_router": make_router(resolved_root, resolved_published),
+            "allowed_hosts": tuple(allowed_hosts),
         },
     )
     server = ThreadingHTTPServer((host, port), handler_class)
@@ -872,6 +948,13 @@ def main() -> int:
         default=SESSION_TTL_SECONDS,
         help="Durée de vie d’une session console, en secondes (300 à 86400)",
     )
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="HOTE",
+        help="Nom d’hôte supplémentaire accepté dans l’en-tête Host (répétable ; la boucle locale est toujours acceptée)",
+    )
     parser.add_argument("--quiet", action="store_true", help="Ne pas journaliser les requêtes")
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
@@ -886,6 +969,7 @@ def main() -> int:
         published_root=args.published_root,
         actors_root=args.actors_root,
         session_ttl_seconds=args.session_ttl,
+        allowed_hosts=args.allowed_host,
         quiet=args.quiet,
     )
     bound_host, bound_port = server.server_address[0], server.server_address[1]

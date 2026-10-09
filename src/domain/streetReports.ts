@@ -13,7 +13,7 @@
  * provenance « COMMUNITY » est affichée partout où ils apparaissent.
  */
 
-import type { NetworkId } from './network'
+import { NETWORK_SOURCES, type NetworkId } from './network'
 
 export type StreetReportKind = 'CONGESTION' | 'INCIDENT' | 'ROADWORK' | 'BLOCKED' | 'OTHER'
 
@@ -75,6 +75,11 @@ function isKind(value: unknown): value is StreetReportKind {
 
 function finiteCoordinate(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** Seul un réseau connu de l’application peut être rattaché à un signalement. */
+function isNetworkId(value: unknown): value is NetworkId {
+  return typeof value === 'string' && NETWORK_SOURCES.some((network) => network.id === value)
 }
 
 function isIsoInstant(value: unknown): value is string {
@@ -145,7 +150,7 @@ export function parseStreetReport(value: unknown): StreetReport | null {
     id: raw.id,
     kind: raw.kind,
     place,
-    networkId: typeof raw.networkId === 'string' ? (raw.networkId as NetworkId) : null,
+    networkId: isNetworkId(raw.networkId) ? raw.networkId : null,
     comment: cleanText(raw.comment, MAX_COMMENT_LENGTH),
     // Une position n'est conservée que si les deux composantes sont exploitables.
     lat: lat !== null && lng !== null ? lat : null,

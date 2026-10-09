@@ -7,6 +7,7 @@
  * repeats what the server said rather than inventing a friendlier story.
  */
 
+import { API_TIMEOUT_MS } from './http'
 import { REQUIRED_ATTESTATIONS } from './review'
 
 export type Role = 'reviewer' | 'publisher'
@@ -143,8 +144,17 @@ async function requestJson(
   path: string,
   init: RequestInit,
 ): Promise<ApiOutcome<unknown>> {
+  // Une lecture bloquée ne fige pas la console. Une écriture (décision, publication)
+  // n’est jamais annulée côté client : le serveur peut l’avoir déjà enregistrée.
+  const isRead = !init.method || init.method === 'GET'
+  const controller = isRead ? new AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), API_TIMEOUT_MS) : null
   try {
-    const response = await fetcher(path, { credentials: 'same-origin', ...init })
+    const response = await fetcher(path, {
+      credentials: 'same-origin',
+      ...init,
+      ...(controller ? { signal: controller.signal } : {}),
+    })
     if (!response.ok) return readRefusal(response)
     try {
       return { ok: true, value: await response.json() }
@@ -159,6 +169,8 @@ async function requestJson(
     }
   } catch {
     return networkRefusal()
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

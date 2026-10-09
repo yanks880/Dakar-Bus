@@ -32,6 +32,7 @@ import re
 import secrets
 import stat
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -561,11 +562,21 @@ class Session:
 
 
 class SessionStore:
-    """Sessions live in memory: a restart ends them, nothing is written to disk."""
+    """Sessions live in memory: a restart ends them, nothing is written to disk.
+
+    The server is multi-threaded (one thread per connection): every access goes
+    through one re-entrant lock so that a purge never races a login or a read.
+    """
+
+    # Fenêtre de comptage des échecs de connexion, en secondes.
+    FAILURE_WINDOW_SECONDS = 300
+    # Au-delà, les comptes qui n'ont plus d'échec récent sont oubliés (borne la mémoire).
+    MAX_TRACKED_ACTORS = 10_000
 
     def __init__(self, *, ttl_seconds: int = SESSION_TTL_SECONDS) -> None:
         self._sessions: dict[str, Session] = {}
         self._failures: dict[str, list[float]] = {}
+        self._lock = threading.RLock()
         self.ttl_seconds = ttl_seconds
 
     def _purge(self, now: datetime) -> None:
@@ -573,57 +584,80 @@ class SessionStore:
             if session.expires_at <= now:
                 del self._sessions[session_id]
 
+    def _prune_failures(self, now_timestamp: float) -> None:
+        """Retire les comptes sans échec récent ; si la table reste trop grande, la vide des plus anciens."""
+        window_start = now_timestamp - self.FAILURE_WINDOW_SECONDS
+        for actor_id in list(self._failures):
+            recent = [attempt for attempt in self._failures[actor_id] if attempt >= window_start]
+            if recent:
+                self._failures[actor_id] = recent
+            else:
+                del self._failures[actor_id]
+        if len(self._failures) > self.MAX_TRACKED_ACTORS:
+            oldest = sorted(self._failures, key=lambda actor: max(self._failures[actor]))
+            for actor_id in oldest[: len(self._failures) - self.MAX_TRACKED_ACTORS]:
+                del self._failures[actor_id]
+
     def open(self, actor_id: str, role: str, *, now: datetime | None = None) -> Session:
         current_time = _now(now)
-        self._purge(current_time)
-        session = Session(
-            session_id=secrets.token_urlsafe(32),
-            actor_id=actor_id,
-            role=role,
-            created_at=current_time,
-            expires_at=current_time + timedelta(seconds=self.ttl_seconds),
-            csrf_token=secrets.token_urlsafe(24),
-        )
-        self._sessions[session.session_id] = session
-        return session
+        with self._lock:
+            self._purge(current_time)
+            session = Session(
+                session_id=secrets.token_urlsafe(32),
+                actor_id=actor_id,
+                role=role,
+                created_at=current_time,
+                expires_at=current_time + timedelta(seconds=self.ttl_seconds),
+                csrf_token=secrets.token_urlsafe(24),
+            )
+            self._sessions[session.session_id] = session
+            return session
 
     def get(self, session_id: str | None, *, now: datetime | None = None) -> Session | None:
         if not session_id:
             return None
         current_time = _now(now)
-        self._purge(current_time)
-        return self._sessions.get(session_id)
+        with self._lock:
+            self._purge(current_time)
+            return self._sessions.get(session_id)
 
     def close(self, session_id: str | None) -> bool:
         if not session_id:
             return False
-        return self._sessions.pop(session_id, None) is not None
+        with self._lock:
+            return self._sessions.pop(session_id, None) is not None
 
     def close_for_actor(self, actor_id: str) -> int:
-        doomed = [session_id for session_id, session in self._sessions.items() if session.actor_id == actor_id]
-        for session_id in doomed:
-            del self._sessions[session_id]
-        return len(doomed)
+        with self._lock:
+            doomed = [session_id for session_id, session in self._sessions.items() if session.actor_id == actor_id]
+            for session_id in doomed:
+                del self._sessions[session_id]
+            return len(doomed)
 
     def count(self) -> int:
-        return len(self._sessions)
+        with self._lock:
+            return len(self._sessions)
 
     # A small brake against online guessing, per account.
     def register_failure(self, actor_id: str, *, now: datetime | None = None) -> int:
         current_time = _now(now)
-        window_start = current_time.timestamp() - 300
-        attempts = [attempt for attempt in self._failures.get(actor_id, []) if attempt >= window_start]
-        attempts.append(current_time.timestamp())
-        self._failures[actor_id] = attempts
-        return len(attempts)
+        with self._lock:
+            self._prune_failures(current_time.timestamp())
+            window_start = current_time.timestamp() - self.FAILURE_WINDOW_SECONDS
+            attempts = [attempt for attempt in self._failures.get(actor_id, []) if attempt >= window_start]
+            attempts.append(current_time.timestamp())
+            self._failures[actor_id] = attempts
+            return len(attempts)
 
     def failures(self, actor_id: str, *, now: datetime | None = None) -> int:
         current_time = _now(now)
-        window_start = current_time.timestamp() - 300
-        return len([attempt for attempt in self._failures.get(actor_id, []) if attempt >= window_start])
+        window_start = current_time.timestamp() - self.FAILURE_WINDOW_SECONDS
+        with self._lock:
+            return len([attempt for attempt in self._failures.get(actor_id, []) if attempt >= window_start])
 
     def clear_failures(self, actor_id: str) -> None:
-        self._failures.pop(actor_id, None)
+        with self._lock:
+            self._failures.pop(actor_id, None)
 
 
 MAX_LOGIN_FAILURES = 8

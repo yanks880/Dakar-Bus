@@ -98,6 +98,12 @@ describe('validation des signalements lus', () => {
     expect(parsed?.lng).toBeNull()
   })
 
+  it('ne garde qu’un réseau connu de l’application', () => {
+    expect(parseStreetReport({ ...report(), id: 'a', networkId: 'ddd' })?.networkId).toBe('ddd')
+    expect(parseStreetReport({ ...report(), id: 'b', networkId: '<img src=x>' })?.networkId).toBeNull()
+    expect(parseStreetReport({ ...report(), id: 'c', networkId: 42 })?.networkId).toBeNull()
+  })
+
   it('trie du plus récent au plus ancien', () => {
     const older = report({ id: 'a', createdAt: new Date(NOW - 60_000).toISOString() })
     const newer = report({ id: 'b', createdAt: new Date(NOW).toISOString() })

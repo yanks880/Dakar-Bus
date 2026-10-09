@@ -146,9 +146,12 @@ export function nextReferencePassage(
 
     if (!best) continue
 
+    // « Le service est en cours » se mesure aujourd’hui, avec le calendrier
+    // d’aujourd’hui : le jour du créneau trouvé peut être un autre jour.
+    const todayWeekday = new Date(todayStart).getUTCDay()
     const runningNow = usable.some(
       (frequency) =>
-        servesWeekday(frequency, weekday) &&
+        servesWeekday(frequency, todayWeekday) &&
         windowStart(todayStart, frequency) <= now &&
         now < windowEnd(todayStart, frequency),
     )
