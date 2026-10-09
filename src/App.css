@@ -1062,9 +1062,11 @@ button:disabled { cursor: not-allowed; }
   width: min(100%, 900px);
   min-height: 0;
   flex-direction: column;
-  gap: 8px;
+  /* Recherche, destinations et réseaux au plus près : la place gagnée va
+     aux horaires, jamais à l'espace vide. */
+  gap: 5px;
   margin: 0 auto;
-  padding: 10px 20px 14px;
+  padding: 8px 20px 11px;
 }
 .explore-guide-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .explore-guide-heading h2 { margin: 2px 0 0; color: var(--text); font-family: Manrope, sans-serif; font-size: 21px; font-weight: 800; letter-spacing: -.035em; line-height: 1.15; }
@@ -1097,7 +1099,7 @@ button:disabled { cursor: not-allowed; }
 .explore-stop-distance { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
 .explore-nearby > p { margin: 0; color: var(--guide-copy); font-size: 12.5px; }
 /* Proximité fluide entre la recherche, les pastilles de destination et la liste des réseaux. */
-.network-summary-section { display: grid; margin-top: 2px; gap: 5px; }
+.network-summary-section { display: grid; margin-top: 0; gap: 4px; }
 .network-summary-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .network-summary-heading strong { color: var(--text); font-family: Manrope, sans-serif; font-size: 13.5px; font-weight: 800; letter-spacing: -.01em; }
 .network-summary-list { display: grid; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--surface-card); list-style: none; }
@@ -1132,14 +1134,14 @@ button:disabled { cursor: not-allowed; }
 .network-reference-source, .network-reference-validity { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .network-reference-source a { color: var(--green-800); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .network-reference-validity { color: var(--muted); }
-.destination-shortcuts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding-top: 0; }
-.destination-shortcuts-title { flex: 0 0 auto; color: var(--muted); font-size: 10.5px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.destination-shortcuts { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 7px; padding-top: 0; }
+.destination-shortcuts-title { flex: 0 0 auto; color: var(--muted); font-size: 9.5px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
 .destination-shortcuts-row {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -1150,18 +1152,18 @@ button:disabled { cursor: not-allowed; }
   display: inline-flex;
   flex: 0 0 auto;
   min-width: 0;
-  min-height: 30px;
+  min-height: 25px;
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
+  padding: 0 8px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   background: var(--surface-card);
   color: var(--text);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 650;
-  gap: 5px;
+  gap: 4px;
   white-space: nowrap;
   transition: background .18s cubic-bezier(.22, 1, .36, 1), border-color .18s ease, transform .16s cubic-bezier(.22, 1, .36, 1), box-shadow .18s ease;
 }
@@ -1295,18 +1297,18 @@ button:disabled { cursor: not-allowed; }
   .app-shell.tab-explore .map-attribution-note { bottom: 5px; left: 12px; font-size: 10px; }
   .app-shell.tab-explore .assistant-widget { bottom: 12px; left: 12px; }
   .app-shell.tab-explore .assistant-panel { max-height: 44vh; }
-  .explore-guide-panel { gap: 6px; padding: 8px 14px 12px !important; }
+  .explore-guide-panel { gap: 4px; padding: 6px 14px 9px !important; }
   .explore-guide-heading h2 { font-size: 19px; }
   .explore-locate { min-height: 32px; padding: 0 10px; font-size: 12px; }
   .explore-search-form { height: 42px; border-radius: 12px; }
   .explore-search-form input { font-size: 14px; }
   .explore-guide-hint, .explore-data-note, .explore-nearby-message { font-size: 11.5px; }
-  .destination-shortcuts { gap: 5px 7px; padding-top: 0; }
-  .destination-shortcuts-title { font-size: 10px; }
-  .destination-shortcuts-row { gap: 5px; }
-  .destination-shortcut { min-height: 28px; padding: 0 9px; font-size: 11.5px; gap: 4px; }
-  .destination-shortcut > svg:first-child { width: 13px; }
-  .destination-shortcut > svg:last-child { width: 11px; }
+  .destination-shortcuts { gap: 4px 6px; padding-top: 0; }
+  .destination-shortcuts-title { font-size: 9px; }
+  .destination-shortcuts-row { gap: 4px; }
+  .destination-shortcut { min-height: 24px; padding: 0 7px; font-size: 10.5px; gap: 4px; }
+  .destination-shortcut > svg:first-child { width: 11px; }
+  .destination-shortcut > svg:last-child { width: 10px; }
   .mobile-nav { height: 66px; }
   .mobile-nav-item { font-size: 11px; }
   .point-picker > span { font-size: 14px; }
@@ -1320,8 +1322,8 @@ button:disabled { cursor: not-allowed; }
 }
 
 @media (max-width: 380px) {
-  .destination-shortcut { padding: 0 8px; font-size: 11px; gap: 4px; }
-  .destination-shortcuts-row { gap: 4px; }
+  .destination-shortcut { padding: 0 6px; font-size: 10px; gap: 3px; }
+  .destination-shortcuts-row { gap: 3px; }
 }
 
 /* --- Pastilles d'icônes : un seul vert, un seul anneau --------------------
@@ -1425,6 +1427,111 @@ button:disabled { cursor: not-allowed; }
 }
 @media (prefers-reduced-motion: reduce) {
   .network-summary-dot.is-counting { animation: none; }
+  .station-board { animation: none; }
+}
+
+/* =========================================================================
+   Tableau des créneaux par station et par sens (réseaux de référence)
+   Le bloc de décompte (« 5 min / créneau 08:10 ») reste celui du résumé :
+   mêmes classes, même design. Seule la disposition change (station + 2 sens).
+   ========================================================================= */
+.station-board-detail { display: grid; gap: 7px; }
+.station-board-context { color: var(--muted); }
+.station-board {
+  display: grid;
+  gap: 5px;
+  padding: 8px 8px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: var(--surface-sunken);
+  animation: network-detail-reveal .22s cubic-bezier(.22, 1, .36, 1);
+}
+.station-board-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 2px 10px; }
+.station-board-head strong {
+  color: var(--text);
+  font-family: Manrope, 'DM Sans', sans-serif;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+.station-board-head small { color: var(--muted); font-size: 9px; font-weight: 650; white-space: nowrap; }
+.station-board-columns,
+.station-board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(78px, auto));
+  align-items: center;
+  gap: 4px 10px;
+}
+.station-board-columns { padding: 0 8px; }
+.station-board-columns span {
+  overflow: hidden;
+  color: var(--green-700);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-align: right;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.station-board-columns span:first-child { color: var(--muted); text-align: left; }
+.station-board-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.station-board-list > li { display: grid; }
+.station-board-row {
+  width: 100%;
+  min-height: 38px;
+  padding: 4px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background-color .16s ease, transform .14s cubic-bezier(.22, 1, .36, 1);
+}
+.station-board-list > li:last-child .station-board-row { border-bottom: 0; }
+.station-board-row:hover { background: var(--surface-card); }
+.station-board-row:active { transform: scale(.99); }
+.station-board-stop {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.station-board-passage > small { white-space: nowrap; }
+.station-board-footnote {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 8.5px;
+  line-height: 1.5;
+}
+.station-board-pending { margin: 0; color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1.55; }
+
+/* Tableau par station : le nom prend sa propre ligne quand la largeur se
+   resserre (téléphones, panneau étroit) et les deux sens se partagent la
+   largeur restante — aucun tronquage, et le format des créneaux reste
+   exactement celui du résumé. Une requête de conteneur suit la largeur
+   réelle du tableau, quel que soit l’écran. */
+.station-board { container-type: inline-size; }
+@container (max-width: 440px) {
+  .station-board-columns,
+  .station-board-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 8px;
+  }
+  .station-board-columns span { text-align: center; }
+  .station-board-columns span:first-child { display: none; }
+  .station-board-stop {
+    grid-column: 1 / -1;
+    font-size: 11.5px;
+    white-space: normal;
+  }
+  .station-board-passage { justify-items: center; text-align: center; }
 }
 
 /* =========================================================================
@@ -1553,6 +1660,10 @@ button:disabled { cursor: not-allowed; }
   .street-position-toggle { min-height: 40px; font-size: 12.5px; }
   .network-summary-passage > strong { font-size: 15px; }
   .network-summary-passage > small { font-size: 10px; }
+  .station-board { padding: 7px 7px 8px; gap: 4px; }
+  .station-board-row { min-height: 40px; }
+  .station-board-stop { font-size: 12.5px; }
+  .station-board-footnote { font-size: 9px; }
   .point-search-input { height: 30px; font-size: 15px; }
   .combobox-picked-label { font-size: 15px; }
 }
@@ -1593,6 +1704,8 @@ button:disabled { cursor: not-allowed; }
 .sidebar,
 .panel-content,
 .network-summary-list,
+.station-board,
+.station-board-row,
 .destination-shortcut,
 .search-form,
 .mobile-nav,

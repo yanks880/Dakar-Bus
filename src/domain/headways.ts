@@ -116,14 +116,21 @@ function noteFor(status: PassageStatus, clockLabel: string, headwayMinutes: numb
  * Prochain créneau théorique d'un réseau, calculé depuis ses fréquences
  * officielles déclarées. Renvoie `null` lorsqu'aucune fréquence exploitable
  * n'est déclarée : dans ce cas rien n'est affiché, aucune attente n'est estimée.
+ *
+ * `offsetMinutes` projette le créneau à distance de l'origine de la grille :
+ * la grille reste celle déclarée au terminus (fenêtre de service, intervalle,
+ * jours), mais le créneau affiché est celui du passage estimé à cette station
+ * (départ du terminus + temps de parcours de référence). Sans décalage, le
+ * créneau est celui de l'origine de la grille — comportement historique.
  */
 export function nextReferencePassage(
   frequencies: readonly OfficialFrequency[],
   now = Date.now(),
+  offsetMinutes = 0,
 ): NextPassage | null {
   const usable = frequencies.filter(isUsable)
   if (usable.length === 0) return null
-
+  const offsetMs = Math.max(0, offsetMinutes) * MINUTE_MS
   const todayStart = startOfDakarDay(now)
 
   for (let offset = 0; offset < SEARCH_DAYS; offset += 1) {
@@ -137,11 +144,15 @@ export function nextReferencePassage(
       const end = windowEnd(dayStart, frequency)
       if (end <= start) continue
       const step = frequency.headwayMinutes * MINUTE_MS
-      const elapsed = now - start
+      // Le créneau recherché est le premier dont le passage projeté à la
+      // station (départ du terminus + parcours) est encore à venir.
+      const elapsed = now - offsetMs - start
       let slot = start + Math.max(0, Math.ceil(elapsed / step)) * step
-      if (slot <= now) slot += step
+      if (slot + offsetMs <= now) slot += step
+      // La fenêtre de service s'apprécie au terminus, origine de la grille.
       if (slot >= end) continue
-      if (!best || slot < best.at) best = { at: slot, frequency }
+      const projected = slot + offsetMs
+      if (!best || projected < best.at) best = { at: projected, frequency }
     }
 
     if (!best) continue

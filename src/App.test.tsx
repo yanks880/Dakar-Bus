@@ -963,6 +963,92 @@ describe('décomptes dynamiques de l’Explorer', () => {
     expect(terItem.classList.contains('is-selected')).toBe(false)
   })
 
+  it('décline les créneaux TER station par station et sens par sens', async () => {
+    vi.useFakeTimers()
+    // Jeudi 8 octobre 2026, 12:00 UTC : grille TER de 10 min en service.
+    vi.setSystemTime(new Date('2026-10-08T12:00:00.000Z'))
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+
+    fireEvent.click(container.querySelector('.network-item-ter')!)
+
+    const board = container.querySelector('.station-board') as HTMLElement
+    expect(board).toBeTruthy()
+    // Les 13 gares du TER, de Dakar à Diamniadio.
+    expect(board.querySelectorAll('.station-board-row')).toHaveLength(13)
+    expect(within(board).getByText('Colobane')).toBeTruthy()
+    expect(within(board).getByText('Dalifort')).toBeTruthy()
+
+    // Les deux sens sont affichés distinctement, avec leurs terminus.
+    expect(within(board).getByText('Aller → Diamniadio')).toBeTruthy()
+    expect(within(board).getByText('Retour → Dakar')).toBeTruthy()
+
+    // Une gare intermédiaire : un créneau par sens, au format exact du résumé.
+    const rows = [...board.querySelectorAll('.station-board-row')]
+    const colobane = rows.find((row) => row.textContent!.includes('Colobane'))!
+    expect(colobane.querySelectorAll('.station-board-passage:not(.is-undeclared)')).toHaveLength(2)
+    expect(colobane.textContent).toMatch(/créneau 12:03 · 10 min/)
+    expect(colobane.textContent).toMatch(/créneau 12:04 · 10 min/)
+
+    // Aux terminus, aucun départ dans le sens impossible : c'est dit, pas inventé.
+    expect(rows[0].textContent).toMatch(/Terminus/)
+    expect(rows[rows.length - 1].textContent).toMatch(/Terminus/)
+
+    // Toucher une station la recentre sur la carte sans replier le tableau.
+    fireEvent.click(within(board).getByText('Colobane'))
+    expect(container.querySelector('.network-item-ter')!.classList.contains('is-selected')).toBe(true)
+    expect(container.querySelectorAll('.station-board-row')).toHaveLength(13)
+
+    // Les créneaux par station descendent au même rythme que les réseaux.
+    // (Avancement par pas : chaque tic réarme le suivant après le rendu.)
+    const colobaneTimes = () => [...colobane.querySelectorAll('.station-board-passage > strong')].map((node) => node.textContent)
+    expect(colobaneTimes()).toEqual(['4 min', '5 min'])
+    for (let step = 0; step < 20; step += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000)
+      })
+    }
+    expect(colobaneTimes()).toEqual(['3 min', '4 min'])
+    vi.useRealTimers()
+  })
+
+  it('affiche les 23 stations du BRT dans les deux sens, de Petersen à Guédiawaye', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-08T12:00:00.000Z'))
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+
+    fireEvent.click(container.querySelector('.network-item-brt')!)
+
+    const board = container.querySelector('.station-board') as HTMLElement
+    expect(board).toBeTruthy()
+    expect(board.querySelectorAll('.station-board-row')).toHaveLength(23)
+    expect(within(board).getByText('Aller → Guédiawaye')).toBeTruthy()
+    expect(within(board).getByText('Retour → Petersen')).toBeTruthy()
+
+    // Une station intermédiaire (près de Colobane) : deux créneaux au format du résumé.
+    const placeNation = [...board.querySelectorAll('.station-board-row')].find((row) => row.textContent!.includes('Place de la Nation'))!
+    expect(placeNation.querySelectorAll('.station-board-passage:not(.is-undeclared)')).toHaveLength(2)
+    expect(placeNation.textContent).toMatch(/créneau \d{2}:\d{2} · 6 min/)
+    vi.useRealTimers()
+  })
+
+  it('prépare la structure AFTU et TATA sans inventer d’horaire', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+
+    for (const network of ['aftu', 'tata']) {
+      fireEvent.click(container.querySelector(`.network-item-${network}`)!)
+      const detail = container.querySelector(`.network-item-${network} .network-summary-detail`) as HTMLElement
+      expect(detail).toBeTruthy()
+      // Aucune station, aucun créneau : la structure attend les lignes publiées.
+      expect(detail.querySelector('.station-board')).toBeNull()
+      expect(detail.textContent).toMatch(/aucune ligne (AFTU|TATA) n’est encore publiée/i)
+      expect(detail.textContent).toMatch(/dès qu’une ligne sera disponible/i)
+      expect(detail.textContent).toMatch(/aucun horaire n’est inventé/i)
+    }
+  })
+
   it('bascule élégamment entre le mode clair et le mode sombre adaptatif', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     const { container } = render(<App />)

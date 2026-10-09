@@ -74,8 +74,8 @@ export type PlannerOutcome = PlannerResult | PlannerFailure
 const WALK_SPEED_MPM = 80
 /** Marge d'attente ajoutée à chaque correspondance marchable (min). */
 const TRANSFER_BUFFER_MIN = 3
-/** Temps d'arrêt par station (min). */
-const DWELL_MIN: Record<string, number> = { ter: 1, brt: 0.5 }
+/** Temps d'arrêt par station (min), partagé avec le tableau des créneaux par station. */
+export const DWELL_MIN: Record<string, number> = { ter: 1, brt: 0.5 }
 /** Rayon maximal de marche d'accès/de sortie (m). */
 export const MAX_ACCESS_M = 1200
 

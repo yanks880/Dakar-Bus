@@ -31,6 +31,8 @@ export interface CorridorStop {
   order: number
   /** Alias et repères connus des usagers, pour la recherche et l'assistant. */
   aliases: readonly string[]
+  /** Libellé court utilisé dans les en-têtes compacts (sens, colonnes). */
+  shortName?: string
   /** TER : zone tarifaire déclarée (1-3). BRT : pôle d'échange éventuel. */
   note?: string
   /** Identification de la source de la position : nœud OpenStreetMap. */
@@ -136,7 +138,7 @@ export const TER_STOPS: readonly CorridorStop[] = [
  *  données de référence : les éventuelles distances entre ces points ne sont
  *  pas utilisées pour calculer des horaires ou une position véhicule. */
 export const BRT_STOPS: readonly CorridorStop[] = [
-  { id: 'brt-petersen', name: 'Petersen – Papa Gueye Fall', lat: 14.6766438, lon: -17.4406354, order: 0, aliases: ['petersen', 'papa gueye fall', 'gare de petersen', 'gare routiere de petersen', 'terminal cabral', 'pem petersen'], note: 'Pôle d’échange · terminus', osmNodeId: 13376764678 },
+  { id: 'brt-petersen', name: 'Petersen – Papa Gueye Fall', shortName: 'Petersen', lat: 14.6766438, lon: -17.4406354, order: 0, aliases: ['petersen', 'papa gueye fall', 'gare de petersen', 'gare routiere de petersen', 'terminal cabral', 'pem petersen'], note: 'Pôle d’échange · terminus', osmNodeId: 13376764678 },
   { id: 'brt-grande-mosquee', name: 'Grande Mosquée', lat: 14.6824846, lon: -17.4443248, order: 1, aliases: ['mosquee de dakar', 'grande mosquee'], note: undefined, osmNodeId: 13376766853 },
   { id: 'brt-place-nation', name: 'Place de la Nation', lat: 14.6960909, lon: -17.4506369, order: 2, aliases: ['obelisque', 'place de l’obelisque'], note: undefined, osmNodeId: 11739960199 },
   { id: 'brt-dial-diop', name: 'Dial Diop', lat: 14.6993790, lon: -17.4535498, order: 3, aliases: ['boulevard dial diop'], note: undefined, osmNodeId: 11739960196 },
@@ -158,7 +160,7 @@ export const BRT_STOPS: readonly CorridorStop[] = [
   { id: 'brt-fith-mith', name: 'Fith Mith', lat: 14.7753280, lon: -17.4055188, order: 19, aliases: ['fith mith'], note: undefined, osmNodeId: 11739850121 },
   { id: 'brt-golf-nord', name: 'Golf Nord', lat: 14.7763179, lon: -17.3984054, order: 20, aliases: ['golf nord guediawaye'], note: undefined, osmNodeId: 11739850125 },
   { id: 'brt-gueule-tapee', name: 'Gueule Tapée', lat: 14.7756271, lon: -17.3921489, order: 21, aliases: ['gueule tapee'], note: undefined, osmNodeId: 11739850126 },
-  { id: 'brt-prefecture-guediawaye', name: 'Préfecture de Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 22, aliases: ['prefecture guediawaye', 'guédiawaye', 'guediawaye', 'pole guediawaye', 'pem guediawaye'], note: 'Pôle d’échange · terminus', osmNodeId: 11739850129 },
+  { id: 'brt-prefecture-guediawaye', name: 'Préfecture de Guédiawaye', shortName: 'Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 22, aliases: ['prefecture guediawaye', 'guédiawaye', 'guediawaye', 'pole guediawaye', 'pem guediawaye'], note: 'Pôle d’échange · terminus', osmNodeId: 11739850129 },
 ]
 
 export const CORRIDOR_LINES: readonly CorridorLine[] = [
