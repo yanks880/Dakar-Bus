@@ -75,3 +75,59 @@ describe('calculateur multimodal de référence', () => {
     expect(outcome.totalWalkM).toBeGreaterThanOrEqual(0)
   })
 })
+
+describe('cohérence des coûts du calculateur', () => {
+  it('ne propose pas un détour à pied quand aucun véhicule n’est emprunté', () => {
+    // Deux points à ~110 m l’un de l’autre, mais chacun à ~1,2 km de la gare de
+    // Dakar : la chaîne « marche vers la gare puis marche vers la destination »
+    // faisait 2,4 km et 30 min pour un déplacement de 2 min à pied.
+    const dakar = getCorridorStop('ter-dakar')!
+    const a = { label: 'A', lat: dakar.lat + 0.0107, lon: dakar.lon }
+    const b = { label: 'B', lat: dakar.lat + 0.0107, lon: dakar.lon + 0.001 }
+    const outcome = planReferenceJourney(a, b)
+    expect(outcome.ok).toBe(true)
+    const result = outcome as PlannerResult
+    expect(result.legs).toHaveLength(1)
+    expect(result.legs[0].kind).toBe('walk_direct')
+    expect(result.boardedLines).toHaveLength(0)
+    expect(result.totalMinutes).toBeLessThanOrEqual(3)
+    expect(result.totalWalkM).toBeLessThan(200)
+  })
+
+  it('préfère la marche directe à une chaîne marche + marche sans transport', () => {
+    // Deux points au nord de deux stations BRT voisines : le trajet utile est la
+    // marche directe, pas un passage par une station.
+    const petersen = getCorridorStop('brt-petersen')!
+    const mosquee = getCorridorStop('brt-grande-mosquee')!
+    const outcome = planReferenceJourney(
+      { label: 'P', lat: petersen.lat + 0.005, lon: petersen.lon },
+      { label: 'Q', lat: mosquee.lat + 0.005, lon: mosquee.lon },
+    ) as PlannerResult
+    expect(outcome.legs.filter((leg) => leg.kind === 'ride')).toHaveLength(0)
+    expect(outcome.legs).toHaveLength(1)
+    expect(outcome.legs[0].kind).toBe('walk_direct')
+    expect(outcome.totalWalkM).toBeLessThan(900)
+  })
+
+  it('conserve les trajets qui empruntent réellement un véhicule', () => {
+    const outcome = planReferenceJourney(PLATEAU, GUEDIAWAYE) as PlannerResult
+    expect(outcome.legs.some((leg) => leg.kind === 'ride')).toBe(true)
+    expect(outcome.legs.some((leg) => leg.kind === 'walk_direct')).toBe(false)
+  })
+
+  it('décrit la marche directe dans un français lisible', () => {
+    const dakar = getCorridorStop('ter-dakar')!
+    const outcome = planReferenceJourney(
+      { label: 'A', lat: dakar.lat + 0.0107, lon: dakar.lon },
+      { label: 'B', lat: dakar.lat + 0.0107, lon: dakar.lon + 0.001 },
+    ) as PlannerResult
+    expect(describeLeg(outcome.legs[0])).toMatch(/Trajet à pied .* : A → B/)
+  })
+
+  it('répond court quand aucun trajet n’est possible', () => {
+    const far = { label: 'Mbour', lat: 14.4167, lon: -16.9667 }
+    const outcome = planReferenceJourney(far, GUEDIAWAYE)
+    expect(outcome.ok).toBe(false)
+    if (!outcome.ok) expect(outcome.message.length).toBeLessThan(120)
+  })
+})

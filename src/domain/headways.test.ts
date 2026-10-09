@@ -166,3 +166,75 @@ describe('temporisation du décompte', () => {
     expect(nextCountdownTickDelay(['2026-10-09T12:00:00Z'], now)).toBe(60_030)
   })
 })
+
+describe('projection terminus → station intermédiaire', () => {
+  it('ne qualifie pas de « service non commencé » un passage projeté après la fermeture', () => {
+    // BRT : service 06:00–21:00, 6 min. À 21:10 le service est terminé au
+    // terminus, mais le dernier départ (20:54) atteint une station à 17 min de
+    // parcours à 21:11. Ce passage est la dernière course en route, pas un
+    // service qui n’aurait pas encore commencé.
+    const now = at('2026-10-08T21:10:00Z')
+    const projected = nextReferencePassage(BRT, now, 17)!
+    expect(projected.clockLabel).toBe('21:11')
+    expect(projected.minutes).toBe(1)
+    expect(projected.status).not.toBe('BEFORE_SERVICE')
+    expect(projected.status).toBe('RUNNING')
+    expect(projected.note).not.toMatch(/service non commencé/i)
+  })
+
+  it('garde des statuts cohérents entre le terminus et les stations en aval', () => {
+    const now = at('2026-10-08T21:10:00Z')
+    // Au terminus : plus aucun départ aujourd’hui, reprise annoncée à 06:00.
+    const terminus = nextReferencePassage(BRT, now, 0)!
+    expect(terminus.status).toBe('AFTER_SERVICE')
+    expect(terminus.clockLabel).toBe('06:00')
+    // En aval : la dernière course partie avant la fermeture est encore en route.
+    const downstream = nextReferencePassage(BRT, now, 17)!
+    expect(downstream.status).toBe('RUNNING')
+    // Aucun des deux ne peut annoncer un service qui n’aurait pas commencé.
+    expect([terminus, downstream].some((p) => p.status === 'BEFORE_SERVICE')).toBe(false)
+  })
+
+  it('projette un départ TER de la grille de journée au-delà de 21:00', () => {
+    // TER : 05:30–21:00 à 10 min, puis 21:00–22:00 à 20 min. Le dernier départ
+    // de la grille de journée (20:50) atteint une gare à 12 min de parcours à
+    // 21:02 : la fenêtre de service s’apprécie au terminus, donc ce passage est
+    // porté par un départ en service et non par un service « non commencé ».
+    const now = at('2026-10-05T21:00:00Z')
+    const projected = nextReferencePassage(TER, now, 12)!
+    expect(projected.clockLabel).toBe('21:02')
+    expect(projected.status).toBe('RUNNING')
+    expect(projected.note).not.toMatch(/service non commencé/i)
+  })
+
+  it('repasse à AFTER_SERVICE une fois la dernière course arrivée', () => {
+    // À 21:20, la grille de journée ne fournit plus aucun départ : la prochaine
+    // course est celle du lendemain.
+    const now = at('2026-10-08T21:20:00Z')
+    expect(nextReferencePassage(BRT, now, 17)!.status).toBe('AFTER_SERVICE')
+    expect(nextReferencePassage(BRT, now, 17)!.clockLabel).toBe('06:17')
+  })
+})
+
+describe('entrées invalides du moteur', () => {
+  it('ignore un décalage illisible au lieu de lever une exception', () => {
+    const now = at('2026-10-08T12:00:00Z')
+    expect(() => nextReferencePassage(BRT, now, Number.NaN)).not.toThrow()
+    expect(nextReferencePassage(BRT, now, Number.NaN)!.clockLabel).toBe('12:06')
+    expect(nextReferencePassage(BRT, now, Number.POSITIVE_INFINITY)!.clockLabel).toBe('12:06')
+  })
+
+  it('renvoie null sur une date illisible plutôt que de produire un horaire invalide', () => {
+    expect(nextReferencePassage(BRT, Number.NaN)).toBeNull()
+    expect(nextReferencePassage(BRT, Number.POSITIVE_INFINITY)).toBeNull()
+    expect(nextReferencePassage(TER, Number.NEGATIVE_INFINITY)).toBeNull()
+  })
+
+  it('refuse une fréquence non exploitable sans lever d’exception', () => {
+    expect(nextReferencePassage([{ ...BRT[0], headwayMinutes: -6 }], Date.now())).toBeNull()
+    expect(nextReferencePassage([{ ...BRT[0], headwayMinutes: Number.NaN }], Date.now())).toBeNull()
+    expect(nextReferencePassage([{ ...BRT[0], serviceStart: '25:00' }], Date.now())).toBeNull()
+    expect(nextReferencePassage([{ ...BRT[0], serviceEnd: '06:0' }], Date.now())).toBeNull()
+    expect(nextReferencePassage([{ ...BRT[0], days: [] }], Date.now())).toBeNull()
+  })
+})

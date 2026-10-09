@@ -1,4 +1,5 @@
 import type { FrequencyStatus } from './frequencies'
+import { formatPassageCountdown } from './headways'
 
 export type TransportStatus = FrequencyStatus
 export type ProvenanceType = 'OFFICIAL' | 'GTFS' | 'GTFS_REALTIME' | 'OFFICIAL_REALTIME' | 'OSM' | 'COMMUNITY' | 'ESTIMATED' | 'UNKNOWN'
@@ -33,13 +34,15 @@ export function canDisplayLive(evidence: RealtimeEvidence, now = Date.now()): bo
  * Present a theoretical timestamp without implying vehicle presence.
  * Positive countdowns are rounded up so a forthcoming passage never appears
  * as 0 min. An elapsed or exact-time departure is expired, not "now".
+ * The label is delegated to `formatPassageCountdown` so every view of the app
+ * formats the same wait the same way ("6 min", then "1 h 05").
  */
 export function formatScheduledCountdown(timestamp: string, now = Date.now()): string {
   if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp.trim()) || !Number.isFinite(Date.parse(timestamp))) {
     return 'Horaire indisponible'
   }
   const minutes = getRemainingMinutes(timestamp, now)
-  return minutes === null ? 'Horaire dépassé' : `${minutes} min`
+  return minutes === null ? 'Horaire dépassé' : formatPassageCountdown(minutes)
 }
 
 export function statusLabel(status: TransportStatus): string {

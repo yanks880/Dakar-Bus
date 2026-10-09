@@ -22,6 +22,11 @@
   --green-800: #0f5132;
   --green-900: #0a3622;
   --green-950: #052a1b;
+  /* Vert Dakar des minutes d'attente : une seule définition, partagée par le
+     résumé des réseaux, le tableau par station, les fiches de course et
+     l'assistant, pour qu'un même délai s'affiche dans la même couleur partout. */
+  --passage-green: #00B140;
+  --passage-green-tint: #e5f7ec;
   /* Surfaces légèrement teintées : moins de blanc pur, même lisibilité. */
   --surface-shell: #f3f8f5;
   --surface-panel: #fafdfc;
@@ -870,7 +875,7 @@ button:disabled { cursor: not-allowed; }
 .journey-route-badge { padding: 2px 8px; border-radius: 7px; background: var(--green-700); color: #fff; font-size: 9.5px; font-weight: 750; letter-spacing: .02em; }
 .journey-mode { padding: 2px 7px; border-radius: 999px; background: #ecf6f1; color: #4e6c5e; font-size: 8.5px; font-weight: 650; }
 .journey-route-name { color: #688176; font-size: 9px; }
-.journey-countdown { padding: 4px 8px; border: 1px solid #cae7da; border-radius: 999px; background: var(--green-100); color: var(--green-900); font-size: 10px; font-weight: 800; }
+.journey-countdown { padding: 4px 8px; border: 1px solid #cae7da; border-radius: 999px; background: var(--passage-green-tint); color: var(--passage-green); font-size: 10px; font-weight: 800; }
 .journey-expired-note { padding: 4px 8px; border-radius: 8px; background: #f2f6f4; color: #5c7368; font-size: 9.5px; font-weight: 650; }
 .journey-timeline { display: grid; align-items: center; gap: 8px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
 .journey-point { display: grid; gap: 2px; min-width: 0; }
@@ -957,7 +962,7 @@ button:disabled { cursor: not-allowed; }
 .assistant-bubble { margin: 0; padding: 9px 11px; border-radius: 12px; font-size: 11.5px; line-height: 1.5; white-space: pre-line; max-width: 92%; }
 .assistant-bubble-assistant { align-self: flex-start; border: 1px solid #d8ede3; background: var(--surface-card); color: #325143; border-bottom-left-radius: 4px; }
 .assistant-bubble-user { align-self: flex-end; background: var(--green-700); color: #fff; border-bottom-right-radius: 4px; }
-.assistant-countdown { display: inline-block; padding: 1px 5px; border-radius: 5px; background: var(--green-100); color: var(--green-900); font-weight: 800; }
+.assistant-countdown { display: inline-block; padding: 1px 5px; border-radius: 5px; background: var(--passage-green-tint); color: var(--passage-green); font-weight: 800; }
 .assistant-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
 .assistant-chip { padding: 5px 9px; border: 1px solid #cae7da; border-radius: 999px; background: var(--surface-card); color: #146c43; font-size: 9.5px; font-weight: 600; cursor: pointer; transition: background .12s ease; }
 .assistant-chip:hover { background: var(--green-100); }
@@ -1396,7 +1401,7 @@ button:disabled { cursor: not-allowed; }
 }
 .network-summary-passage { display: grid; justify-items: end; gap: 1px; text-align: right; }
 .network-summary-passage > strong {
-  color: var(--green-700);
+  color: var(--passage-green);
   font-size: 14.5px;
   font-weight: 800;
   letter-spacing: -.015em;

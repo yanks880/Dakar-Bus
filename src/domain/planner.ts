@@ -35,7 +35,7 @@ export interface PlannerEndpoint {
   stopId?: string
 }
 
-export type PlannerLegKind = 'walk_access' | 'walk_transfer' | 'walk_egress' | 'ride' | 'wait'
+export type PlannerLegKind = 'walk_access' | 'walk_direct' | 'walk_transfer' | 'walk_egress' | 'ride' | 'wait'
 
 export interface PlannerLeg {
   kind: PlannerLegKind
@@ -142,7 +142,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
     return {
       ok: false,
       reason: 'NO_ACCESSIBLE_STOP',
-      message: `Aucun arrêt du réseau de référence (TER/BRT) à moins de ${MAX_ACCESS_M} m de ${access.length === 0 ? 'votre départ' : 'votre destination'}. Les réseaux DDD, AFTU et TATA ne sont pas encore intégrés : aucun trajet n’est inventé.`,
+      message: `Aucun arrêt TER ou BRT à moins de ${MAX_ACCESS_M / 1000} km de ${access.length === 0 ? 'votre départ' : 'votre destination'} (DDD et AFTU non intégrés).`,
     }
   }
 
@@ -244,7 +244,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
     return {
       ok: false,
       reason: 'NO_PATH',
-      message: 'Aucun enchaînement TER/BRT ne relie ces deux points dans le réseau de référence. Aucun trajet n’est inventé.',
+      message: 'Aucun trajet TER ou BRT entre ces deux points.',
     }
   }
 
@@ -286,6 +286,23 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
   const transfers = legs.filter((leg) => leg.kind === 'walk_transfer').length
   const boardedLines = [...new Set(legs.filter((leg) => leg.kind === 'ride' && leg.line).map((leg) => leg.line!.shortName))]
 
+  // Aucun véhicule emprunté : la chaîne « marche vers un arrêt puis marche vers
+  // la destination » n'est qu'un détour. La marche directe entre les deux points
+  // est toujours au moins aussi courte (inégalité triangulaire) : c'est elle qui
+  // est rendue, plutôt qu'un itinéraire plus long sans aucun transport dedans.
+  if (boardedLines.length === 0) {
+    const directLeg = walkLeg('walk_direct', origin.label, destination.label, haversineMeters(origin, destination))
+    return {
+      ok: true,
+      legs: [directLeg],
+      totalMinutes: directLeg.minutes,
+      totalWalkM: directLeg.distanceM ?? 0,
+      transfers: 0,
+      boardedLines: [],
+      limitation: 'Trajet à pied : aucun trajet TER ou BRT ne raccourcit ce déplacement.',
+    }
+  }
+
   return {
     ok: true,
     legs,
@@ -294,7 +311,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
     transfers,
     boardedLines,
     limitation:
-      'Estimation du réseau de référence sur les fréquences officielles TER/BRT et des vitesses de référence ; le TER utilise le headway maximal faute de jour/heure choisis. Ce n’est ni un horaire, ni du temps réel, ni une fréquence DDD/AFTU/TATA.',
+      'Estimation du réseau de référence sur les fréquences officielles TER/BRT (le TER retient son headway maximal, faute d’heure choisie). Ce n’est ni un horaire, ni du temps réel.',
   }
 }
 
@@ -303,6 +320,8 @@ export function describeLeg(leg: PlannerLeg): string {
   switch (leg.kind) {
     case 'walk_access':
       return `Marcher ${formatMeters(leg.distanceM)} jusqu’à ${leg.to} (~${leg.minutes} min)`
+    case 'walk_direct':
+      return `Trajet à pied ${formatMeters(leg.distanceM)} : ${leg.from} → ${leg.to} (~${leg.minutes} min)`
     case 'walk_egress':
       return `Marcher ${formatMeters(leg.distanceM)} jusqu’à ${leg.to} (~${leg.minutes} min)`
     case 'walk_transfer':

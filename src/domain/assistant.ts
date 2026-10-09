@@ -17,6 +17,7 @@ import {
 } from './corridors'
 import { NETWORK_REFERENCE_DATA, OFFICIAL_REFERENCE_FREQUENCIES, formatFrequencyPeriod, formatSourceVerification } from './frequencies'
 import { getRemainingMinutes } from './truth'
+import { formatPassageCountdown } from './headways'
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint } from './planner'
 
 export interface AssistantContext {
@@ -181,7 +182,7 @@ ${outcome.limitation}`
           const label = requestedNetwork === 'brt' ? 'BRT' : 'TER'
           const departure = scheduledRouteDescription(context)
           const trip = departure ? `La course ${departure} est programmée` : `Le prochain ${label} est prévu`
-          return `${targetLine}${trip} dans ${minutes} min selon un horaire théorique déclaré. Ce n’est pas une information temps réel.`
+          return `${targetLine}${trip} dans ${formatPassageCountdown(minutes)} selon un horaire théorique déclaré. Ce n’est pas une information temps réel.`
         }
         return `${targetLine}${noReliableDepartureAnswer(requestedNetwork)}`
       }

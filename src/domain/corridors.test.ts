@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { OFFICIAL_REFERENCE_FREQUENCIES } from './frequencies'
 import {
   ALL_CORRIDOR_STOPS,
   BRT_STOPS,
@@ -167,5 +168,20 @@ describe('réseau de référence TER/BRT', () => {
         expect(ALL_CORRIDOR_STOPS.some((stop) => stop.id === stopId)).toBe(true)
       }
     }
+  })
+})
+
+describe('source unique des fréquences', () => {
+  it('dérive le headway du calculateur des fréquences officielles, sans le recopier', () => {
+    const ter = CORRIDOR_LINES.find((line) => line.network === 'ter')!
+    const brt = CORRIDOR_LINES.find((line) => line.network === 'brt')!
+    // Le calculateur retient prudemment le maximum officiel déclaré.
+    expect(ter.headwayMin).toBe(Math.max(...OFFICIAL_REFERENCE_FREQUENCIES.ter.map((f) => f.headwayMinutes)))
+    expect(brt.headwayMin).toBe(Math.max(...OFFICIAL_REFERENCE_FREQUENCIES.brt.map((f) => f.headwayMinutes)))
+    expect(ter.headwayMin).toBe(20)
+    expect(brt.headwayMin).toBe(6)
+    // Les références officielles elles-mêmes ne bougent pas.
+    expect(OFFICIAL_REFERENCE_FREQUENCIES.brt.map((f) => f.headwayMinutes)).toEqual([6])
+    expect(OFFICIAL_REFERENCE_FREQUENCIES.ter.map((f) => f.headwayMinutes)).toEqual([10, 20, 20])
   })
 })
