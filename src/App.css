@@ -1103,12 +1103,12 @@ button:disabled { cursor: not-allowed; }
 .network-summary-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .network-summary-heading strong { color: var(--text); font-family: Manrope, sans-serif; font-size: 13.5px; font-weight: 800; letter-spacing: -.01em; }
 .network-summary-list { display: grid; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--surface-card); list-style: none; }
-.network-summary-list li { display: grid; min-height: 40px; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 5px 12px; border-bottom: 1px solid var(--line-soft); }
-.network-summary-list li:last-child { border-bottom: 0; }
+.network-summary-list > li { display: block; min-height: 40px; padding: 0; border-bottom: 1px solid var(--line-soft); }
+.network-summary-list > li:last-child { border-bottom: 0; }
 .network-summary-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green-200); box-shadow: inset 0 0 0 1px rgba(25, 135, 84, .22); }
 .network-summary-dot.is-referenced { background: var(--green-600); box-shadow: 0 0 0 3px rgba(25, 135, 84, .18); }
 .network-summary-name { color: var(--text); font-family: Manrope, 'DM Sans', sans-serif; font-size: 13.5px; font-weight: 800; letter-spacing: .02em; }
-.network-summary-list li > strong { color: var(--green-700); font-size: 13px; font-weight: 800; text-align: right; }
+.network-summary-list > li > strong { color: var(--green-700); font-size: 13px; font-weight: 800; text-align: right; }
 .network-reference-cards-section { display: grid; gap: 8px; }
 .network-reference-cards-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .network-reference-cards-heading strong { color: var(--text); font-size: 14px; font-weight: 780; }
@@ -1355,21 +1355,34 @@ button:disabled { cursor: not-allowed; }
    Décomptes de référence (Explorer) — typographie contrastée & micro-interactions
    ========================================================================= */
 .network-summary-heading { flex-wrap: wrap; }
-.network-summary-list li.network-summary-item {
-  grid-template-columns: 10px minmax(0, 1fr) auto;
+.network-summary-list > li.network-summary-item {
+  display: block;
   min-height: 42px;
+  padding: 0;
+  transition: background-color .22s cubic-bezier(.22, 1, .36, 1), box-shadow .22s ease;
+}
+/* En-tête de l'accordéon : seul élément cliquable, le détail reste en dessous
+   dans le flux normal (aucune hauteur fixe, aucun positionnement absolu). */
+.network-summary-header {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
   padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   user-select: none;
-  transition: background-color .22s cubic-bezier(.22, 1, .36, 1), transform .16s cubic-bezier(.22, 1, .36, 1), box-shadow .22s ease;
+  transition: background-color .22s cubic-bezier(.22, 1, .36, 1), transform .16s cubic-bezier(.22, 1, .36, 1);
 }
-.network-summary-list li.network-summary-item:hover {
-  background-color: var(--green-50);
-}
-.network-summary-list li.network-summary-item:active {
-  transform: scale(.988);
-}
-.network-summary-list li.network-summary-item.is-selected {
+.network-summary-header:hover { background-color: var(--green-50); }
+.network-summary-header:active { transform: scale(.988); }
+.network-summary-list > li.network-summary-item.is-selected {
   background-color: var(--green-50);
   box-shadow: inset 3px 0 0 var(--green-600);
 }
@@ -1407,9 +1420,9 @@ button:disabled { cursor: not-allowed; }
   font-weight: 450;
 }
 .network-summary-detail {
-  grid-column: 2 / -1;
-  margin-top: 3px;
-  padding-top: 4px;
+  display: block;
+  margin: 0 12px 10px;
+  padding-top: 8px;
   border-top: 1px dashed var(--line-strong);
   color: var(--muted);
   font-size: 10.5px;
@@ -1435,12 +1448,12 @@ button:disabled { cursor: not-allowed; }
    Le bloc de décompte (« 5 min / créneau 08:10 ») reste celui du résumé :
    mêmes classes, même design. Seule la disposition change (station + 2 sens).
    ========================================================================= */
-.station-board-detail { display: grid; gap: 7px; }
+.station-board-detail { display: grid; gap: 8px; }
 .station-board-context { color: var(--muted); }
 .station-board {
   display: grid;
-  gap: 5px;
-  padding: 8px 8px 9px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--line-soft);
   border-radius: 11px;
   background: var(--surface-sunken);
@@ -1455,53 +1468,65 @@ button:disabled { cursor: not-allowed; }
   letter-spacing: .01em;
 }
 .station-board-head small { color: var(--muted); font-size: 9px; font-weight: 650; white-space: nowrap; }
-.station-board-columns,
+
+/* Un sens = un bloc aéré : titre explicite puis une gare par ligne. */
+.station-direction {
+  display: grid;
+  gap: 6px;
+  padding: 9px 8px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface-card);
+}
+.station-direction-title { display: grid; margin: 0; padding: 0 4px 6px; gap: 2px; border-bottom: 1px solid var(--line-soft); }
+.station-direction-kicker {
+  color: var(--green-700);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.station-direction-route {
+  color: var(--text);
+  font-family: Manrope, 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  line-height: 1.3;
+}
+.station-board-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.station-board-list > li { display: block; min-height: 0; padding: 0; border: 0; }
 .station-board-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(78px, auto));
-  align-items: center;
-  gap: 4px 10px;
-}
-.station-board-columns { padding: 0 8px; }
-.station-board-columns span {
-  overflow: hidden;
-  color: var(--green-700);
-  font-size: 8.5px;
-  font-weight: 800;
-  letter-spacing: .05em;
-  text-align: right;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.station-board-columns span:first-child { color: var(--muted); text-align: left; }
-.station-board-list { display: grid; margin: 0; padding: 0; list-style: none; }
-.station-board-list > li { display: grid; }
-.station-board-row {
   width: 100%;
-  min-height: 38px;
-  padding: 4px 8px;
+  min-height: 44px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
   border: 0;
   border-bottom: 1px solid var(--line-soft);
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
+  color: inherit;
   cursor: pointer;
   font: inherit;
-  color: inherit;
-  transition: background-color .16s ease, transform .14s cubic-bezier(.22, 1, .36, 1);
+  text-align: left;
+  transition: background-color .16s ease;
 }
 .station-board-list > li:last-child .station-board-row { border-bottom: 0; }
-.station-board-row:hover { background: var(--surface-card); }
-.station-board-row:active { transform: scale(.99); }
+.station-board-row:hover { background: var(--surface-sunken); }
 .station-board-stop {
-  overflow: hidden;
+  min-width: 0;
   color: var(--text);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   letter-spacing: -.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
+.station-board-passage { min-width: 84px; }
 .station-board-passage > small { white-space: nowrap; }
 .station-board-footnote {
   margin: 0;
@@ -1511,28 +1536,6 @@ button:disabled { cursor: not-allowed; }
   line-height: 1.5;
 }
 .station-board-pending { margin: 0; color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1.55; }
-
-/* Tableau par station : le nom prend sa propre ligne quand la largeur se
-   resserre (téléphones, panneau étroit) et les deux sens se partagent la
-   largeur restante — aucun tronquage, et le format des créneaux reste
-   exactement celui du résumé. Une requête de conteneur suit la largeur
-   réelle du tableau, quel que soit l’écran. */
-.station-board { container-type: inline-size; }
-@container (max-width: 440px) {
-  .station-board-columns,
-  .station-board-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 3px 8px;
-  }
-  .station-board-columns span { text-align: center; }
-  .station-board-columns span:first-child { display: none; }
-  .station-board-stop {
-    grid-column: 1 / -1;
-    font-size: 11.5px;
-    white-space: normal;
-  }
-  .station-board-passage { justify-items: center; text-align: center; }
-}
 
 /* =========================================================================
    Trajet — champs de recherche (combobox) et récapitulatif
@@ -1661,8 +1664,8 @@ button:disabled { cursor: not-allowed; }
   .network-summary-passage > strong { font-size: 15px; }
   .network-summary-passage > small { font-size: 10px; }
   .station-board { padding: 7px 7px 8px; gap: 4px; }
-  .station-board-row { min-height: 40px; }
-  .station-board-stop { font-size: 12.5px; }
+  .station-board-row { min-height: 46px; }
+  .station-board-stop { font-size: 13px; }
   .station-board-footnote { font-size: 9px; }
   .point-search-input { height: 30px; font-size: 15px; }
   .combobox-picked-label { font-size: 15px; }

@@ -8,7 +8,9 @@ vi.mock('./components/TransitMap', () => ({
     pickingPoint,
     onChoosePoint,
     publishedStops,
+    recenterTo,
   }: {
+    recenterTo: { lat: number; lng: number } | null
     pickingPoint: 'origin' | 'destination' | null
     onChoosePoint: (point: { lat: number; lng: number }) => void
     publishedStops: readonly { stopId: string; stopName: string }[]
@@ -22,6 +24,7 @@ vi.mock('./components/TransitMap', () => ({
       >
         Choisir le point actif
       </button>
+      <span data-testid="map-recenter">{recenterTo ? `${recenterTo.lat},${recenterTo.lng}` : ''}</span>
       <span data-testid="mapped-stops">{publishedStops.map((stop) => stop.stopName).join(' | ')}</span>
     </div>
   ),
@@ -954,13 +957,34 @@ describe('décomptes dynamiques de l’Explorer', () => {
     expect(terItem).toBeTruthy()
     expect(terItem.classList.contains('is-selected')).toBe(false)
 
-    fireEvent.click(terItem)
+    const terHeader = terItem.querySelector('.network-summary-header') as HTMLElement
+    fireEvent.click(terHeader)
     expect(vibrateMock).toHaveBeenCalledWith(12)
     expect(terItem.classList.contains('is-selected')).toBe(true)
     expect(terItem.querySelector('.network-summary-detail')?.textContent).toMatch(/Dakar ↔ Diamniadio/i)
 
-    fireEvent.click(terItem)
+    // Toucher le contenu déplié ne replie pas l'accordéon.
+    fireEvent.click(terItem.querySelector('.station-board-head')!)
+    expect(terItem.classList.contains('is-selected')).toBe(true)
+
+    fireEvent.click(terHeader)
     expect(terItem.classList.contains('is-selected')).toBe(false)
+  })
+
+  it('n’émet aucun recentrage de carte à l’ouverture du volet TER, seulement au choix d’une gare', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+    const recenter = () => screen.getByTestId('map-recenter').textContent
+
+    expect(recenter()).toBe('')
+    fireEvent.click(container.querySelector('.network-item-ter .network-summary-header')!)
+    expect(recenter()).toBe('')
+    fireEvent.click(container.querySelector('.network-item-brt .network-summary-header')!)
+    expect(recenter()).toBe('')
+
+    fireEvent.click(container.querySelector('.network-item-ter .network-summary-header')!)
+    fireEvent.click(within(container.querySelector('.station-board') as HTMLElement).getAllByText('Colobane')[0])
+    expect(recenter()).not.toBe('')
   })
 
   it('décline les créneaux TER station par station et sens par sens', async () => {
@@ -970,38 +994,49 @@ describe('décomptes dynamiques de l’Explorer', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     const { container } = render(<App />)
 
-    fireEvent.click(container.querySelector('.network-item-ter')!)
+    fireEvent.click(container.querySelector('.network-item-ter .network-summary-header')!)
 
     const board = container.querySelector('.station-board') as HTMLElement
     expect(board).toBeTruthy()
-    // Les 13 gares du TER, de Dakar à Diamniadio.
-    expect(board.querySelectorAll('.station-board-row')).toHaveLength(13)
-    expect(within(board).getByText('Colobane')).toBeTruthy()
-    expect(within(board).getByText('Dalifort')).toBeTruthy()
+    // Deux sections distinctes, chacune avec les 13 gares empilées.
+    const outbound = board.querySelector('.station-direction-outbound') as HTMLElement
+    const inbound = board.querySelector('.station-direction-inbound') as HTMLElement
+    expect(outbound.querySelectorAll('.station-board-row')).toHaveLength(13)
+    expect(inbound.querySelectorAll('.station-board-row')).toHaveLength(13)
+    expect(within(outbound).getByText('Colobane')).toBeTruthy()
+    expect(within(outbound).getByText('Dalifort')).toBeTruthy()
 
-    // Les deux sens sont affichés distinctement, avec leurs terminus.
-    expect(within(board).getByText('Aller → Diamniadio')).toBeTruthy()
-    expect(within(board).getByText('Retour → Dakar')).toBeTruthy()
+    // La direction est explicite, avec les terminus.
+    expect(outbound.querySelector('.station-direction-kicker')!.textContent).toMatch(/Direction Aller/)
+    expect(outbound.querySelector('.station-direction-route')!.textContent).toBe('Dakar ➔ Diamniadio')
+    expect(inbound.querySelector('.station-direction-kicker')!.textContent).toMatch(/Direction Retour/)
+    expect(inbound.querySelector('.station-direction-route')!.textContent).toBe('Diamniadio ➔ Dakar')
 
-    // Une gare intermédiaire : un créneau par sens, au format exact du résumé.
-    const rows = [...board.querySelectorAll('.station-board-row')]
-    const colobane = rows.find((row) => row.textContent!.includes('Colobane'))!
-    expect(colobane.querySelectorAll('.station-board-passage:not(.is-undeclared)')).toHaveLength(2)
-    expect(colobane.textContent).toMatch(/créneau 12:03 · 10 min/)
-    expect(colobane.textContent).toMatch(/créneau 12:04 · 10 min/)
+    // Aller : Dakar en tête, Diamniadio en dernier ; retour : ordre inversé.
+    const outRows = [...outbound.querySelectorAll('.station-board-row')]
+    const inRows = [...inbound.querySelectorAll('.station-board-row')]
+    expect(outRows[0].textContent).toMatch(/^Dakar/)
+    expect(inRows[0].textContent).toMatch(/^Diamniadio/)
 
-    // Aux terminus, aucun départ dans le sens impossible : c'est dit, pas inventé.
-    expect(rows[0].textContent).toMatch(/Terminus/)
-    expect(rows[rows.length - 1].textContent).toMatch(/Terminus/)
+    // Une gare intermédiaire : un créneau isolé par sens, au format du résumé.
+    const colobaneOut = outRows.find((row) => row.textContent!.includes('Colobane'))!
+    const colobaneIn = inRows.find((row) => row.textContent!.includes('Colobane'))!
+    expect(colobaneOut.querySelectorAll('.station-board-passage:not(.is-undeclared)')).toHaveLength(1)
+    expect(colobaneOut.textContent).toMatch(/créneau 12:03 · 10 min/)
+    expect(colobaneIn.textContent).toMatch(/créneau 12:04 · 10 min/)
 
-    // Toucher une station la recentre sur la carte sans replier le tableau.
-    fireEvent.click(within(board).getByText('Colobane'))
+    // Au terminus d'arrivée de chaque sens, aucun départ : c'est dit, pas inventé.
+    expect(outRows[outRows.length - 1].textContent).toMatch(/Terminus/)
+    expect(inRows[inRows.length - 1].textContent).toMatch(/Terminus/)
+
+    // Toucher une gare ne replie pas le tableau.
+    fireEvent.click(within(outbound).getByText('Colobane'))
     expect(container.querySelector('.network-item-ter')!.classList.contains('is-selected')).toBe(true)
-    expect(container.querySelectorAll('.station-board-row')).toHaveLength(13)
+    expect(container.querySelectorAll('.station-board-row')).toHaveLength(26)
 
+    const colobaneTimes = () => [colobaneOut, colobaneIn].map((row) => row.querySelector('.station-board-passage > strong')!.textContent)
     // Les créneaux par station descendent au même rythme que les réseaux.
     // (Avancement par pas : chaque tic réarme le suivant après le rendu.)
-    const colobaneTimes = () => [...colobane.querySelectorAll('.station-board-passage > strong')].map((node) => node.textContent)
     expect(colobaneTimes()).toEqual(['4 min', '5 min'])
     for (let step = 0; step < 20; step += 1) {
       await act(async () => {
@@ -1018,17 +1053,18 @@ describe('décomptes dynamiques de l’Explorer', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     const { container } = render(<App />)
 
-    fireEvent.click(container.querySelector('.network-item-brt')!)
+    fireEvent.click(container.querySelector('.network-item-brt .network-summary-header')!)
 
     const board = container.querySelector('.station-board') as HTMLElement
     expect(board).toBeTruthy()
-    expect(board.querySelectorAll('.station-board-row')).toHaveLength(23)
-    expect(within(board).getByText('Aller → Guédiawaye')).toBeTruthy()
-    expect(within(board).getByText('Retour → Petersen')).toBeTruthy()
+    expect(board.querySelectorAll('.station-direction-outbound .station-board-row')).toHaveLength(23)
+    expect(board.querySelectorAll('.station-direction-inbound .station-board-row')).toHaveLength(23)
+    expect(board.querySelector('.station-direction-outbound .station-direction-route')!.textContent).toBe('Petersen ➔ Guédiawaye')
+    expect(board.querySelector('.station-direction-inbound .station-direction-route')!.textContent).toBe('Guédiawaye ➔ Petersen')
 
     // Une station intermédiaire (près de Colobane) : deux créneaux au format du résumé.
-    const placeNation = [...board.querySelectorAll('.station-board-row')].find((row) => row.textContent!.includes('Place de la Nation'))!
-    expect(placeNation.querySelectorAll('.station-board-passage:not(.is-undeclared)')).toHaveLength(2)
+    const placeNation = [...board.querySelectorAll('.station-direction-outbound .station-board-row')].find((row) => row.textContent!.includes('Place de la Nation'))!
+    expect(placeNation.querySelectorAll('.station-board-passage:not(.is-undeclared)')).toHaveLength(1)
     expect(placeNation.textContent).toMatch(/créneau \d{2}:\d{2} · 6 min/)
     vi.useRealTimers()
   })
@@ -1038,7 +1074,7 @@ describe('décomptes dynamiques de l’Explorer', () => {
     const { container } = render(<App />)
 
     for (const network of ['aftu', 'tata']) {
-      fireEvent.click(container.querySelector(`.network-item-${network}`)!)
+      fireEvent.click(container.querySelector(`.network-item-${network} .network-summary-header`)!)
       const detail = container.querySelector(`.network-item-${network} .network-summary-detail`) as HTMLElement
       expect(detail).toBeTruthy()
       // Aucune station, aucun créneau : la structure attend les lignes publiées.
