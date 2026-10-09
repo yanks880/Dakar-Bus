@@ -402,7 +402,7 @@ describe('structure en quatre piliers', () => {
     expect(screen.getAllByText(/créneau \d{2}:\d{2} · \d+ min/)).toHaveLength(2)
     // DDD, AFTU et TATA ne publient pas de fréquence : rien n’est inventé.
     expect(screen.getAllByText('Non déclaré')).toHaveLength(3)
-    expect(screen.getByText(/décompte théorique · pas de temps réel/i)).toBeTruthy()
+    expect(screen.queryByText(/décompte théorique · pas de temps réel/i)).toBeNull()
     expect(screen.queryByText(/vérification en ligne non documentée/i)).toBeNull()
     expect(screen.queryByText(/validité calendaire/i)).toBeNull()
     expect(screen.queryByText(/38 lignes · 400 bus/)).toBeNull()
@@ -942,6 +942,43 @@ describe('décomptes dynamiques de l’Explorer', () => {
     expect(networks).toBeTruthy()
     // DOCUMENT_POSITION_FOLLOWING : les réseaux suivent les destinations dans le DOM.
     expect(destinations!.compareDocumentPosition(networks!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('déclenche une micro-interaction et un retour haptique lors de la sélection d’un réseau', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const vibrateMock = vi.fn(() => true)
+    Object.defineProperty(navigator, 'vibrate', { configurable: true, value: vibrateMock })
+    const { container } = render(<App />)
+
+    const terItem = container.querySelector('.network-item-ter') as HTMLElement
+    expect(terItem).toBeTruthy()
+    expect(terItem.classList.contains('is-selected')).toBe(false)
+
+    fireEvent.click(terItem)
+    expect(vibrateMock).toHaveBeenCalledWith(12)
+    expect(terItem.classList.contains('is-selected')).toBe(true)
+    expect(terItem.querySelector('.network-summary-detail')?.textContent).toMatch(/Dakar ↔ Diamniadio/i)
+
+    fireEvent.click(terItem)
+    expect(terItem.classList.contains('is-selected')).toBe(false)
+  })
+
+  it('bascule élégamment entre le mode clair et le mode sombre adaptatif', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    const { container } = render(<App />)
+
+    const toggle = screen.getByRole('button', { name: /passer au mode sombre/i })
+    expect(container.querySelector('.app-shell')?.classList.contains('theme-light')).toBe(true)
+
+    fireEvent.click(toggle)
+    expect(container.querySelector('.app-shell')?.classList.contains('theme-dark')).toBe(true)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    expect(window.localStorage.getItem('dakar-bus:theme')).toBe('dark')
+
+    const backToLight = screen.getByRole('button', { name: /passer au mode clair/i })
+    fireEvent.click(backToLight)
+    expect(container.querySelector('.app-shell')?.classList.contains('theme-light')).toBe(true)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
   })
 })
 

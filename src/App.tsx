@@ -24,6 +24,7 @@ import {
   MapPin,
   Megaphone,
   Minus,
+  Moon,
   Plus,
   RefreshCw,
   Route as RouteIcon,
@@ -31,6 +32,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sun,
   TrainFront,
   X,
 } from 'lucide-react'
@@ -157,9 +159,11 @@ interface JourneyState {
 
 const IDLE_JOURNEY: JourneyState = { status: 'idle', search: null, error: null, errorCode: null }
 type GpsState = 'idle' | 'loading' | 'ready' | 'denied' | 'error'
+type ThemeMode = 'light' | 'dark'
 type MapPoint = Coordinates & { label: string; kind?: 'map' | 'stop'; stopId?: string }
 
 const SAVED_DESTINATIONS_KEY = 'dakar-bus:destinations'
+const THEME_STORAGE_KEY = 'dakar-bus:theme'
 
 /** Le stockage local peut être refusé (navigation privée) : rien ne doit casser. */
 function safeLocalStorage(): Storage | null {
@@ -168,6 +172,30 @@ function safeLocalStorage(): Storage | null {
   } catch {
     return null
   }
+}
+
+/** Retour haptique léger pour les micro-interactions sur mobile compatible. */
+function triggerHaptic(durationMs = 10) {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(durationMs)
+    }
+  } catch {
+    // Non pris en charge : silencieux.
+  }
+}
+
+function readInitialTheme(): ThemeMode {
+  try {
+    const stored = safeLocalStorage()?.getItem(THEME_STORAGE_KEY)
+    if (stored === 'dark' || stored === 'light') return stored
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }
+  } catch {
+    // Fallback au thème clair par défaut.
+  }
+  return 'light'
 }
 const DESTINATION_SHORTCUTS: {
   id: DestinationShortcutId
@@ -360,6 +388,8 @@ function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [gpsMessage, setGpsMessage] = useState<string | null>(null)
   const [exploreFilter, setExploreFilter] = useState<NetworkId | 'all'>('all')
+  const [selectedExploreNetwork, setSelectedExploreNetwork] = useState<NetworkId | null>(null)
+  const [theme, setTheme] = useState<ThemeMode>(() => readInitialTheme())
   const [alertInfoOpen, setAlertInfoOpen] = useState(false)
   /** Section technique de l’onglet Paramètres : console d’administration locale. */
   const [consoleOpen, setConsoleOpen] = useState(false)
@@ -394,6 +424,50 @@ function App() {
       `${stop.name} — ${CORRIDOR_NETWORKS[stop.id.startsWith('ter') ? 'ter' : 'brt'].label} (réseau de référence)` +
         (lines.length > 0 ? ` · ligne${lines.length > 1 ? 's' : ''} ${lines.map((line) => line.shortName).join(', ')}` : ''),
     )
+  }
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (event: MediaQueryListEvent) => {
+      const stored = safeLocalStorage()?.getItem(THEME_STORAGE_KEY)
+      if (stored !== 'dark' && stored !== 'light') {
+        setTheme(event.matches ? 'dark' : 'light')
+      }
+    }
+    media.addEventListener?.('change', onChange)
+    return () => media.removeEventListener?.('change', onChange)
+  }, [])
+
+  function toggleTheme() {
+    triggerHaptic(10)
+    setTheme((current) => {
+      const next: ThemeMode = current === 'dark' ? 'light' : 'dark'
+      try {
+        safeLocalStorage()?.setItem(THEME_STORAGE_KEY, next)
+      } catch {
+        // Stockage indisponible : le thème reste actif en mémoire.
+      }
+      return next
+    })
+  }
+
+  function handleSelectExploreNetwork(id: NetworkId) {
+    triggerHaptic(12)
+    setSelectedExploreNetwork((current) => {
+      const next = current === id ? null : id
+      if (next === 'ter' || next === 'brt') {
+        setNetworkLayers((layers) => ({ ...layers, [next]: true }))
+        const stops = next === 'ter' ? TER_STOPS : BRT_STOPS
+        const middle = stops[Math.floor(stops.length / 2)]
+        if (middle) setRecenterTo({ lat: middle.lat, lng: middle.lon })
+      }
+      return next
+    })
   }
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
@@ -701,6 +775,7 @@ function App() {
   }
 
   function chooseDestinationShortcut(id: DestinationShortcutId) {
+    triggerHaptic(10)
     const shortcut = DESTINATION_SHORTCUTS.find((candidate) => candidate.id === id)!
     const saved = savedDestinations[id]
     if (saved) {
@@ -985,7 +1060,7 @@ function App() {
   const showStopCard = activeTab === 'explore' || activeTab === 'route'
 
   return (
-    <main className={`app-shell tab-${activeTab}${mapVisible ? '' : ' is-map-hidden'}`}>
+    <main className={`app-shell tab-${activeTab} theme-${theme}${mapVisible ? '' : ' is-map-hidden'}`}>
       {mapVisible && (
       <section className="map-stage" aria-label="Carte de Dakar">
         <TransitMap
@@ -1104,16 +1179,28 @@ function App() {
                 <span className="brand-subtitle">LA MOBILITÉ, EN CLAIR</span>
               </div>
             </div>
-            {/* Le badge ouvre le mode d’emploi : un bouton de plus qui ne fait
-                rien serait un bouton mort. */}
-            <button
-              type="button"
-              className="profile-button"
-              aria-label="À propos de Dakar Bus : mode d’emploi et sources"
-              onClick={() => { setActiveTab('settings'); setConsoleOpen(false); announce('Mode d’emploi, sources et CGU dans Paramètres.') }}
-            >
-              <span>DB</span>
-            </button>
+            <div className="brand-actions">
+              <button
+                type="button"
+                className="theme-toggle-button"
+                aria-label={theme === 'dark' ? 'Passer au mode clair' : 'Passer au mode sombre'}
+                aria-pressed={theme === 'dark'}
+                title={theme === 'dark' ? 'Passer au mode clair' : 'Passer au mode sombre'}
+                onClick={toggleTheme}
+              >
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              {/* Le badge ouvre le mode d’emploi : un bouton de plus qui ne fait
+                  rien serait un bouton mort. */}
+              <button
+                type="button"
+                className="profile-button"
+                aria-label="À propos de Dakar Bus : mode d’emploi et sources"
+                onClick={() => { triggerHaptic(8); setActiveTab('settings'); setConsoleOpen(false); announce('Mode d’emploi, sources et CGU dans Paramètres.') }}
+              >
+                <span>DB</span>
+              </button>
+            </div>
           </header>
 
           <nav className="desktop-tabs" aria-label="Navigation principale" role="tablist">
@@ -1126,7 +1213,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === item.id}
                   className={`nav-tab${activeTab === item.id ? ' active' : ''}`}
-                  onClick={() => { setActiveTab(item.id); setPickingPoint(null); setPendingShortcut(null); setPickReturnTab(null); setLayersOpen(false) }}
+                  onClick={() => { triggerHaptic(8); setActiveTab(item.id); setPickingPoint(null); setPendingShortcut(null); setPickReturnTab(null); setLayersOpen(false) }}
                 >
                   <Icon size={16} strokeWidth={1.9} />
                   <span>{item.label}</span>
@@ -1171,6 +1258,8 @@ function App() {
               searchInputRef={searchInputRef}
               savedDestinations={savedDestinations}
               onChooseShortcut={chooseDestinationShortcut}
+              selectedNetwork={selectedExploreNetwork}
+              onSelectNetwork={handleSelectExploreNetwork}
               now={countdownNow}
             />
           )}
@@ -1364,6 +1453,8 @@ function ExplorerPanel({
   searchInputRef,
   savedDestinations,
   onChooseShortcut,
+  selectedNetwork,
+  onSelectNetwork,
   now,
 }: {
   gpsState: GpsState
@@ -1379,6 +1470,8 @@ function ExplorerPanel({
   searchInputRef: { current: HTMLInputElement | null }
   savedDestinations: Partial<Record<DestinationShortcutId, MapPoint>>
   onChooseShortcut: (id: DestinationShortcutId) => void
+  selectedNetwork: NetworkId | null
+  onSelectNetwork: (id: NetworkId) => void
   now: number
 }) {
   const locationHint = gpsState === 'loading'
@@ -1397,13 +1490,13 @@ function ExplorerPanel({
           <h2>On va où&nbsp;?</h2>
         </div>
         <button type="button" className="text-action explore-locate" onClick={onLocate} disabled={gpsState === 'loading'}>
-          <LocateFixed size={18} className={gpsState === 'loading' ? 'is-spinning' : ''} />
+          <LocateFixed size={16} className={gpsState === 'loading' ? 'is-spinning' : ''} />
           {gpsState === 'loading' ? 'Recherche…' : 'Ma position'}
         </button>
       </div>
 
       <form className="search-form explore-search-form" role="search" onSubmit={onSearchSubmit}>
-        <Search size={20} className="search-icon" aria-hidden="true" />
+        <Search size={18} className="search-icon" aria-hidden="true" />
         <input
           ref={searchInputRef}
           aria-label="Rechercher un arrêt, une station ou une destination"
@@ -1413,11 +1506,11 @@ function ExplorerPanel({
         />
         {search && (
           <button type="button" className="search-clear" aria-label="Effacer la recherche" onClick={onClearSearch}>
-            <X size={17} />
+            <X size={16} />
           </button>
         )}
         <button type="submit" className="search-submit" aria-label="Rechercher" disabled={!search.trim()}>
-          <ArrowRight size={19} />
+          <ArrowRight size={17} />
         </button>
       </form>
 
@@ -1451,8 +1544,8 @@ function ExplorerPanel({
         </section>
       )}
 
-      {/* « Mes destinations » passe au-dessus des réseaux : les favoris de
-          l’usager sont atteints dès l’ouverture de l’application. */}
+      {/* « Mes destinations » en pastilles compactes au-dessus des réseaux :
+          les favoris de l’usager sont atteints immédiatement sans alourdir l’écran. */}
       <div className="destination-shortcuts" aria-label="Destinations enregistrées">
         <strong className="destination-shortcuts-title">Mes destinations</strong>
         <div className="destination-shortcuts-row">
@@ -1468,16 +1561,20 @@ function ExplorerPanel({
                 title={isSaved ? shortcut.goLabel : shortcut.setupLabel}
                 onClick={() => onChooseShortcut(shortcut.id)}
               >
-                <Icon size={18} aria-hidden="true" />
+                <Icon size={14} strokeWidth={2} aria-hidden="true" />
                 <span>{shortcut.label}</span>
-                {isSaved ? <ArrowRight size={15} aria-hidden="true" /> : <Plus size={15} aria-hidden="true" />}
+                {isSaved ? <ArrowRight size={12} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}
               </button>
             )
           })}
         </div>
       </div>
 
-      <ReferenceNetworkSummary now={now} />
+      <ReferenceNetworkSummary
+        now={now}
+        selectedNetwork={selectedNetwork}
+        onSelectNetwork={onSelectNetwork}
+      />
     </section>
   )
 }
@@ -1492,41 +1589,58 @@ function networkMetaLabel(network: NetworkSource): string {
 }
 
 /** Résumé Explorer : le décompte descend en temps réel, sans jamais devenir du temps réel. */
-function ReferenceNetworkSummary({ now }: { now: number }) {
+function ReferenceNetworkSummary({
+  now,
+  selectedNetwork,
+  onSelectNetwork,
+}: {
+  now: number
+  selectedNetwork: NetworkId | null
+  onSelectNetwork: (id: NetworkId) => void
+}) {
   const networks = COMPACT_NETWORK_IDS
     .map((id) => NETWORK_SOURCES.find((network) => network.id === id))
     .filter((network): network is NetworkSource => Boolean(network))
   const passages = networks.map((network) =>
     nextReferencePassage(network.referenceData?.officialFrequencies ?? [], now),
   )
-  // Une grille qui exclut les jours fériés n'a pas de grille déclarée pour ces
-  // jours-là : mieux vaut le dire que laisser croire au même intervalle.
-  const holidayCaveat = passages.some((passage) => passage?.holidayCaveat === true)
 
   return (
     <section className="network-summary-section" aria-label="Réseaux de référence">
       <div className="network-summary-heading">
         <strong>Réseaux de référence</strong>
-        <span className="network-summary-legend">
-          Décompte théorique · pas de temps réel{holidayCaveat ? ' · jours fériés non déclarés' : ''}
-        </span>
       </div>
       <ul className="network-summary-list">
         {networks.map((network, index) => {
           const passage = passages[index]
+          const isSelected = selectedNetwork === network.id
+          const refData = network.referenceData
           return (
-            <li key={network.id}>
+            <li
+              key={network.id}
+              data-network={network.id}
+              className={`network-summary-item network-item-${network.id}${isSelected ? ' is-selected' : ''}`}
+              tabIndex={0}
+              aria-expanded={isSelected}
+              onClick={() => onSelectNetwork(network.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onSelectNetwork(network.id)
+                }
+              }}
+            >
               <span
                 className={`network-summary-dot is-referenced${passage ? ' is-counting' : ''}`}
                 aria-hidden="true"
               />
-              <span className="network-summary-name">{network.referenceData?.shortName ?? network.label}</span>
+              <span className="network-summary-name">{refData?.shortName ?? network.label}</span>
               {passage ? (
                 <span
                   className="network-summary-passage"
                   role="status"
                   title={passage.note}
-                  aria-label={`${network.referenceData?.shortName ?? network.label} : prochain créneau théorique à ${passage.clockLabel}, dans ${passage.minutes} minute${passage.minutes > 1 ? 's' : ''}. Ce n’est pas du temps réel.`}
+                  aria-label={`${refData?.shortName ?? network.label} : prochain créneau théorique à ${passage.clockLabel}, dans ${passage.minutes} minute${passage.minutes > 1 ? 's' : ''}. Ce n’est pas du temps réel.`}
                 >
                   <strong>{formatPassageCountdown(passage.minutes)}</strong>
                   <small>créneau {passage.clockLabel} · {passage.headwayMinutes} min</small>
@@ -1536,6 +1650,11 @@ function ReferenceNetworkSummary({ now }: { now: number }) {
                   <strong>Non déclaré</strong>
                   <small>{networkMetaLabel(network)}</small>
                 </span>
+              )}
+              {isSelected && (
+                <div className="network-summary-detail">
+                  <span>{refData ? `${refData.coverage} · Service ${refData.serviceWindow}` : network.description}</span>
+                </div>
               )}
             </li>
           )
@@ -2525,6 +2644,17 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-09',
+      title: 'Refonte UI/UX Ultra-Premium, pastilles compactes et mode sombre',
+      items: [
+        'Explorer : retrait de la mention redondante « DÉCOMPTE THÉORIQUE • PAS DE TEMPS RÉEL » sous le titre Réseaux de référence pour alléger l’interface.',
+        'Raccourcis de destination : transformation des onglets Maison, Boulot et Adresse en pastilles horizontales compactes (pills) avec défilement discret et proximité immédiate avec la liste des réseaux.',
+        'Hiérarchie typographique : contraste accru entre les noms de réseaux en gras fort (TER, BRT, DDD, AFTU, TATA), les décomptes tabulaires et les états secondaires.',
+        'Micro-interactions et haptique : animations fluides et retour haptique lors de la sélection d’un réseau ou d’un raccourci.',
+        'Mode sombre adaptatif : bascule fluide vers un thème sombre profond et prise en charge automatique de la préférence système.',
+      ],
+    },
     {
       date: '2026-10-09',
       title: 'Décomptes vivants, Trajet repensé, Direct rue',
