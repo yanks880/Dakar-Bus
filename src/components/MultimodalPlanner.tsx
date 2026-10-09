@@ -127,8 +127,8 @@ export function MultimodalPlanner({ mapOrigin = null, mapDestination = null }: M
             <span>{outcome.transfers} correspondance{outcome.transfers > 1 ? 's' : ''}</span>
             <span className="strip-divider" />
             <span><Footprints size={13} /> {formatMeters(outcome.totalWalkM)}</span>
-            <span className="strip-divider" />
-            <span>{outcome.boardedLines.join(' + ')}</span>
+            {outcome.boardedLines.length > 0 && <span className="strip-divider" />}
+            {outcome.boardedLines.length > 0 && <span>{outcome.boardedLines.join(' + ')}</span>}
           </div>
           <ol className="planner-legs">
             {outcome.legs.map((leg, index) => (
@@ -140,7 +140,9 @@ export function MultimodalPlanner({ mapOrigin = null, mapDestination = null }: M
                       ? `${leg.line?.shortName} · ${leg.from} → ${leg.to}`
                       : leg.kind === 'walk_transfer'
                         ? `Correspondance : ${leg.from} → ${leg.to}`
-                        : `Marche${leg.to ? ` vers ${leg.to}` : ''}`}
+                        : leg.kind === 'walk_direct'
+                          ? `À pied : ${leg.from} → ${leg.to}`
+                          : `Marche${leg.to ? ` vers ${leg.to}` : ''}`}
                   </strong>
                   <small>
                     {leg.kind === 'ride'
