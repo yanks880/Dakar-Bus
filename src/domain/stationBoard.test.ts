@@ -94,3 +94,29 @@ describe('tableau des créneaux par station et par sens', () => {
     expect(stationShortName(TER_STOPS[0])).toBe('Dakar')
   })
 })
+
+describe('tableau des créneaux après la fermeture du service', () => {
+  it('n’affiche « service non commencé » sur aucune station une fois le service terminé', () => {
+    // BRT : service 06:00–21:00. À 21:10 le service est fini au terminus tandis
+    // que la dernière course (partie 20:54) atteint encore les stations aval.
+    // Aucune ligne du tableau ne peut annoncer un service non commencé.
+    const line = boardLinesForNetwork('brt')[0]
+    const board = buildStationBoard(line, Date.parse('2026-10-08T21:10:00.000Z'))!
+    const statuses = board.rows.flatMap((row) => [row.outbound?.status, row.inbound?.status])
+    expect(statuses).not.toContain('BEFORE_SERVICE')
+    // Le terminus annonce la reprise du lendemain, les stations aval la dernière course.
+    expect(board.rows[0].outbound?.status).toBe('AFTER_SERVICE')
+    expect(board.rows.some((row) => row.outbound?.status === 'RUNNING')).toBe(true)
+  })
+
+  it('n’annonce aucun créneau BRT après l’arrivée de la dernière course', () => {
+    const line = boardLinesForNetwork('brt')[0]
+    const board = buildStationBoard(line, Date.parse('2026-10-08T22:30:00.000Z'))!
+    const passages = board.rows.flatMap((row) => [row.outbound, row.inbound]).filter(Boolean)
+    expect(passages.length).toBeGreaterThan(0)
+    for (const passage of passages) {
+      expect(passage!.status).toBe('AFTER_SERVICE')
+      expect(passage!.clockLabel.startsWith('06:')).toBe(true)
+    }
+  })
+})

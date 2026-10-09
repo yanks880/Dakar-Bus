@@ -33,13 +33,13 @@ const WEEKDAY_BY_SERVICE_DAY: Record<ServiceDay, number> = {
 }
 
 export type PassageStatus =
-  /** Le service est en cours : le créneau appartient à la période en cours. */
+  /** Un départ de la grille appartient à la journée en cours et n'est pas passé. */
   | 'RUNNING'
   /** Le service n'a pas encore commencé aujourd'hui. */
   | 'BEFORE_SERVICE'
   /** Le service est fermé : le créneau appartient à une journée suivante. */
   | 'AFTER_SERVICE'
-  /** Le service est encore ouvert mais le dernier créneau du jour est passé. */
+  /** Le service est encore ouvert mais le dernier départ du jour est passé. */
   | 'LAST_PAST'
 
 export interface NextPassage {
@@ -130,13 +130,16 @@ export function nextReferencePassage(
 ): NextPassage | null {
   const usable = frequencies.filter(isUsable)
   if (usable.length === 0) return null
-  const offsetMs = Math.max(0, offsetMinutes) * MINUTE_MS
+  // Entrées invalides : une heure illisible ne doit jamais remonter en exception
+  // (`new Date(NaN).toISOString()` lève RangeError). Rien n'est alors affiché.
+  if (!Number.isFinite(now)) return null
+  const offsetMs = (Number.isFinite(offsetMinutes) ? Math.max(0, offsetMinutes) : 0) * MINUTE_MS
   const todayStart = startOfDakarDay(now)
 
   for (let offset = 0; offset < SEARCH_DAYS; offset += 1) {
     const dayStart = todayStart + offset * DAY_MS
     const weekday = new Date(dayStart).getUTCDay()
-    let best: { at: number; frequency: OfficialFrequency } | null = null
+    let best: { at: number; slot: number; frequency: OfficialFrequency } | null = null
 
     for (const frequency of usable) {
       if (!servesWeekday(frequency, weekday)) continue
@@ -152,27 +155,28 @@ export function nextReferencePassage(
       // La fenêtre de service s'apprécie au terminus, origine de la grille.
       if (slot >= end) continue
       const projected = slot + offsetMs
-      if (!best || projected < best.at) best = { at: projected, frequency }
+      if (!best || projected < best.at) best = { at: projected, slot, frequency }
     }
 
     if (!best) continue
 
-    // « Le service est en cours » se mesure aujourd’hui, avec le calendrier
-    // d’aujourd’hui : le jour du créneau trouvé peut être un autre jour.
+    // L'état de service se lit sur le DÉPART retenu, pas sur l'arrivée projetée :
+    // la dernière course d'un service part avant sa fermeture et peut arriver
+    // après. La qualifier de « service non commencé » serait un contresens.
     const todayWeekday = new Date(todayStart).getUTCDay()
-    const runningNow = usable.some(
+    const slotIsToday = best.slot >= todayStart && best.slot - todayStart < DAY_MS
+    const serviceOpenNow = usable.some(
       (frequency) =>
         servesWeekday(frequency, todayWeekday) &&
         windowStart(todayStart, frequency) <= now &&
         now < windowEnd(todayStart, frequency),
     )
-    const sameDay = best.at - todayStart < DAY_MS
-    const status: PassageStatus = runningNow
-      ? sameDay
+    const status: PassageStatus = slotIsToday
+      ? windowStart(todayStart, best.frequency) <= now
         ? 'RUNNING'
-        : 'LAST_PAST'
-      : sameDay
-        ? 'BEFORE_SERVICE'
+        : 'BEFORE_SERVICE'
+      : serviceOpenNow
+        ? 'LAST_PAST'
         : 'AFTER_SERVICE'
     const clockLabel = formatClock(new Date(best.at))
 
