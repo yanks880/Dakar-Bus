@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -37,6 +37,7 @@ import {
   X,
 } from 'lucide-react'
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
+import { useViewportLock } from './components/useViewportLock'
 import { AssistantChat } from './components/AssistantChat'
 import { MobilityBadge, MobilityLineBadges, MobilityText } from './components/MobilityBadge'
 import { PlannerLegList } from './components/PlannerLegList'
@@ -289,6 +290,16 @@ type RequestKey = 'published' | 'lines' | 'nearby' | 'stopSearch' | 'openStop' |
 /** Liste publiée vide, constante : évite de re-rendre la carte à chaque tic. */
 const NO_PUBLISHED_STOPS: readonly PublishedStop[] = []
 
+/**
+ * Hauteur de la coquille en pixels, posée en `--app-height`.
+ * Tant que la première mesure n'est pas faite, aucune variable n'est écrite :
+ * le repli CSS (`100svh`) s'applique.
+ */
+function shellHeightStyle(height: number | null): CSSProperties | undefined {
+  if (height === null || height <= 0) return undefined
+  return { '--app-height': `${Math.round(height)}px` } as CSSProperties
+}
+
 /** Pont stable : la fonction reçue reste la même pour la carte mémorisée, tout en
  *  appelant toujours la version la plus récente (état à jour). */
 function useStableCallback<A extends unknown[], R>(callback: (...args: A) => R): (...args: A) => R {
@@ -398,6 +409,9 @@ function ReferenceStopMark({ stopId, size = 15 }: { stopId: string; size?: numbe
 }
 
 function App() {
+  /** Hauteur verrouillée de la coquille : elle ne varie pas quand le clavier
+   *  mobile s'ouvre, la mise en page ne se décale plus sous le doigt. */
+  const viewportLock = useViewportLock()
   const [activeTab, setActiveTab] = useState<TabId>('explore')
   const [search, setSearch] = useState('')
   const [networkLayers, setNetworkLayers] = useState<Record<NetworkId, boolean>>({
@@ -609,7 +623,8 @@ function App() {
   shortcutRef.current = function handleKeyboardShortcut(event: KeyboardEvent) {
     if (activeTab === 'explore' && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault()
-      searchInputRef.current?.focus()
+      // preventScroll : le focus programmé ne décale pas la mise en page.
+      searchInputRef.current?.focus({ preventScroll: true })
     }
     if (event.key === 'Escape') {
       setLayersOpen(false)
@@ -1216,7 +1231,10 @@ function App() {
   const stableCorridorStop = useStableCallback(handleSelectCorridorStop)
 
   return (
-    <main className={`app-shell tab-${activeTab} theme-${theme}${mapVisible ? '' : ' is-map-hidden'}`}>
+    <main
+      className={`app-shell tab-${activeTab} theme-${theme}${mapVisible ? '' : ' is-map-hidden'}${viewportLock.keyboardOpen ? ' is-keyboard-open' : ''}`}
+      style={shellHeightStyle(viewportLock.height)}
+    >
       {mapVisible && (
       <section className="map-stage" aria-label="Carte de Dakar">
         <TransitMap

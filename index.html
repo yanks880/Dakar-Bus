@@ -2,7 +2,14 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- `interactive-widget=resizes-visual` : l'ouverture du clavier mobile ne
+         redimensionne que la fenêtre visuelle, jamais la fenêtre de mise en
+         page. La mise en page ne se réorganise donc pas sous le doigt. Les
+         navigateurs qui ignorent la clé (Safari, Firefox) s'appuient sur la
+         hauteur verrouillée posée par useViewportLock. Le zoom volontaire de
+         l'usager reste autorisé : c'est la taille de police des champs (16 px)
+         qui supprime le zoom automatique. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual" />
     <meta name="theme-color" content="#f3f8f5" />
     <meta name="description" content="Dakar Bus — la carte de mobilité de Dakar. Explorez la ville et préparez vos déplacements." />
     <link rel="manifest" href="/manifest.webmanifest" />
