@@ -16,6 +16,8 @@ import {
   searchCorridorStops,
 } from './corridors'
 import { NETWORK_REFERENCE_DATA, OFFICIAL_REFERENCE_FREQUENCIES, formatFrequencyPeriod, formatSourceVerification } from './frequencies'
+import { answerMobilityKnowledge, busKnowledgeSummary, generalFareReply } from './mobilityKnowledge'
+import { referentialKnowledgeSummary } from './referential'
 import { getRemainingMinutes } from './truth'
 import { formatPassageCountdown } from './headways'
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint } from './planner'
@@ -110,7 +112,7 @@ const OFFICIAL_CHANNELS =
   'Canaux officiels d’information voyageurs : Sen TER (sentersa.sn, centre d’appels SETER), SunuBRT (sunubrt.sn, Dakar Mobilité) et le CETUD (cetud.sn). Aucune de ces sources n’est connectée en temps réel à cette application pour l’instant.'
 
 const HONEST_LIMIT =
-  'Je raisonne sur les références officielles TER/BRT et les horaires GTFS publiés lorsqu’ils existent : aucune position de véhicule ni donnée temps réel. Pour DDD et AFTU, le catalogue ne contient que des repères de réseau ; aucune fréquence par ligne n’est disponible.'
+  'Je raisonne sur les références officielles TER/BRT et les horaires GTFS publiés lorsqu’ils existent : aucune position de véhicule ni donnée temps réel. Pour DDD et AFTU, je consulte aussi des fiches de lignes et des points de passage textuels sourcés ; les fréquences par ligne et les correspondances bus ne sont pas validées.'
 
 /** Extrait un couple (origine, destination) sans inférer une position actuelle. */
 export function extractJourneyRequest(question: string): { origin: PlannerEndpoint; destination: PlannerEndpoint } | null {
@@ -121,6 +123,15 @@ export function extractJourneyRequest(question: string): { origin: PlannerEndpoi
 export function answerAssistant(question: string, context: AssistantContext, now = Date.now()): string {
   const text = normalize(question)
   if (!text) return 'Posez-moi une question sur les transports de Dakar : arrêts BRT, gares TER, itinéraires, fréquences ou perturbations.'
+
+  const knowledge = answerMobilityKnowledge(question)
+  if (knowledge) return knowledge.text
+
+  // La mémoire embarquée reste consultable sans API ni fichier GTFS.
+  if (includesAny(text, ['memoire', 'base de connaissances', 'quels reseaux', 'toutes les mobilites'])) {
+    return `Ma base de connaissances est embarquée : aucun import GTFS n’est nécessaire pour la consulter.\n${referentialKnowledgeSummary()}\n${busKnowledgeSummary()}`
+  }
+
 
   // 1) Salutations et aide.
   if (/^(bonjour|bonsoir|salut|coucou|bonjour dakarbus)/.test(text) || text.length <= 3) {
@@ -221,7 +232,7 @@ ${outcome.limitation}${advice}`
       const lines = linesServingStop(stop.id)
       return `${stop.name} est desservi par ${lines.map((line) => `${line.shortName} (${CORRIDOR_NETWORKS[line.network].label})`).join(', ')}${stop.note ? ` — ${stop.note}` : ''}. Position et correspondances sont visibles sur l’onglet Explorer (couche « Réseau de référence »).`
     }
-    return 'Ce lieu n’est ni une gare TER ni une station BRT du réseau de référence. Le catalogue DDD/AFTU ne contient pas d’arrêts ni de fréquences par ligne vérifiés ; je préfère le dire plutôt que deviner.'
+    return 'Ce lieu n’est ni une gare TER ni une station BRT du réseau de référence. Les fiches documentaires DDD/AFTU ne permettent pas de garantir ici un arrêt ni une fréquence par ligne ; je préfère le dire plutôt que deviner.'
   }
 
   // 5) Listes et comptes.
@@ -252,10 +263,7 @@ Demandez-moi « liste des stations BRT » ou « liste des gares TER » pour le d
 
   // 6) Tarifs de référence.
   if (includesAny(text, ['tarif', 'prix', 'ticket', 'combien coute', 'payer', 'carte sama'])) {
-    return `Tarifs de référence publiés (Sen TER / presse, à confirmer auprès de l’opérateur) :
-• TER : Dakar–Thiaroye 500 F, Dakar–Rufisque 1 000 F, Dakar–Diamniadio 1 500 F, 1re classe 2 500 F (carte Sama TER) ; ticket dès 300 F selon la zone.
-• BRT : aucun tarif fiable n’est documenté dans mes sources de référence : je ne l’invente pas — consultez sunubrt.sn.
-Ce ne sont pas des données publiées par le pipeline de gouvernance de l’application.`
+    return generalFareReply()
   }
 
   // 7) Horaires / amplitude.

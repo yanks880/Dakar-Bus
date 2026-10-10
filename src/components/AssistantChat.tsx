@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Bot, Mic, MicOff, Send, Sparkles, Square, Volume2, X } from 'lucide-react'
 import { extractJourneyRequest, getAssistantCountdownMinutes, type AssistantContext, type AssistantMessage } from '../domain/assistant'
+import { assistantBounds } from './assistantBounds'
+import { safeHttpUrl } from '../domain/http'
 import { copilotAnswer } from '../domain/copilot'
 import { createConversationMemory, type ConversationMemory } from '../domain/conversation'
 import {
@@ -18,15 +21,6 @@ import {
   type SpeechRecognitionHandle,
 } from '../domain/speech'
 
-const SUGGESTIONS: readonly string[] = [
-  'Quel est le prochain BRT vers Guédiawaye ?',
-  'Trajet de Petersen à Rufisque',
-  'Liste des gares TER',
-  'Compare les trajets de Guédiawaye à Rufisque, moins de marche',
-  'Station la plus proche',
-  'Y a-t-il des perturbations ?',
-]
-
 const LANGUAGE_OPTIONS: readonly { value: AssistantLanguagePreference; label: string; title: string }[] = [
   { value: 'auto', label: 'Auto', title: 'Détecter la langue de la question (français, wolof, mixte)' },
   { value: 'fr', label: 'FR', title: 'Répondre en français' },
@@ -35,9 +29,6 @@ const LANGUAGE_OPTIONS: readonly { value: AssistantLanguagePreference; label: st
 
 let nextMessageId = 1
 
-/** Message d’accueil dérivé du contexte courant (il suit le chargement des données). */
-const GREETING_ID = 0
-
 interface ChatMessage extends AssistantMessage {
   /** Langue effective de la réponse, pour la lecture audio. */
   lang?: 'fr' | 'wo'
@@ -45,23 +36,26 @@ interface ChatMessage extends AssistantMessage {
   failed?: boolean
 }
 
-function greetingText(context: AssistantContext): string {
-  return copilotAnswer('bonjour', context, createConversationMemory(), 'fr').text
-}
-
-function greetingFor(context: AssistantContext): ChatMessage {
-  return {
-    id: GREETING_ID,
-    role: 'assistant',
-    text: greetingText(context),
-    lang: 'fr',
-  }
-}
-
 function AssistantBubble({ message }: { message: ChatMessage }) {
   const className = message.failed
     ? 'assistant-bubble assistant-bubble-assistant assistant-bubble-error'
     : `assistant-bubble assistant-bubble-${message.role}`
+  const sourceParts = message.text.split('\nSource : ')
+  if (message.role === 'assistant' && sourceParts.length > 1) {
+    return (
+      <div className={className}>
+        <p className="assistant-reply-text">{sourceParts[0]}</p>
+        <details className="assistant-sources">
+          <summary>Sources et date de consultation</summary>
+          {sourceParts.slice(1).map((part, index) => {
+            const [url, ...notes] = part.split('\n')
+            const safeUrl = safeHttpUrl(url)
+            return <p key={index}>{safeUrl ? <a href={safeUrl} target="_blank" rel="noopener noreferrer">{new URL(safeUrl).hostname}</a> : 'Source non disponible'}<br />{notes.join('\n')}</p>
+          })}
+        </details>
+      </div>
+    )
+  }
   const countdown = message.countdownMinutes
   if (message.role !== 'assistant' || countdown === undefined || countdown < 1) {
     return <p className={className}>{message.text}</p>
@@ -79,13 +73,13 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
 }
 
 /**
- * Widget d'assistant : bouton flottant et panneau de discussion. Le cerveau est
+ * Widget d'assistant : accès dans l’en-tête et panneau de discussion. Le cerveau est
  * local (`domain/copilot.ts` + `domain/assistant.ts`) : il s'appuie sur le
  * référentiel des mobilités, le calculateur de correspondances et l'état réel
  * des API — aucune conversation n'est envoyée à un service externe.
  *
- * Vie du panneau : il reste ouvert jusqu'à ce que l'usager le ferme ; les
- * questions prédéfinies, l'envoi manuel et la voix passent par le même chemin,
+ * Vie du panneau : il reste ouvert jusqu'à ce que l'usager le ferme ;
+ * l’envoi manuel et la voix passent par le même chemin,
  * avec un état de chargement visible et le défilement vers la dernière réponse.
  */
 export function AssistantChat({ context, onOpenJourney }: { context: AssistantContext; onOpenJourney?: (origin: PlannerEndpoint, destination: PlannerEndpoint) => void }) {
@@ -112,7 +106,58 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
     preferenceRef.current = preference
   }, [preference])
 
-  const messages = useMemo(() => [greetingFor(context), ...exchanges], [context, exchanges])
+  const messages = exchanges
+  const toggleRef = useRef<HTMLButtonElement | null>(null)
+  const [position, setPosition] = useState({ top: 12, left: 12, width: 360, maxHeight: 360 })
+
+  const close = useCallback(() => {
+    setOpen(false)
+    toggleRef.current?.focus()
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const reposition = () => {
+      const rect = toggleRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const viewport = window.visualViewport
+      const height = viewport?.height ?? window.innerHeight
+      const tabs = toggleRef.current?.closest('.sidebar-top')?.querySelector('.desktop-tabs')
+      const tabBounds = tabs?.getBoundingClientRect()
+      // Laisser les onglets cliquables pendant la discussion sur ordinateur.
+      const anchor = { right: rect.right, bottom: Math.max(rect.bottom, tabBounds?.height ? tabBounds.bottom : 0) }
+      setPosition(assistantBounds(anchor, {
+        width: viewport?.width ?? window.innerWidth,
+        height,
+        left: viewport?.offsetLeft ?? 0,
+        top: viewport?.offsetTop ?? 0,
+        keyboardOpen: height < window.innerHeight - 100,
+      }))
+    }
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); close() }
+    }
+    reposition()
+
+    window.addEventListener('resize', reposition)
+    window.visualViewport?.addEventListener('resize', reposition)
+    window.visualViewport?.addEventListener('scroll', reposition)
+    document.addEventListener('keydown', dismiss)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(reposition)
+    const shell = toggleRef.current?.closest('.app-shell')
+    if (shell) observer?.observe(shell)
+    return () => {
+      window.removeEventListener('resize', reposition)
+      window.visualViewport?.removeEventListener('resize', reposition)
+      window.visualViewport?.removeEventListener('scroll', reposition)
+      document.removeEventListener('keydown', dismiss)
+      observer?.disconnect()
+    }
+  }, [open, close, context])
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus({ preventScroll: true })
+  }, [open])
 
   // Défilement vers la réponse la plus récente : après le rendu, une fois la
   // hauteur réelle connue (réponses longues incluses).
@@ -160,7 +205,7 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
         failed = true
         text = 'Une erreur est survenue en préparant cette réponse. Réessayez : la carte, la recherche et le calcul de trajet restent disponibles pendant ce temps.'
       }
-      const journey = reply?.journey ?? extractJourneyRequest(trimmed) ?? undefined
+      const journey = reply ? reply.journey : extractJourneyRequest(trimmed) ?? undefined
       const countdownMinutes = reply?.countdownMinutes
         ?? getAssistantCountdownMinutes(trimmed, contextRef.current, Date.now())
         ?? undefined
@@ -186,12 +231,6 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
     event.preventDefault()
     if (!draft.trim() || pending) return
     if (ask(draft)) setDraft('')
-  }
-
-  function suggest(suggestion: string, event: MouseEvent<HTMLButtonElement>) {
-    // Le clic ne doit ni traverser le panneau, ni partir deux fois.
-    event.stopPropagation()
-    ask(suggestion)
   }
 
   function chooseLanguage(value: AssistantLanguagePreference) {
@@ -240,7 +279,7 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
       return
     }
     const lang = message.lang ?? 'fr'
-    const started = speak({ text: message.text, lang, onEnd: () => setSpeakingId(null) })
+    const started = speak({ text: message.text.split('\nSource : ')[0], lang, onEnd: () => setSpeakingId(null) })
     if (!started) {
       setNotice(lang === 'wo'
         ? 'La lecture audio en wolof n’est pas disponible : aucune voix wolof dans ce navigateur. Le texte reste affiché.'
@@ -254,8 +293,10 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
 
   return (
     <div className="assistant-widget">
-      {open && (
+      {open && createPortal(
         <section
+          id="mobility-assistant-panel"
+          style={position}
           className="assistant-panel"
           aria-label="Assistant mobilité"
           onClick={(event) => event.stopPropagation()}
@@ -264,8 +305,9 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
             <span className="assistant-head-icon"><Bot size={17} /></span>
             <div>
               <strong>Assistant mobilité</strong>
-              <span>TER · BRT · itinéraires — réponses locales, rien n’est envoyé à un serveur distant</span>
+
             </div>
+            <details className="assistant-options"><summary>Langue</summary>
             <div className="assistant-lang" role="group" aria-label="Langue de réponse de l’assistant">
               {LANGUAGE_OPTIONS.map((option) => (
                 <button
@@ -280,7 +322,8 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
                 </button>
               ))}
             </div>
-            <button type="button" className="icon-button" aria-label="Fermer l’assistant" onClick={() => setOpen(false)}><X size={16} /></button>
+            </details>
+            <button type="button" className="icon-button" aria-label="Fermer l’assistant" onClick={close}><X size={16} /></button>
           </header>
           <div className="assistant-messages" ref={listRef} role="log" aria-live="polite" aria-busy={pending}>
             {messages.map((message) => {
@@ -334,11 +377,6 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
               <button type="button" aria-label="Fermer le message de l’assistant" onClick={() => setNotice(null)}><X size={12} /></button>
             </p>
           )}
-          <div className="assistant-suggestions">
-            {SUGGESTIONS.map((suggestion) => (
-              <button key={suggestion} type="button" className="assistant-chip" onClick={(event) => suggest(suggestion, event)}>{suggestion}</button>
-            ))}
-          </div>
           <form className="assistant-form" onSubmit={submit}>
             <input
               ref={inputRef}
@@ -360,11 +398,15 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
             </button>
             <button type="submit" className="assistant-send" aria-label="Envoyer la question" disabled={!draft.trim() || pending}><Send size={15} /></button>
           </form>
-        </section>
+        </section>,
+        toggleRef.current?.closest('.app-shell') ?? document.body,
       )}
       <button
         type="button"
         className={`assistant-toggle${open ? ' is-open' : ''}`}
+        ref={toggleRef}
+        aria-label="Assistant IA"
+        aria-controls="mobility-assistant-panel"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >

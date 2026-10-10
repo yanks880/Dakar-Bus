@@ -951,11 +951,9 @@ button:disabled { cursor: not-allowed; }
 
 /* ── Réseau de référence & nouveaux modules (assistant, calculateur, alertes) ── */
 
-/* Assistant IA : widget flottant rattaché à l'app-shell — au-dessus de la
-   carte (qui isole son contexte d'empilement et rogne ses débordements) et de
-   la barre latérale mobile — visible uniquement dans l'onglet Explorer. */
-.app-shell:not(.tab-explore) .assistant-widget { display: none; }
-.assistant-widget { position: absolute; z-index: 760; bottom: 24px; left: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+/* Assistant IA : déclencheur dans l’en-tête ; panneau porté par l’app-shell
+   pour échapper au rognage de la liste mobile et conserver le thème. */
+.assistant-widget { display: flex; align-items: center; }
 .assistant-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 10px 15px; border: 1px solid rgba(227, 241, 235, .96); border-radius: 999px; background: linear-gradient(135deg, var(--green-700), var(--green-600)); color: #fff; font-size: 12px; font-weight: 700; letter-spacing: .02em; cursor: pointer; box-shadow: 0 10px 26px rgba(12, 74, 50, .32); transition: transform .15s ease, box-shadow .15s ease; }
 .assistant-toggle:hover { transform: translateY(-1px); box-shadow: 0 13px 30px rgba(12, 74, 50, .38); }
 .assistant-toggle.is-open { background: var(--green-800); }
@@ -1045,7 +1043,6 @@ button:disabled { cursor: not-allowed; }
 .map-reference-legend { display: inline-flex; align-items: center; gap: 6px; }
 
 @media (max-width: 820px) {
-  .assistant-widget { bottom: calc(86px + env(safe-area-inset-bottom)); left: 12px; }
   .assistant-panel { width: min(340px, calc(100vw - 24px)); max-height: min(480px, calc(100vh - 170px)); max-height: min(480px, calc(100dvh - 170px)); }
   .planner-card { margin: 12px 14px 16px; }
 }
@@ -1888,3 +1885,63 @@ button:disabled { cursor: not-allowed; }
 .assistant-route-reply { align-self: flex-start; max-width: 92%; }
 .assistant-route-reply .assistant-bubble { max-width: 100%; }
 .assistant-route-reply .assistant-chip { margin: 5px 0 0; }
+
+/* Ajustements ergonomiques : accès stable dans l'en-tête, discussion non modale. */
+.app-shell .assistant-widget { position: relative; inset: auto; display: flex; flex: 0 0 auto; z-index: auto; }
+.assistant-toggle { height: 36px; padding: 0 10px; gap: 6px; border-radius: 10px; box-shadow: none; font-size: 11px; letter-spacing: 0; }
+.assistant-toggle:hover { transform: none; box-shadow: none; }
+.app-shell .assistant-panel { position: fixed; z-index: 1100; width: min(360px, calc(100vw - 24px)); height: 360px; min-height: 0; border-color: var(--line-strong); background: var(--surface-panel); border-radius: 14px; animation: none; backdrop-filter: none; }
+.assistant-head { flex: 0 0 auto; align-items: center; gap: 8px; padding: 10px 12px; background: var(--surface-panel); }
+.assistant-head strong { color: var(--text); font-size: 13px; }
+.assistant-head-icon { background: var(--surface-sunken); color: var(--green-700); }
+.assistant-options { position: relative; font-size: 11px; color: var(--muted); }
+.assistant-options summary { cursor: pointer; padding: 8px 0; }
+.assistant-options .assistant-lang { position: absolute; top: 100%; right: 0; z-index: 1; box-shadow: var(--panel-shadow); }
+.assistant-lang-option { font-size: 12px; padding: 6px; }
+.assistant-messages { min-height: 0; padding: 16px; gap: 18px; overscroll-behavior: contain; }
+.assistant-bubble { font-size: 14px; line-height: 1.65; padding: 10px 12px; }
+.assistant-bubble-assistant { background: transparent; border: 0; color: var(--text); padding-left: 0; }
+.assistant-form { flex: 0 0 auto; align-items: center; padding: 10px 12px; }
+.assistant-form input { background: var(--surface-sunken); color: var(--text); border-color: var(--line-strong); font-size: 16px; }
+.assistant-form input::placeholder { color: var(--muted); }
+.assistant-notice, .assistant-privacy { flex: 0 0 auto; max-height: 72px; overflow-y: auto; font-size: 12px; }
+.brand-actions { gap: 5px; flex-shrink: 0; }
+.brand-actions .theme-toggle-button, .brand-actions .profile-button { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 9px; font-size: 10px; }
+.brand-row { gap: 8px; }
+.brand-lockup { min-width: 0; }
+.explore-guide-panel { gap: 14px; padding-top: 16px; padding-bottom: 20px; }
+.explore-guide-hint, .explore-data-note, .explore-nearby-message { line-height: 1.65; }
+.network-summary-section { gap: 10px; }
+.explore-nearby { gap: 12px; }
+.panel-intro, .panel-heading-row { margin-bottom: 18px; }
+.panel-intro p, .panel-heading-row p { line-height: 1.7; }
+.primary-action { min-height: 42px; border-radius: 10px; box-shadow: none; }
+@media (max-width: 820px) {
+  .explore-guide-panel { gap: 12px; padding: 14px 16px 20px !important; }
+  .brand-actions { gap: 4px; }
+  .assistant-toggle { padding: 0 8px; }
+  .assistant-toggle span { font-size: 0; }
+  .assistant-toggle span::after { content: 'IA'; font-size: 12px; }
+  .brand-subtitle { letter-spacing: .04em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-pending, .assistant-mic.is-listening { animation: none; }
+}
+
+@media (min-width: 821px) and (max-width: 1100px) {
+  .assistant-toggle span { font-size: 0; }
+  .assistant-toggle span::after { content: 'IA'; font-size: 12px; }
+}
+
+/* Les références restent consultables sans noyer la réponse dans des URL. */
+.assistant-reply-text { margin: 0; }
+.assistant-sources { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.assistant-sources summary { cursor: pointer; }
+.assistant-sources p { margin: 10px 0 0; }
+.assistant-sources a { color: var(--green-700); overflow-wrap: anywhere; }
+.assistant-options summary:focus-visible, .assistant-sources summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.nav-tab { min-height: 38px; }
+@media (max-width: 820px) {
+  .mobile-nav-item { border-radius: 11px; }
+  .mobile-nav-item.active { background: var(--surface-sunken); }
+}

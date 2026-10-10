@@ -27,10 +27,10 @@ describe('assistant mobilité', () => {
 
   it('distingue les périodes TER et ne présente pas une référence comme un départ', () => {
     const answer = answerAssistant('Quelle est la fréquence du TER ?', CONTEXT)
-    expect(answer).toContain('05:30–21:00 · 10 min')
-    expect(answer).toContain('21:00–22:00 · 20 min')
-    expect(answer).toContain('06:30–22:00 · 20 min')
-    expect(answer).toContain('vérification en ligne non documentée')
+    expect(answer).toContain('05h35 de Diamniadio, 05h45 de Dakar')
+    expect(answer).toContain('21h05 à 22h05')
+    expect(answer).toContain('06h25 à 22h05')
+    expect(answer).toContain('Consultée le 2026-10-10')
     expect(answer).not.toMatch(/prochain.*dans \d+ min/i)
   })
 

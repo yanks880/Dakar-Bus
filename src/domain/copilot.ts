@@ -1,3 +1,4 @@
+import { answerMobilityKnowledge } from './mobilityKnowledge'
 /**
  * Copilote de mobilité : interprétation des questions libres, récupération
  * dans le référentiel, calcul d'itinéraires et réponses honnêtes.
@@ -357,6 +358,21 @@ export function copilotAnswer(
   const language = resolveResponseLanguage(preference, detected)
   const text = normalize(question)
 
+  // Consultation documentaire avant le parseur de trajets TER/BRT : les noms
+  // de quartiers et numéros bus ne doivent pas être interprétés comme du rail.
+  const knowledge = answerMobilityKnowledge(question, memory.lastKnowledgeLineId)
+  if (knowledge) {
+    memory.lastKnowledgeLineId = knowledge.lineId ?? null
+    memory.lastAnswer = knowledge.text
+    // Ne pas réutiliser un ancien trajet TER/BRT après une fiche bus.
+    if (knowledge.lineId || /\b(ddd|aftu|tata)\b/.test(text) || knowledge.text.startsWith('Pistes documentaires')) {
+      memory.lastJourney = null
+      memory.lastOrigin = null
+      memory.lastDestination = null
+    }
+    return { text: language === 'wo' ? woFrenchFallbackPrefix() + knowledge.text : knowledge.text, language: 'fr' }
+  }
+
   // 1) Questions de suivi, résolues avec le contexte précédent.
   const followUp = detectFollowUp(question)
   if (followUp === 'reverse') {
@@ -487,6 +503,7 @@ export function copilotAnswer(
   //    tarifs, perturbations, état des données) — inchangé.
   const base = answerAssistant(question, context, now)
   const journey = extractJourneyRequest(question)
+  memory.lastKnowledgeLineId = null
   const countdownMinutes = getAssistantCountdownMinutes(question, context, now) ?? undefined
   if (journey) {
     const outcome = planReferenceJourney(journey.origin, journey.destination)
