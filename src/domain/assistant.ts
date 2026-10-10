@@ -27,6 +27,8 @@ export interface AssistantContext {
   publishedAvailable: boolean
   /** L'API d'administration locale répond. */
   adminOnline: boolean
+  /** Position explicite de l'usager (géolocalisation autorisée), jamais déduite. */
+  userLocation?: { lat: number; lon: number; accuracyM?: number } | null
   /** Départ exact issu d'un horaire GTFS publié ; absent pour les seules fréquences de référence. */
   nextDepartureAt?: {
     network: 'brt' | 'ter'
@@ -138,6 +140,7 @@ ${HONEST_LIMIT}`
   // 2) Copilote : intention explicite puis calculateur de référence existant.
   const intent = extractMobilityIntent(question)
   if (intent) {
+    if (!intent.origin && !intent.destination) return 'Ni votre départ ni votre destination ne sont reconnus sur le réseau de référence TER/BRT. Donnez-moi des lieux déclarés (gares, stations) ; je préfère le dire plutôt qu’inventer un trajet.'
     if (!intent.origin) return 'Quel est votre point de départ ? Indiquez « trajet de [gare ou station] à [destination] » : je ne déduis pas votre position.'
     if (!intent.destination) return 'Destination non reconnue sur le réseau de référence TER/BRT. Choisissez une gare ou une station déclarée ; DDD/AFTU ne sont pas encore intégrés.'
     if (intent.priority === 'cheapest') return 'Je ne peux pas classer les trajets par prix : les tarifs complets et vérifiés TER/BRT ne sont pas disponibles ici. Je peux comparer la durée, la marche ou les correspondances, pas inventer un coût.'
