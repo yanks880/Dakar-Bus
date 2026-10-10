@@ -22,7 +22,7 @@ import { getRemainingMinutes } from './truth'
 import { formatPassageCountdown } from './headways'
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint } from './planner'
 import { compareReferenceJourneys, PRIORITY_LABELS } from './comparison'
-import { departureAdvice, extractMobilityIntent } from './intent'
+import { departureAdvice, extractMobilityIntent, withFallbackOrigin, type MobilityIntent } from './intent'
 
 export interface AssistantContext {
   /** Un snapshot GTFS est publié et servi par l'API de lecture. */
@@ -114,13 +114,35 @@ const OFFICIAL_CHANNELS =
 const HONEST_LIMIT =
   'Je raisonne sur les références officielles TER/BRT et les horaires GTFS publiés lorsqu’ils existent : aucune position de véhicule ni donnée temps réel. Pour DDD et AFTU, je consulte aussi des fiches de lignes et des points de passage textuels sourcés ; les fréquences par ligne et les correspondances bus ne sont pas validées.'
 
-/** Extrait un couple (origine, destination) sans inférer une position actuelle. */
-export function extractJourneyRequest(question: string): { origin: PlannerEndpoint; destination: PlannerEndpoint } | null {
-  const intent = extractMobilityIntent(question)
+/**
+ * Extrait un couple (origine, destination) sans inférer une position actuelle.
+ * `fallbackOrigin` est le départ que l'usager a déclaré plus tôt dans la conversation.
+ */
+export function extractJourneyRequest(
+  question: string,
+  fallbackOrigin?: PlannerEndpoint | null,
+): { origin: PlannerEndpoint; destination: PlannerEndpoint } | null {
+  const intent = withFallbackOrigin(extractMobilityIntent(question), fallbackOrigin)
   return intent?.origin && intent.destination ? { origin: intent.origin, destination: intent.destination } : null
 }
 
-export function answerAssistant(question: string, context: AssistantContext, now = Date.now()): string {
+/** Réponse quand le départ manque : elle ne redemande que ce qui manque, sans formule figée. */
+function missingOriginReply(intent: MobilityIntent): string {
+  if (intent.originText) {
+    return `« ${intent.originText} » n’est pas une gare ou une station du réseau de référence TER/BRT, donc je ne peux pas calculer le trajet depuis ce lieu. Indiquez un arrêt connu, par exemple « je suis à Keur Mbaye Fall » ; je ne déduis pas votre position.`
+  }
+  const destination = intent.destination?.label ?? 'cette destination'
+  const served = intent.destination?.stopId ? linesServingStop(intent.destination.stopId) : []
+  const servedText = served.length > 0 ? ` ${destination} est desservi par ${served.map((line) => line.shortName).join(' et ')}.` : ''
+  return `Pour rejoindre ${destination}, il me manque seulement votre point de départ.${servedText} Dites-le simplement, par exemple « je suis à Keur Mbaye Fall ». Je ne déduis pas votre position.`
+}
+
+export interface AnswerOptions {
+  /** Départ déclaré plus tôt dans la conversation, utilisé seulement si la demande n'en donne pas. */
+  fallbackOrigin?: PlannerEndpoint | null
+}
+
+export function answerAssistant(question: string, context: AssistantContext, now = Date.now(), options: AnswerOptions = {}): string {
   const text = normalize(question)
   if (!text) return 'Posez-moi une question sur les transports de Dakar : arrêts BRT, gares TER, itinéraires, fréquences ou perturbations.'
 
@@ -149,10 +171,10 @@ ${HONEST_LIMIT}`
   }
 
   // 2) Copilote : intention explicite puis calculateur de référence existant.
-  const intent = extractMobilityIntent(question)
+  const intent = withFallbackOrigin(extractMobilityIntent(question), options.fallbackOrigin)
   if (intent) {
     if (!intent.origin && !intent.destination) return 'Ni votre départ ni votre destination ne sont reconnus sur le réseau de référence TER/BRT. Donnez-moi des lieux déclarés (gares, stations) ; je préfère le dire plutôt qu’inventer un trajet.'
-    if (!intent.origin) return 'Quel est votre point de départ ? Indiquez « trajet de [gare ou station] à [destination] » : je ne déduis pas votre position.'
+    if (!intent.origin) return missingOriginReply(intent)
     if (!intent.destination) return 'Destination non reconnue sur le réseau de référence TER/BRT. Choisissez une gare ou une station déclarée ; DDD/AFTU ne sont pas encore intégrés.'
     if (intent.priority === 'cheapest') return 'Je ne peux pas classer les trajets par prix : les tarifs complets et vérifiés TER/BRT ne sont pas disponibles ici. Je peux comparer la durée, la marche ou les correspondances, pas inventer un coût.'
     if (intent.arrivalRequested && intent.arrivalMinutes === null) return 'Heure d’arrivée invalide : indiquez une heure de Dakar au format « avant 9 h » ou « avant 09:30 ». Aucun départ ne peut être conseillé sans heure valide.'

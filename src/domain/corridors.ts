@@ -113,7 +113,7 @@ export const CORRIDOR_NETWORKS: Record<CorridorNetworkId, CorridorNetwork> = {
 /** Les 13 gares et haltes du TER, Dakar → Diamniadio.
  *  Coordonnées : OpenStreetMap, nœuds railway=station, operator=SETER. */
 export const TER_STOPS: readonly CorridorStop[] = [
-  { id: 'ter-dakar', name: 'Dakar', lat: 14.6759856, lon: -17.4335181, order: 0, aliases: ['gare de dakar', 'plateau', 'gare centrale'], note: 'Zone 1' },
+  { id: 'ter-dakar', name: 'Dakar', lat: 14.6759856, lon: -17.4335181, order: 0, aliases: ['gare de dakar', 'plateau', 'gare centrale', 'centre ville', 'dakar centre'], note: 'Zone 1' },
   { id: 'ter-colobane', name: 'Colobane', lat: 14.7003482, lon: -17.4416523, order: 1, aliases: ['colobanne'], note: 'Zone 1' },
   { id: 'ter-hann', name: 'Hann', lat: 14.7220913, lon: -17.4320723, order: 2, aliases: ['hann maristes'], note: 'Zone 1' },
   { id: 'ter-dalifort', name: 'Dalifort', lat: 14.7342483, lon: -17.4189983, order: 3, aliases: [], note: 'Zone 1' },

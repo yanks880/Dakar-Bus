@@ -27,6 +27,8 @@ export interface ConversationMemory {
   lastKnowledgeLineId?: string | null
   lastOrigin: PlannerEndpoint | null
   lastDestination: PlannerEndpoint | null
+  /** Départ déclaré par l'usager (« je suis à … ») : repris pour les demandes qui n'en donnent pas. */
+  statedOrigin: PlannerEndpoint | null
   lastJourney: JourneyMemory | null
   lastStopId: string | null
   lastNetwork: 'ter' | 'brt' | 'ddd' | 'aftu' | null
@@ -39,6 +41,7 @@ export function createConversationMemory(): ConversationMemory {
     lastKnowledgeLineId: null,
     lastOrigin: null,
     lastDestination: null,
+    statedOrigin: null,
     lastJourney: null,
     lastStopId: null,
     lastNetwork: null,

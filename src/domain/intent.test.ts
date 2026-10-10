@@ -32,8 +32,10 @@ describe('copilote local à intentions explicites', () => {
     expect(answerAssistant('Trajet de Petersen à Rufisque avant 25 h', CONTEXT, NOW)).toContain('Heure d’arrivée invalide')
   })
 
-  it('demande le départ et refuse les lieux absents des références', () => {
-    expect(answerAssistant('Je veux aller à Rufisque avant 9h', CONTEXT, NOW)).toContain('Quel est votre point de départ')
-    expect(answerAssistant('trajet de Mbour à Rufisque', CONTEXT, NOW)).toContain('Quel est votre point de départ')
+  it('demande seulement le départ manquant, sans formule figée, et refuse les lieux absents des références', () => {
+    const missing = answerAssistant('Je veux aller à Rufisque avant 9h', CONTEXT, NOW)
+    expect(missing).toContain('il me manque seulement votre point de départ')
+    expect(missing).not.toContain('Indiquez « trajet de')
+    expect(answerAssistant('trajet de Mbour à Rufisque', CONTEXT, NOW)).toContain('« mbour » n’est pas une gare')
   })
 })

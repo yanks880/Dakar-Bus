@@ -26,7 +26,7 @@ import {
   reversedJourney,
   type ConversationMemory,
 } from './conversation'
-import { extractMobilityIntent } from './intent'
+import { extractMobilityIntent, extractOriginStatement } from './intent'
 import {
   detectLanguage,
   resolveResponseLanguage,
@@ -499,10 +499,31 @@ export function copilotAnswer(
     return { text: weatherText, language }
   }
 
+  // 4c) Déclaration du départ (« je suis à Keur Mbaye Fall ») sans destination :
+  //     le départ est gardé pour les questions suivantes de la conversation.
+  if (!extractMobilityIntent(question)?.destination) {
+    const statement = extractOriginStatement(question)
+    if (statement && !statement.hasOtherRequest) {
+      if (statement.origin) {
+        memory.statedOrigin = statement.origin
+        const replyText = language === 'wo'
+          ? woFrenchFallbackPrefix() + `Noté : votre départ est ${statement.origin.label}. Où voulez-vous aller ?`
+          : `Noté : vous êtes à ${statement.origin.label}. Où souhaitez-vous aller ? Par exemple : « comment aller à Dakar ? ». Ce départ reste disponible pour vos prochaines questions de cette conversation.`
+        memory.lastAnswer = replyText
+        return { text: replyText, language }
+      }
+      if (statement.originText) {
+        const replyText = (language === 'wo' ? woFrenchFallbackPrefix() : '') + `« ${statement.originText} » n’est pas une gare ou une station du réseau de référence TER/BRT : je ne peux pas le retenir comme départ. Indiquez un arrêt connu, par exemple Keur Mbaye Fall, Petersen ou Parcelles Assainies ; je ne déduis pas votre position.`
+        memory.lastAnswer = replyText
+        return { text: replyText, language }
+      }
+    }
+  }
+
   // 5) Le moteur existant couvre le reste (fréquences, listes, trajets,
   //    tarifs, perturbations, état des données) — inchangé.
-  const base = answerAssistant(question, context, now)
-  const journey = extractJourneyRequest(question)
+  const base = answerAssistant(question, context, now, { fallbackOrigin: memory.statedOrigin })
+  const journey = extractJourneyRequest(question, memory.statedOrigin)
   memory.lastKnowledgeLineId = null
   const countdownMinutes = getAssistantCountdownMinutes(question, context, now) ?? undefined
   if (journey) {
