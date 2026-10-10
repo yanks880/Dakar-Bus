@@ -18,6 +18,7 @@
  * distinctes des horaires GTFS et du temps réel (aucune position de véhicule).
  */
 
+import { REFERENCE_COMMERCIAL_SPEED_KPH } from './assumptions'
 import { FREQUENCY_SOURCES, OFFICIAL_REFERENCE_FREQUENCIES, type FrequencySource, type FrequencyStatus, type OfficialFrequency } from './frequencies'
 
 export type CorridorNetworkId = 'ter' | 'brt'
@@ -186,7 +187,7 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     frequencySource: FREQUENCY_SOURCES.ter,
     officialFrequencies: OFFICIAL_REFERENCE_FREQUENCIES.ter,
     serviceWindow: '05:30–22:00 selon la période : 10 min en journée, 20 min le soir et les dimanches/jours fériés',
-    speedKph: 55,
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.ter,
   },
   {
     id: 'brt-b1',
@@ -205,7 +206,7 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     frequencySource: FREQUENCY_SOURCES.brt,
     officialFrequencies: OFFICIAL_REFERENCE_FREQUENCIES.brt,
     serviceWindow: '06:00–21:00 · fréquence officielle de référence : 6 min',
-    speedKph: 25,
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.brt,
     // Desserte annoncée du service semi-express B3 (SunuBRT, octobre 2025),
     // remise dans l’ordre de parcours Petersen → Guédiawaye.
     expressStopIds: [

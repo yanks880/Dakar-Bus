@@ -22,10 +22,14 @@
   --green-800: #0f5132;
   --green-900: #0a3622;
   --green-950: #052a1b;
-  /* Vert Dakar des minutes d'attente : une seule définition, partagée par le
-     résumé des réseaux, le tableau par station, les fiches de course et
-     l'assistant, pour qu'un même délai s'affiche dans la même couleur partout. */
-  --passage-green: #00B140;
+  /* Minutes d'attente : un seul jeton, partagé par le résumé des réseaux, le
+     tableau par station, les fiches de course et l'assistant.
+     #00B140 sur fond clair (#fafdfc) ne fait que 2,79:1, sous le seuil AA de
+     4,5:1 pour du texte de 10 à 14,5 px. En thème clair, la même teinte
+     (142°, saturation 100 %) est assombrie à #007A2D : 4,93:1 sur
+     --passage-green-tint, le fond le plus sombre où ces minutes sont écrites.
+     Le thème sombre redéfinit le jeton : #00B140 y reste lisible. */
+  --passage-green: #007A2D;
   --passage-green-tint: #e5f7ec;
   /* Surfaces légèrement teintées : moins de blanc pur, même lisibilité. */
   --surface-shell: #f3f8f5;
@@ -1726,6 +1730,10 @@ button:disabled { cursor: not-allowed; }
 .app-shell.theme-dark {
   color-scheme: dark;
   color: #e6f4ed;
+  /* #00B140 passe AA sur les surfaces sombres (≥ 4,99:1). La pastille claire
+     #e5f7ec ne le ferait plus : elle prend le vert sombre de la palette. */
+  --passage-green: #00B140;
+  --passage-green-tint: #0f291e;
   --green-50: #0f291e;
   --green-100: #163b2b;
   --green-200: #1f513b;
@@ -1757,6 +1765,8 @@ button:disabled { cursor: not-allowed; }
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     color: #e6f4ed;
+    --passage-green: #00B140;
+    --passage-green-tint: #0f291e;
     --green-50: #0f291e;
     --green-100: #163b2b;
     --green-200: #1f513b;
