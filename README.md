@@ -395,6 +395,26 @@ Règles appliquées par le code et vérifiées par les tests (`src/App.test.tsx`
 - les 23 stations BRT affichées suivent la séquence de référence encodée dans `src/domain/corridors.ts` ; les positions sont associées aux identifiants OSM du projet, mais leur exactitude et leur date de vérification externe ne sont pas documentées ;
 - aucun slogan publicitaire : l'interface est réduite aux informations utiles.
 
+## Clavier mobile : hauteur verrouillée (correction du 10 octobre 2026)
+
+L'ouverture du clavier virtuel ne modifie plus la mise en page. Auparavant,
+toucher le champ « On va où ? » décalait la page vers le haut, rognait l'en-tête
+et recalculait la carte sous le doigt.
+
+- la coquille porte une **hauteur en pixels** (`--app-height`, écrite par
+  `src/components/useViewportLock.ts`, repli `100svh`) qui ne change pas pendant
+  l'ouverture du clavier ; le corps de page est fixe et sans défilement ;
+- la carte a une **hauteur contrainte** (`33.333 %` de la coquille, jamais une
+  unité de fenêtre) et Leaflet naît avec `trackResize: false` : le recalcul des
+  tuiles est décidé par `MapResizeController`, jamais pendant le clavier ;
+- tous les champs qui appellent le clavier sont à **16 px** au minimum, seuil en
+  dessous duquel iOS Safari et Chrome Android zooment la page au focus ; le zoom
+  volontaire (pincement) reste disponible ;
+- `index.html` déclare `interactive-widget=resizes-visual` : le clavier ne
+  redimensionne que la fenêtre visuelle, pas la fenêtre de mise en page.
+
+Détail, causes vérifiées et tests : `docs/correction-clavier-mobile-2026-10-10.md`.
+
 ## Carte et déploiement
 
 Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.org`) avec attribution. Avant une mise en production à audience significative, choisir et configurer un fournisseur de tuiles adapté à la charge et respecter ses conditions d'utilisation. Les couches de transport doivent provenir de datasets distincts, versionnés et réutilisables légalement.

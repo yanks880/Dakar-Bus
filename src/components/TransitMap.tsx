@@ -6,6 +6,8 @@ import type { CorridorLine, CorridorStop } from '../domain/corridors'
 import { formatFrequencyPeriod, formatSourceVerification } from '../domain/frequencies'
 import { safeHttpUrl } from '../domain/http'
 import { mobilityFromStopId, mobilityPaint, type MobilityPaint } from '../domain/mobilityColors'
+import { keyboardIsOpen, shouldResizeMap, summonsKeyboard } from '../domain/viewportLock'
+import { focusTargetOf } from './useViewportLock'
 
 export interface Coordinates {
   lat: number
@@ -109,6 +111,75 @@ function MapInitialFit({ bounds }: { bounds: RegionBounds | null }) {
   return null
 }
 
+/**
+ * Recalcul maîtrisé de la carte.
+ *
+ * La carte naît avec `trackResize: false` : Leaflet n'écoute plus `resize`, qui
+ * déclenchait un `invalidateSize` dès que le clavier mobile réduisait la
+ * fenêtre — d'où le reflow violent au toucher du champ de recherche. C'est ce
+ * contrôleur qui décide, et il refuse tout recalcul pendant que le clavier est
+ * ouvert : la carte garde sa taille et ses tuiles, elle est simplement
+ * recouverte. À la fermeture du clavier, la taille étant revenue à l'identique,
+ * aucun recalcul n'est nécessaire.
+ */
+function MapResizeController() {
+  const map = useMap()
+
+  useEffect(() => {
+    const container = map.getContainer()
+    const sizeOf = () => ({ width: container.clientWidth, height: container.clientHeight })
+    let previous = sizeOf()
+    let editing = false
+    let lockedHeight = window.innerHeight
+
+    const keyboardState = () => {
+      const visual = window.visualViewport
+      const open = keyboardIsOpen({
+        layoutHeight: window.innerHeight,
+        visualHeight: visual ? visual.height : null,
+        editing,
+        lockedHeight,
+      })
+      if (!open) lockedHeight = window.innerHeight
+      return open
+    }
+
+    const sync = () => {
+      const next = sizeOf()
+      if (shouldResizeMap({ previous, next, keyboardOpen: keyboardState() })) {
+        previous = next
+        map.invalidateSize({ animate: false })
+      }
+    }
+    const handleFocusIn = (event: FocusEvent) => {
+      editing = summonsKeyboard(focusTargetOf(event.target))
+    }
+    const handleFocusOut = () => {
+      editing = false
+      sync()
+    }
+
+    window.addEventListener('resize', sync)
+    window.addEventListener('orientationchange', sync)
+    document.addEventListener('focusin', handleFocusIn)
+    document.addEventListener('focusout', handleFocusOut)
+    const visual = window.visualViewport
+    visual?.addEventListener('resize', sync)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync)
+    observer?.observe(container)
+    return () => {
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('orientationchange', sync)
+      document.removeEventListener('focusin', handleFocusIn)
+      document.removeEventListener('focusout', handleFocusOut)
+      visual?.removeEventListener('resize', sync)
+      observer?.disconnect()
+    }
+  }, [map])
+
+  return null
+}
+
 /** Échappe une valeur avant de l’insérer dans le HTML d’une icône Leaflet. */
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`)
@@ -169,6 +240,9 @@ function TransitMapView({
       zoomControl={false}
       scrollWheelZoom
       preferCanvas
+      /* Leaflet n'écoute plus `resize` : le clavier mobile ne redimensionne
+         plus la carte. MapResizeController décide du recalcul. */
+      trackResize={false}
       className={`leaflet-map${pickingPoint ? ' leaflet-map-picking' : ''}`}
       aria-label="Carte interactive de Dakar"
     >
@@ -180,6 +254,7 @@ function TransitMapView({
       <MapClickHandler pickingPoint={pickingPoint} onChoosePoint={onChoosePoint} />
       <MapController recenterTo={recenterTo} zoomAction={zoomAction} />
       <MapInitialFit bounds={initialBounds} />
+      <MapResizeController />
 
       {/* Réseau de référence :
           - TER #003366 bleu et BRT #00A859 vert émeraude : tracés continus complets (halo + casing + core)

@@ -457,6 +457,40 @@ describe('structure en quatre piliers', () => {
     }
   })
 
+  /** Bug du 10 octobre 2026 : l'ouverture du clavier mobile au toucher du champ
+   *  « On va où ? » étirait la page vers le haut et rognait l'en-tête. La
+   *  coquille porte une hauteur en pixels qui ne bouge pas pendant le clavier. */
+  it('verrouille la hauteur de la coquille pendant l’ouverture du clavier mobile', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    vi.stubGlobal('innerHeight', 800)
+    const visual = Object.assign(new EventTarget(), { height: 800, offsetTop: 0, width: 390, offsetLeft: 0 })
+    vi.stubGlobal('visualViewport', visual)
+
+    const { container } = render(<App />)
+    const shell = container.querySelector<HTMLElement>('.app-shell')
+    expect(shell?.style.getPropertyValue('--app-height')).toBe('800px')
+
+    const field = screen.getByPlaceholderText('On va où ?')
+    act(() => {
+      field.focus()
+    })
+    act(() => {
+      visual.height = 470
+      visual.dispatchEvent(new Event('resize'))
+    })
+
+    // La mise en page garde sa hauteur : rien ne se décale sous le doigt.
+    expect(shell?.classList.contains('is-keyboard-open')).toBe(true)
+    expect(shell?.style.getPropertyValue('--app-height')).toBe('800px')
+
+    act(() => {
+      field.blur()
+      visual.height = 800
+    })
+    expect(shell?.classList.contains('is-keyboard-open')).toBe(false)
+    expect(shell?.style.getPropertyValue('--app-height')).toBe('800px')
+  })
+
   it('keeps Trajet focused on the route form and hides the Explorer search field', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     const { container } = render(<App />)

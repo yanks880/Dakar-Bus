@@ -69,7 +69,19 @@
 * { box-sizing: border-box; }
 
 html, body, #root { width: 100%; height: 100%; margin: 0; }
-body { min-width: 320px; min-height: 100%; overflow: hidden; }
+/* Le corps de page ne grandit et ne défile jamais. Quand le clavier mobile
+   s'ouvre, c'est la fenêtre visuelle qui se réduit — la mise en page, elle,
+   garde sa hauteur : l'en-tête et le logo ne sont plus rognés. `position:
+   fixed` supprime en plus le défilement élastique d'iOS qui décalait toute la
+   page vers le haut au focus du champ de recherche. */
+body {
+  position: fixed;
+  inset: 0;
+  min-width: 320px;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+#root { overflow: hidden; }
 button, input { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
@@ -81,12 +93,26 @@ button:disabled { cursor: not-allowed; }
   display: grid;
   grid-template-columns: minmax(360px, 404px) minmax(0, 1fr);
   width: 100%;
+  /* Hauteur verrouillée. `--app-height` est écrite en pixels par
+     useViewportLock et ne change pas pendant l'ouverture du clavier mobile ;
+     `100svh` sert de repli (petite fenêtre stable, insensible au clavier),
+     `100vh` de repli des navigateurs sans unité svh. L'unité dynamique qui
+     suivait le clavier et étirait toute la page est proscrite. Aucune hauteur
+     minimale n'est imposée : sur une fenêtre basse, la coquille se comprime au
+     lieu de déborder et de faire rogner son en-tête. */
   height: 100vh;
-  height: 100dvh;
-  min-height: 600px;
+  height: 100svh;
+  height: var(--app-height, 100svh);
+  min-height: 0;
   overflow: hidden;
   background: var(--surface-shell);
 }
+
+/* Clavier mobile ouvert : la mise en page est figée telle quelle. Aucune
+   transition n'accompagne l'ouverture du clavier, rien ne se décale sous le
+   doigt ; le champ reste lisible grâce au défilement de son propre conteneur. */
+.app-shell.is-keyboard-open,
+.app-shell.is-keyboard-open * { transition: none !important; }
 
 /* The map is deliberately a real geographic basemap; transit features are not synthesized. */
 .map-stage {
@@ -314,10 +340,14 @@ button:disabled { cursor: not-allowed; }
 .search-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 24px; }
 .search-heading h1 { margin: 5px 0 0; color: #163c2a; font-family: Manrope, sans-serif; font-size: 23px; font-weight: 750; letter-spacing: -.04em; line-height: 1.2; }
 .search-heading-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #e7f2ed; border-radius: 11px; background: #f5fbf8; color: #198754; }
-.search-form { display: flex; height: 48px; align-items: center; margin-top: 15px; padding: 0 11px 0 14px; border: 1px solid var(--line-strong); border-radius: 13px; background: #f9fdfb; color: #6d887c; gap: 10px; transition: border .15s ease, box-shadow .15s ease, background .15s ease; }
+/* `touch-action: manipulation` : un double tap sur le champ ne déclenche plus
+   le zoom du navigateur. Le zoom volontaire (pincement) reste disponible. */
+.search-form { display: flex; height: 48px; align-items: center; margin-top: 15px; padding: 0 11px 0 14px; border: 1px solid var(--line-strong); border-radius: 13px; background: #f9fdfb; color: #6d887c; gap: 10px; touch-action: manipulation; transition: border .15s ease, box-shadow .15s ease, background .15s ease; }
 .search-form:focus-within { border-color: #8bc0a8; background: var(--surface-raised); box-shadow: 0 0 0 3px rgba(25, 135, 84, .12); }
 .search-icon { flex: 0 0 auto; color: #577d6c; }
-.search-form input { width: 100%; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: #264939; font-size: 12px; }
+/* 16 px au minimum : en dessous, iOS Safari et Chrome Android zooment la page
+   entière dès que le champ reçoit le focus. */
+.search-form input { width: 100%; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: #264939; font-size: 16px; }
 .search-form input::placeholder { color: #869b92; }
 .search-form input:focus-visible { outline: 0; }
 .search-form kbd { display: flex; flex: 0 0 auto; align-items: center; padding: 4px 6px; border: 1px solid #e6edea; border-radius: 6px; background: var(--surface-raised); color: #859990; font-family: inherit; font-size: 9px; white-space: nowrap; }
@@ -525,7 +555,7 @@ button:disabled { cursor: not-allowed; }
   .profile-button { width: 31px; height: 31px; }
   .search-heading { display: none; }
   .search-form { height: 49px; margin-top: 9px; padding-right: 12px; border: 1px solid rgba(226, 240, 234, .95); border-radius: 14px; background: rgba(var(--overlay), .97); box-shadow: 0 5px 18px rgba(25, 52, 35, .08); pointer-events: auto; backdrop-filter: blur(16px); }
-  .search-form input { font-size: 12px; }
+  .search-form input { font-size: 16px; }
   .desktop-tabs { display: none; }
   .panel-content { position: absolute; right: 12px; bottom: calc(82px + env(safe-area-inset-bottom)); left: 12px; max-height: min(32vh, 255px); overflow-y: auto; border: 1px solid rgba(229, 242, 237, .96); border-radius: 22px; background: rgba(var(--overlay), .97); box-shadow: 0 12px 36px rgba(21, 53, 35, .17); pointer-events: auto; backdrop-filter: blur(20px); }
   .panel { padding: 16px 17px 17px; }
@@ -938,7 +968,7 @@ button:disabled { cursor: not-allowed; }
 
 .console-login { display: grid; margin-top: 10px; gap: 5px; }
 .console-login label { color: #759385; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.console-login input { padding: 8px 9px; border: 1px solid #e2eee8; border-radius: 10px; background: var(--surface-sunken); color: #2e473b; font-size: 11px; }
+.console-login input { padding: 8px 9px; border: 1px solid #e2eee8; border-radius: 10px; background: var(--surface-sunken); color: #2e473b; font-size: 16px; }
 .console-login input:focus { border-color: #b2e3cc; outline: 2px solid #e8f6ef; }
 
 .console-dataset-list { display: grid; margin: 12px 0 0; padding: 0; list-style: none; gap: 9px; }
@@ -954,7 +984,7 @@ button:disabled { cursor: not-allowed; }
 .console-form fieldset { display: grid; margin: 4px 0 0; padding: 8px; border: 1px solid #e8f2ed; border-radius: 10px; background: var(--surface-card); gap: 4px; }
 .console-form legend { padding: 0 4px; color: #4e6d5f; font-size: 9px; font-weight: 700; }
 .console-form label { color: #759385; font-size: 8px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.console-form input, .console-form textarea { width: 100%; padding: 7px 8px; border: 1px solid #e2eee8; border-radius: 9px; background: var(--surface-sunken); color: #2e473b; font-family: inherit; font-size: 10px; resize: vertical; }
+.console-form input, .console-form textarea { width: 100%; padding: 7px 8px; border: 1px solid #e2eee8; border-radius: 9px; background: var(--surface-sunken); color: #2e473b; font-family: inherit; font-size: 16px; resize: vertical; }
 .console-form input:focus, .console-form textarea:focus { border-color: #b2e3cc; outline: 2px solid #e8f6ef; }
 
 .console-hint { margin: 2px 0 0; color: #708c7f; font-size: 8.8px; line-height: 1.5; }
@@ -1010,7 +1040,7 @@ button:disabled { cursor: not-allowed; }
 .assistant-chip { padding: 6px 10px; border: 1px solid #cae7da; border-radius: 999px; background: var(--surface-card); color: #146c43; font-size: 10.5px; font-weight: 600; line-height: 1.3; cursor: pointer; transition: background .12s ease; }
 .assistant-chip:hover { background: var(--green-100); }
 .assistant-form { display: flex; gap: 8px; padding: 13px 16px; border-top: 1px solid var(--line); background: transparent; }
-.assistant-form input { flex: 1 1 auto; min-width: 0; padding: 10px 13px; border: 1px solid #d4e6de; border-radius: 11px; background: #f6fbf9; font-size: 13px; line-height: 1.5; }
+.assistant-form input { flex: 1 1 auto; min-width: 0; padding: 10px 13px; border: 1px solid #d4e6de; border-radius: 11px; background: #f6fbf9; font-size: 16px; line-height: 1.5; }
 .assistant-mic { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto; border: 1px solid #cae7da; border-radius: 10px; background: var(--surface-card); color: var(--green-700); cursor: pointer; }
 .assistant-mic:hover { background: var(--green-100); }
 .assistant-mic.is-listening { border-color: var(--green-700); background: var(--green-700); color: #fff; animation: assistant-mic-pulse 1.6s ease-in-out infinite; }
@@ -1082,7 +1112,9 @@ button:disabled { cursor: not-allowed; }
 .app-shell.tab-explore {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 33.333dvh) minmax(0, 1fr);
+  /* Pourcentage de la coquille, jamais une unité de fenêtre : la ligne de la
+     carte ne suit plus l'ouverture du clavier. */
+  grid-template-rows: minmax(0, 33.333%) minmax(0, 1fr);
   min-height: 0;
 }
 .app-shell.tab-explore .map-stage { grid-column: 1; grid-row: 1; min-height: 0; }
@@ -1130,7 +1162,7 @@ button:disabled { cursor: not-allowed; }
   font-size: 12.5px;
 }
 .explore-search-form { height: 46px; margin: 0; padding: 0 7px 0 14px; border-radius: 13px; background: var(--surface-card); }
-.explore-search-form input { font-size: 14.5px; color: var(--text); }
+.explore-search-form input { font-size: 16px; color: var(--text); }
 .explore-search-form input::placeholder { color: var(--muted); }
 .search-submit { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 10px; background: var(--green-600); color: #fff; cursor: pointer; transition: background .15s ease, transform .15s ease; }
 .search-submit:hover:not(:disabled) { background: var(--green-700); transform: scale(1.03); }
@@ -1311,9 +1343,10 @@ button:disabled { cursor: not-allowed; }
   .app-shell.tab-explore {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 33.333dvh) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 33.333%) minmax(0, 1fr);
     height: 100vh;
-    height: 100dvh;
+    height: 100svh;
+    height: var(--app-height, 100svh);
     min-height: 0;
   }
   .app-shell.tab-explore .map-stage { position: relative; inset: auto; grid-column: 1; grid-row: 1; height: 100%; }
@@ -1353,7 +1386,7 @@ button:disabled { cursor: not-allowed; }
   .explore-guide-heading h2 { font-size: 19px; }
   .explore-locate { min-height: 32px; padding: 0 10px; font-size: 12px; }
   .explore-search-form { height: 42px; border-radius: 12px; }
-  .explore-search-form input { font-size: 14px; }
+  .explore-search-form input { font-size: 16px; }
   .explore-guide-hint, .explore-data-note, .explore-nearby-message { font-size: 11.5px; }
   .destination-shortcuts { gap: 4px 6px; padding-top: 0; }
   .destination-shortcuts-title { font-size: 9px; }
@@ -1601,7 +1634,7 @@ button:disabled { cursor: not-allowed; }
 .point-symbol.destination-symbol i { border-color: var(--green-600); background: var(--green-600); }
 .point-field-content { grid-template-columns: minmax(0, 1fr); }
 .point-title { color: #4f6b5d; font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
-.point-search-input { width: 100%; min-width: 0; height: 26px; border: 0; outline: 0; background: transparent; color: #234937; font-size: 14px; font-weight: 650; }
+.point-search-input { width: 100%; min-width: 0; height: 26px; border: 0; outline: 0; background: transparent; color: #234937; font-size: 16px; font-weight: 650; }
 .point-search-input::placeholder { color: #8ba295; font-weight: 500; }
 .point-search-input:focus-visible { outline: 0; }
 .combobox-picked { display: grid; min-width: 0; gap: 1px; }
@@ -1665,7 +1698,7 @@ button:disabled { cursor: not-allowed; }
 .street-field { display: grid; position: relative; gap: 4px; }
 .street-field > span { color: #4f6b5d; font-size: 9px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .street-field > span em { color: #93a99f; font-size: 8.5px; font-style: normal; font-weight: 600; text-transform: none; }
-.street-field input, .street-field select, .street-field textarea { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); color: #22483a; font: inherit; font-size: 13px; }
+.street-field input, .street-field select, .street-field textarea { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); color: #22483a; font: inherit; font-size: 16px; }
 .street-field textarea { min-height: 58px; resize: vertical; }
 .street-field input:focus, .street-field select:focus, .street-field textarea:focus { border-color: var(--green-500); outline: 0; box-shadow: 0 0 0 3px rgba(25, 135, 84, .13); }
 .street-counter { position: absolute; right: 8px; bottom: 6px; color: #93a99f; font-size: 8px; }
@@ -1750,7 +1783,7 @@ button:disabled { cursor: not-allowed; }
   .street-provenance p, .street-empty, .street-footnote { font-size: 12px; }
   .street-report-place { font-size: 14px; }
   .street-report-comment { font-size: 12.5px; }
-  .street-field input, .street-field select, .street-field textarea { min-height: 44px; font-size: 14px; }
+  .street-field input, .street-field select, .street-field textarea { min-height: 44px; font-size: 16px; }
   .street-form-heading strong { font-size: 14px; }
   .street-form-heading small { font-size: 11.5px; }
   .street-position-toggle { min-height: 40px; font-size: 12.5px; }
@@ -1760,7 +1793,7 @@ button:disabled { cursor: not-allowed; }
   .station-board-row { min-height: 46px; }
   .station-board-stop { font-size: 13px; }
   .station-board-footnote { font-size: 9px; }
-  .point-search-input { height: 30px; font-size: 15px; }
+  .point-search-input { height: 30px; font-size: 16px; }
   .combobox-picked-label { font-size: 15px; }
 }
 
