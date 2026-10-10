@@ -1294,8 +1294,102 @@ describe('copilote et comparateur sur les parcours existants', () => {
     const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
     fireEvent.change(input, { target: { value: 'trajet de Petersen à Rufisque' } })
     fireEvent.submit(input.closest('form')!)
+    // La réponse asynchrone doit être visible avant l'action « Ouvrir dans Trajet ».
+    await screen.findByText(/Itinéraire de référence Petersen/i)
     fireEvent.click(screen.getByRole('button', { name: /ouvrir dans Trajet/i }))
     expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /comparer les options TER\/BRT/i })).toBeTruthy()
+  })
+})
+
+describe('fenêtre du copilote : questions et réponses visibles', () => {
+  it('une suggestion prédéfinie affiche la question et la réponse dans le panneau, sans double envoi', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    const suggestion = screen.getByRole('button', { name: 'Trajet de Petersen à Rufisque' })
+    fireEvent.click(suggestion)
+    // Un second clic avant la réponse ne duplique pas la question.
+    fireEvent.click(suggestion)
+    const panel = screen.getByRole('region', { name: /assistant mobilité/i })
+    const log = within(panel).getByRole('log')
+    expect(within(log).getAllByText('Trajet de Petersen à Rufisque')).toHaveLength(1)
+    expect(within(log).getByText(/L’assistant consulte les données/i)).toBeTruthy()
+    expect(await within(log).findByText(/Itinéraire de référence Petersen/i)).toBeTruthy()
+    expect(within(log).queryByText(/L’assistant consulte les données/i)).toBeNull()
+  })
+
+  it('la suggestion « prochain BRT » reçoit une réponse honnête dans le panneau', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Quel est le prochain BRT vers Guédiawaye/i }))
+    const panel = screen.getByRole('region', { name: /assistant mobilité/i })
+    const log = within(panel).getByRole('log')
+    expect(await within(log).findByText(/fréquence officielle de référence du BRT/i)).toBeTruthy()
+    expect(within(log).queryByText(/temps réel/i)).toBeTruthy()
+  })
+
+  it('« Ouvrir dans Trajet » injecte le trajet sans fermer la fenêtre', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'trajet de Petersen à Rufisque' } })
+    fireEvent.submit(input.closest('form')!)
+    await screen.findByText(/Itinéraire de référence Petersen/i)
+    fireEvent.click(screen.getByRole('button', { name: /ouvrir dans Trajet/i }))
+    // L'onglet Trajet est actif ET la fenêtre reste ouverte (état conservé).
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /assistant IA/i }).getAttribute('aria-expanded')).toBe('true')
+    // De retour dans Explorer, la conversation est toujours là.
+    fireEvent.click(screen.getByRole('tab', { name: /^explorer$/i }))
+    expect(screen.getByRole('region', { name: /assistant mobilité/i })).toBeTruthy()
+    expect(screen.getAllByText(/Itinéraire de référence Petersen/i).length).toBeGreaterThan(0)
+  })
+
+  it('la saisie manuelle envoie une seule fois et fait défiler vers la réponse', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'liste des gares TER' } })
+    const form = input.closest('form')!
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+    const panel = screen.getByRole('region', { name: /assistant mobilité/i })
+    expect(within(panel).getAllByText('liste des gares TER')).toHaveLength(1)
+    expect(await within(panel).findByText(/Les 13 gares et haltes du TER/i)).toBeTruthy()
+    expect(within(panel).getByRole('log')).toBeTruthy()
+  })
+
+  it('sans reconnaissance vocale, le micro explique le repli écrit au lieu de simuler', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    fireEvent.click(screen.getByRole('button', { name: /poser la question par la voix/i }))
+    expect(await screen.findByText(/reconnaissance vocale n’est pas disponible/i)).toBeTruthy()
+  })
+
+  it('sans synthèse vocale, le bouton d’écoute explique la limite sans bloquer le chat', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    const voices = screen.getAllByRole('button', { name: /écouter la réponse/i })
+    fireEvent.click(voices[0])
+    expect(await screen.findByText(/synthèse vocale n’est pas disponible/i)).toBeTruthy()
+    expect(screen.getByRole('region', { name: /assistant mobilité/i })).toBeTruthy()
+  })
+
+  it('le choix de langue de réponse persiste et la conversation est conservée', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'WO', hidden: false }))
+    expect(window.localStorage.getItem('dakar-bus:assistant-language')).toBe('wo')
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'trajet de Petersen à Rufisque' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(await screen.findByText(/Yoon wi/i)).toBeTruthy()
   })
 })

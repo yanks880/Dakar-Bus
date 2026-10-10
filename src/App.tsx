@@ -1249,13 +1249,6 @@ function App() {
         <div className="map-attribution-note">
           <span className="map-attribution-dot" /> Fond cartographique OpenStreetMap
         </div>
-
-        {/* Assistant IA : bouton flottant en bas à gauche de la carte. */}
-        <AssistantChat context={{
-          publishedAvailable: dataAvailable,
-          adminOnline: governance.status === 'ready',
-          nextDepartureAt: assistantScheduleFromJourney(journey.search, countdownNow),
-        }} onOpenJourney={openAssistantJourney} />
       </section>
       )}
 
@@ -1442,6 +1435,20 @@ function App() {
           <button type="button" className="footer-link" onClick={() => { setActiveTab('settings'); setConsoleOpen(false) }}>Aide, CGU & sources <ArrowRight size={13} /></button>
         </footer>
       </aside>
+
+      {/* Assistant IA : monté au niveau de l'app-shell, hors de la carte, pour
+          rester au-dessus de tous les plans (la section carte isole son
+          contexte d'empilement et rogne ses débordements) et conserver la
+          conversation quand on quitte l'onglet Explorer. Visible dans Explorer
+          uniquement (CSS), jamais démonté. */}
+      <AssistantChat context={{
+        publishedAvailable: dataAvailable,
+        adminOnline: governance.status === 'ready',
+        nextDepartureAt: assistantScheduleFromJourney(journey.search, countdownNow),
+        userLocation: gpsState === 'ready' && location
+          ? { lat: location.lat, lon: location.lng, accuracyM: location.accuracy }
+          : null,
+      }} onOpenJourney={openAssistantJourney} />
 
       <nav className="mobile-nav" aria-label="Navigation principale">
         {NAV_ITEMS.map((item) => {
