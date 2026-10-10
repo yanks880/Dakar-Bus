@@ -1,7 +1,9 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { ArrowRight, BusFront, Footprints, Info, Route as RouteIcon, TrainFront } from 'lucide-react'
+import { ArrowRight, Footprints, Info, Route as RouteIcon } from 'lucide-react'
 import { ALL_CORRIDOR_STOPS, BRT_STOPS, TER_STOPS, type CorridorStop } from '../domain/corridors'
 import { formatMeters, planReferenceJourney, type PlannerEndpoint, type PlannerOutcome } from '../domain/planner'
+import { MobilityLineBadges } from './MobilityBadge'
+import { PlannerLegList } from './PlannerLegList'
 
 export interface PlannerPoint {
   label: string
@@ -31,12 +33,6 @@ function endpointFromSelection(value: string, mapPoint: PlannerPoint | null, kin
   const stop = ALL_CORRIDOR_STOPS.find((candidate) => candidate.id === value)
   if (!stop) return null
   return { label: stop.name, lat: stop.lat, lon: stop.lon, stopId: stop.id }
-}
-
-function LegIcon({ kind, network }: { kind: string; network?: 'ter' | 'brt' }) {
-  if (kind === 'ride' && network === 'ter') return <TrainFront size={15} />
-  if (kind === 'ride') return <BusFront size={15} />
-  return <Footprints size={15} />
 }
 
 /**
@@ -128,32 +124,9 @@ export function MultimodalPlanner({ mapOrigin = null, mapDestination = null }: M
             <span className="strip-divider" />
             <span><Footprints size={13} /> {formatMeters(outcome.totalWalkM)}</span>
             {outcome.boardedLines.length > 0 && <span className="strip-divider" />}
-            {outcome.boardedLines.length > 0 && <span>{outcome.boardedLines.join(' + ')}</span>}
+            {outcome.boardedLines.length > 0 && <MobilityLineBadges names={outcome.boardedLines} />}
           </div>
-          <ol className="planner-legs">
-            {outcome.legs.map((leg, index) => (
-              <li key={`${leg.kind}-${index}`} className={`planner-leg planner-leg-${leg.kind}`}>
-                <span className="planner-leg-icon"><LegIcon kind={leg.kind} network={leg.line?.network} /></span>
-                <span className="planner-leg-copy">
-                  <strong>
-                    {leg.kind === 'ride'
-                      ? `${leg.line?.shortName} · ${leg.from} → ${leg.to}`
-                      : leg.kind === 'walk_transfer'
-                        ? `Correspondance : ${leg.from} → ${leg.to}`
-                        : leg.kind === 'walk_direct'
-                          ? `À pied : ${leg.from} → ${leg.to}`
-                          : `Marche${leg.to ? ` vers ${leg.to}` : ''}`}
-                  </strong>
-                  <small>
-                    {leg.kind === 'ride'
-                      ? `${leg.minutes} min${leg.intermediateStops && leg.intermediateStops.length > 0 ? ` · via ${leg.intermediateStops.join(', ')}` : ''}${leg.distanceM ? ` · ${formatMeters(leg.distanceM)}` : ''}`
-                      : `${formatMeters(leg.distanceM)} · ~${leg.minutes} min`}
-                  </small>
-                </span>
-                <span className="planner-leg-time">~{leg.minutes} min</span>
-              </li>
-            ))}
-          </ol>
+          <PlannerLegList legs={outcome.legs} />
           <p className="planner-footnote"><Info size={13} /> {outcome.limitation}</p>
         </div>
       )}

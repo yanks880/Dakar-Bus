@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Info, MapPin, Search, X } from 'lucide-react'
 import { searchStopIndex, type StopOption } from '../domain/stops'
 import { BRT_STOPS, TER_STOPS } from '../domain/corridors'
+import { isMobilityId } from '../domain/mobilityColors'
+import { MobilityBadge } from './MobilityBadge'
 
 /** Compteurs dérivés des données réelles : ils ne peuvent plus diverger du réseau affiché. */
 const TER_COUNT = TER_STOPS.length
@@ -157,16 +159,20 @@ export function StopCombobox({
                     id={optionId(index)}
                     role="option"
                     aria-selected={index === activeIndex}
-                    className={`point-option${index === activeIndex ? ' is-active' : ''}${option.selectable ? '' : ' is-informative'}`}
+                    className={`point-option${index === activeIndex ? ' is-active' : ''}${option.selectable ? '' : ' is-informative'}${isMobilityId(option.networkId) ? ` mobility-${option.networkId}` : ''}`}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => choose(option)}
                   >
                     <span className="point-option-main">
-                      <strong>{option.label}</strong>
+                      <strong>
+                        {option.kind === 'network' && isMobilityId(option.networkId)
+                          ? <MobilityBadge id={option.networkId}>{option.label}</MobilityBadge>
+                          : option.label}
+                      </strong>
                       <small>{option.hint}</small>
                     </span>
                     {option.selectable ? (
-                      <span className="point-option-group">{option.group}</span>
+                      <span className={`point-option-group${option.kind === 'reference' && isMobilityId(option.networkId) ? ` mobility-badge mobility-${option.networkId}` : ''}`}>{option.group}</span>
                     ) : (
                       <span className="point-option-group point-option-group-info"><Info size={12} /> non utilisable</span>
                     )}

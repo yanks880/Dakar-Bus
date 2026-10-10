@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEve
 import { createPortal } from 'react-dom'
 import { Bot, Mic, MicOff, Send, Sparkles, Square, Volume2, X } from 'lucide-react'
 import { extractJourneyRequest, getAssistantCountdownMinutes, type AssistantContext, type AssistantMessage } from '../domain/assistant'
+import { MobilityText } from './MobilityBadge'
 import { assistantBounds } from './assistantBounds'
 import { safeHttpUrl } from '../domain/http'
 import { copilotAnswer } from '../domain/copilot'
@@ -40,11 +41,15 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
   const className = message.failed
     ? 'assistant-bubble assistant-bubble-assistant assistant-bubble-error'
     : `assistant-bubble assistant-bubble-${message.role}`
+  if (message.role !== 'assistant') return <p className={className}>{message.text}</p>
   const sourceParts = message.text.split('\nSource : ')
-  if (message.role === 'assistant' && sourceParts.length > 1) {
+  const countdown = message.countdownMinutes
+  const mark = countdown !== undefined && countdown >= 1 ? `${countdown} min` : undefined
+  const reply = <MobilityText text={sourceParts[0]} mark={mark} />
+  if (sourceParts.length > 1) {
     return (
       <div className={className}>
-        <p className="assistant-reply-text">{sourceParts[0]}</p>
+        <div className="assistant-reply-text">{reply}</div>
         <details className="assistant-sources">
           <summary>Sources et date de consultation</summary>
           {sourceParts.slice(1).map((part, index) => {
@@ -56,20 +61,7 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
       </div>
     )
   }
-  const countdown = message.countdownMinutes
-  if (message.role !== 'assistant' || countdown === undefined || countdown < 1) {
-    return <p className={className}>{message.text}</p>
-  }
-  const label = `${countdown} min`
-  const index = message.text.indexOf(label)
-  if (index < 0) return <p className={className}>{message.text}</p>
-  return (
-    <p className={className}>
-      {message.text.slice(0, index)}
-      <strong className="assistant-countdown">{label}</strong>
-      {message.text.slice(index + label.length)}
-    </p>
-  )
+  return <div className={className}>{reply}</div>
 }
 
 /**

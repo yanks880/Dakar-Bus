@@ -38,6 +38,8 @@ import {
 } from 'lucide-react'
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
 import { AssistantChat } from './components/AssistantChat'
+import { MobilityBadge, MobilityLineBadges, MobilityText } from './components/MobilityBadge'
+import { PlannerLegList } from './components/PlannerLegList'
 import { RouteComparison } from './components/RouteComparison'
 import { extractMobilityIntent } from './domain/intent'
 import { MultimodalPlanner } from './components/MultimodalPlanner'
@@ -66,6 +68,7 @@ import {
 } from './domain/journeys'
 import { formatMeters, planReferenceJourney, type PlannerEndpoint, type PlannerOutcome } from './domain/planner'
 import { NETWORK_SOURCES, type NetworkId, type NetworkSource } from './domain/network'
+import { MOBILITY_IDS, isMobilityId, mobilityFromLabel, mobilityFromStopId, type MobilityId } from './domain/mobilityColors'
 import { NETWORK_REFERENCE_DATA, formatFrequencyPeriod, formatSourceVerification } from './domain/frequencies'
 import { formatPassageCountdown, nextCountdownTickDelay, nextReferencePassage, type NextPassage } from './domain/headways'
 import { boardLinesForNetwork, buildStationBoard, stationShortName, type StationBoard, type StationRow } from './domain/stationBoard'
@@ -383,6 +386,12 @@ function formatCoordinates(point: Coordinates): string {
 function NetworkIcon({ id, size = 18 }: { id: NetworkId; size?: number }) {
   const Icon = NETWORK_ICONS[id]
   return <Icon size={size} strokeWidth={1.8} aria-hidden="true" />
+}
+
+function ReferenceStopMark({ stopId, size = 15 }: { stopId: string; size?: number }) {
+  const id = mobilityFromStopId(stopId) ?? 'brt'
+  const Icon = id === 'ter' ? TrainFront : BusFront
+  return <span className={`stop-row-icon reference-icon-${id} mobility-tile mobility-${id}`}><Icon size={size} /></span>
 }
 
 function App() {
@@ -1249,9 +1258,9 @@ function App() {
               <p className="popover-note">Activez uniquement les couches que vous souhaitez voir sur la carte.</p>
               <div className="layer-options">
                 {NETWORK_SOURCES.map((network) => (
-                  <label className="layer-option" key={network.id}>
+                  <label className={`layer-option${isMobilityId(network.id) ? ` mobility-${network.id}` : ''}`} key={network.id}>
                     <input type="checkbox" checked={networkLayers[network.id]} onChange={() => toggleNetwork(network.id)} />
-                    <span className={`layer-icon layer-icon-${network.id}`}><NetworkIcon id={network.id} size={16} /></span>
+                    <span className={`layer-icon layer-icon-${network.id}${isMobilityId(network.id) ? ` mobility-tile mobility-${network.id}` : ''}`}><NetworkIcon id={network.id} size={16} /></span>
                     <span className="layer-label">{network.label}</span>
                   </label>
                 ))}
@@ -1278,6 +1287,14 @@ function App() {
             <button type="button" aria-label="Annuler la sélection" onClick={cancelPointSelection}><X size={16} /></button>
           </div>
         )}
+
+        <div className="map-mobility-legend" aria-label="Code couleur des mobilités">
+          <span className="map-mobility-legend-title">Réseaux</span>
+          <div className="map-mobility-legend-row">
+            {MOBILITY_IDS.map((id) => <MobilityBadge key={id} id={id} />)}
+          </div>
+          <small>Tracés affichés : TER et BRT. DDD, AFTU et TATA n’ont pas de géométrie publiée.</small>
+        </div>
 
         <div className="map-controls" aria-label="Contrôles de la carte">
           <button type="button" className="map-control" aria-label="Zoom avant" onClick={() => zoomMap(1)}><Plus size={17} /></button>
@@ -1784,7 +1801,7 @@ function ReferenceNetworkSummary({
             <li
               key={network.id}
               data-network={network.id}
-              className={`network-summary-item network-item-${network.id}${isSelected ? ' is-selected' : ''}`}
+              className={`network-summary-item network-item-${network.id}${isMobilityId(network.id) ? ` mobility-${network.id}` : ''}${isSelected ? ' is-selected' : ''}`}
             >
               <button
                 type="button"
@@ -1796,7 +1813,9 @@ function ReferenceNetworkSummary({
                   className={`network-summary-dot is-referenced${passage ? ' is-counting' : ''}`}
                   aria-hidden="true"
                 />
-                <span className="network-summary-name">{refData?.shortName ?? network.label}</span>
+                {isMobilityId(network.id)
+                  ? <MobilityBadge id={network.id}>{refData?.shortName ?? network.label}</MobilityBadge>
+                  : <span className="network-summary-name">{refData?.shortName ?? network.label}</span>}
                 {passage ? (
                   <span
                     className="network-summary-passage"
@@ -1867,6 +1886,7 @@ function stationRowAriaLabel(stopName: string, passage: NextPassage | null, dest
 /** Un sens de circulation : titre explicite (« Dakar ➔ Diamniadio »), puis une
  *  gare par ligne, empilées verticalement avec leur décompte isolé. */
 function StationDirectionSection({
+  network,
   line,
   direction,
   fromLabel,
@@ -1874,6 +1894,7 @@ function StationDirectionSection({
   rows,
   onFocusStation,
 }: {
+  network: MobilityId | null
   line: string
   direction: 'outbound' | 'inbound'
   fromLabel: string
@@ -1888,7 +1909,7 @@ function StationDirectionSection({
       aria-label={`${line} – Direction ${directionName} : ${fromLabel} vers ${toLabel}`}
     >
       <h4 className="station-direction-title">
-        <span className="station-direction-kicker">{line} – Direction {directionName}</span>
+        <span className="station-direction-kicker">{network ? <MobilityBadge id={network}>{line}</MobilityBadge> : line} Direction {directionName}</span>
         <span className="station-direction-route">{fromLabel} ➔ {toLabel}</span>
       </h4>
       <ul className="station-board-list">
@@ -1938,6 +1959,7 @@ function StationBoardView({
         <small>{board.rows.length} {board.line.network === 'ter' ? (board.rows.length > 1 ? 'gares' : 'gare') : (board.rows.length > 1 ? 'stations' : 'station')} · 2 sens</small>
       </div>
       <StationDirectionSection
+        network={isMobilityId(board.line.network) ? board.line.network : null}
         line={line}
         direction="outbound"
         fromLabel={originLabel}
@@ -1946,6 +1968,7 @@ function StationBoardView({
         onFocusStation={onFocusStation}
       />
       <StationDirectionSection
+        network={isMobilityId(board.line.network) ? board.line.network : null}
         line={line}
         direction="inbound"
         fromLabel={destinationLabel}
@@ -1981,11 +2004,14 @@ function ReferenceFrequencyCards() {
           const sourceLabel = id === 'brt' ? 'CETUD / SunuBRT' : id === 'ter' ? 'TER / SETER' : 'CETUD'
           const sourceHref = safeHttpUrl(network.source.sourceUrl)
           return (
-            <article className={`network-reference-card reference-${id}`} key={id}>
+            <article className={`network-reference-card reference-${id} mobility-${id}`} key={id}>
               <header className="network-reference-card-head">
-                <span className={`network-reference-icon network-${id}`}><Icon size={17} aria-hidden="true" /></span>
+                <span className={`network-reference-icon network-${id} mobility-tile mobility-${id}`}><Icon size={17} aria-hidden="true" /></span>
                 <span className="network-reference-title">
-                  <strong>{network.label}</strong>
+                  <strong>
+                    <MobilityBadge id={id}>{network.shortName}</MobilityBadge>
+                    {network.label !== network.shortName ? <span className="network-reference-fullname"> {network.label}</span> : null}
+                  </strong>
                   <small>{network.coverage}</small>
                 </span>
               </header>
@@ -2088,7 +2114,9 @@ function RoutePanel({
         <div>
           <span className="eyebrow">GUIDE DE TRAJET</span>
           <h2>Planifier un trajet</h2>
-          <p className="route-coverage" aria-label="Mobilités couvertes">TER · BRT · DDD · TATA · AFTU</p>
+          <p className="route-coverage" aria-label="Mobilités couvertes">
+            {MOBILITY_IDS.map((id) => <MobilityBadge key={id} id={id} />)}
+          </p>
         </div>
         {(routePoints.origin || routePoints.destination) && <button type="button" className="icon-button clear-route" aria-label="Effacer le trajet" onClick={onClear}><X size={16} /></button>}
       </div>
@@ -2296,31 +2324,9 @@ function ReferenceJourneyOutcome({ outcome, notice, originLabel, destinationLabe
         <span className="strip-divider" />
         <span><Footprints size={13} /> {formatMeters(outcome.totalWalkM)}</span>
         {outcome.boardedLines.length > 0 && <span className="strip-divider" />}
-        {outcome.boardedLines.length > 0 && <span>{outcome.boardedLines.join(' + ')}</span>}
+        {outcome.boardedLines.length > 0 && <MobilityLineBadges names={outcome.boardedLines} />}
       </div>
-      <ol className="planner-legs">
-        {outcome.legs.map((leg, index) => {
-          const isTer = leg.line?.network === 'ter'
-          const Icon = leg.kind === 'ride' ? (isTer ? TrainFront : BusFront) : Footprints
-          const title = leg.kind === 'ride'
-            ? `${leg.line?.shortName ?? 'Ligne'} · ${leg.from} → ${leg.to}`
-            : leg.kind === 'walk_transfer'
-              ? `Correspondance à pied · ${leg.from} → ${leg.to}`
-              : leg.kind === 'walk_direct'
-                ? `À pied · ${leg.from} → ${leg.to}`
-                : `Marche${leg.to ? ` vers ${leg.to}` : ''}`
-          const detail = leg.kind === 'ride'
-            ? `~${leg.minutes} min${leg.intermediateStops?.length ? ` · via ${leg.intermediateStops.join(', ')}` : ''}`
-            : `${formatMeters(leg.distanceM)} · ~${leg.minutes} min${leg.note ? ` · ${leg.note}` : ''}`
-          return (
-            <li key={`${leg.kind}-${leg.line?.id ?? ''}-${index}`} className={`planner-leg planner-leg-${leg.kind}${leg.line?.network ? ` planner-leg-${leg.line.network}` : ''}`}>
-              <span className="planner-leg-icon"><Icon size={15} /></span>
-              <span className="planner-leg-copy"><strong>{title}</strong><small>{detail}</small></span>
-              <span className="planner-leg-time">~{leg.minutes} min</span>
-            </li>
-          )
-        })}
-      </ol>
+      <PlannerLegList legs={outcome.legs} />
       <p className="journey-footnote journey-footnote-strong">{outcome.limitation}</p>
     </section>
   )
@@ -2333,10 +2339,11 @@ function JourneyCard({ journey, localDay, now }: { journey: Journey; localDay: s
     ? getRemainingMinutes(journey.nextDepartureAt, now)
     : null
   const scheduledDepartureExpired = journey.departureStatus === 'SCHEDULED' && journey.nextDepartureAt !== null && countdownMinutes === null
+  const mobility = mobilityFromLabel(`${journey.routeShortName ?? ''} ${journey.routeLongName ?? ''} ${journey.routeId}`)
   return (
-    <li className="journey-card">
+    <li className={`journey-card${mobility ? ` mobility-${mobility}` : ''}`}>
       <div className="journey-card-head">
-        <span className="journey-route-badge">{journeyRouteLabel(journey)}</span>
+        <span className={`journey-route-badge${mobility ? ` mobility-badge mobility-${mobility}` : ''}`}>{journeyRouteLabel(journey)}</span>
         <span className="journey-mode">{describeRouteType(journey.routeType)}</span>
         {journey.routeLongName && <span className="journey-route-name">{journey.routeLongName}</span>}
         {countdownMinutes !== null && (
@@ -2415,13 +2422,16 @@ function StopCard({
 
       {stop.routes.length > 0 ? (
         <ul className="stop-card-routes">
-          {stop.routes.map((route) => (
-            <li key={route.routeId}>
-              <span className="stop-route-badge"><BusFront size={13} /></span>
+          {stop.routes.map((route) => {
+            const mobility = mobilityFromLabel(`${route.shortName ?? ''} ${route.longName ?? ''} ${route.routeId}`)
+            return (
+            <li key={route.routeId} className={mobility ? `mobility-${mobility}` : undefined}>
+              <span className={`stop-route-badge${mobility ? ` mobility-tile mobility-${mobility}` : ''}`}><BusFront size={13} /></span>
               <span>{routeDisplayName(route)}</span>
               <small>{describeRouteType(route.routeType)}{route.tripCount !== null ? ` · ${route.tripCount} courses` : ''}</small>
             </li>
-          ))}
+            )
+          })}
         </ul>
       ) : (
         <p className="stop-card-note">Aucune ligne ne dessert cet arrêt dans le snapshot publié.</p>
@@ -2477,7 +2487,7 @@ function UniversalSearchCard({
           {answer && (
             <div className="assistant-answer">
               <div className="assistant-answer-head"><Bot size={15} /><strong>Assistant mobilité</strong></div>
-              <p>{answer.answer}</p>
+              <div className="assistant-reply-text"><MobilityText text={answer.answer} /></div>
             </div>
           )}
 
@@ -2522,16 +2532,16 @@ function UniversalSearchCard({
               </div>
               <ul className="reference-stop-list">
                 {referenceMatches.map((stop) => {
-                  const isTer = stop.id.startsWith('ter')
-                  const Icon = isTer ? TrainFront : BusFront
+                  const networkId = mobilityFromStopId(stop.id)
                   return (
                     <li key={stop.id}>
-                      <button type="button" className="published-stop-row" onClick={() => onSelectReferenceStop(stop)}>
-                        <span className={`stop-row-icon reference-icon-${isTer ? 'ter' : 'brt'}`}><Icon size={15} /></span>
+                      <button type="button" className={`published-stop-row${networkId ? ` mobility-${networkId}` : ''}`} onClick={() => onSelectReferenceStop(stop)}>
+                        <ReferenceStopMark stopId={stop.id} />
                         <span className="stop-row-copy">
                           <strong>{stop.name}</strong>
                           <small>
-                            {CORRIDOR_NETWORKS[isTer ? 'ter' : 'brt'].label} · {linesServingStop(stop.id).map((line) => line.shortName).join(', ')} · référence
+                            {networkId && <MobilityBadge id={networkId} />}
+                            {' · '}{linesServingStop(stop.id).map((line) => line.shortName).join(', ')} · référence
                           </small>
                         </span>
                         <ArrowRight size={14} />
@@ -2596,9 +2606,9 @@ function DataCatalogSection({
       </div>
       <div className="layer-options settings-layer-options">
         {NETWORK_SOURCES.map((network) => (
-          <label className="layer-option" key={network.id}>
+          <label className={`layer-option${isMobilityId(network.id) ? ` mobility-${network.id}` : ''}`} key={network.id}>
             <input type="checkbox" checked={Boolean(layerState?.[network.id])} onChange={() => onToggleLayer(network.id)} />
-            <span className={`layer-icon layer-icon-${network.id}`}><NetworkIcon id={network.id} size={16} /></span>
+            <span className={`layer-icon layer-icon-${network.id}${isMobilityId(network.id) ? ` mobility-tile mobility-${network.id}` : ''}`}><NetworkIcon id={network.id} size={16} /></span>
             <span className="layer-label">{network.label}</span>
             <span className="layer-empty">
               {network.id === 'ter' ? `${TER_STOPS.length} gares · référence`
@@ -2624,9 +2634,11 @@ function DataCatalogSection({
           )}
           {lines.status === 'ready' && lines.routes.length > 0 && (
             <ul className="published-route-list">
-              {lines.routes.map((route) => (
-                <li key={route.routeId}>
-                  <span className="route-list-badge"><BusFront size={14} /></span>
+              {lines.routes.map((route) => {
+                const mobility = mobilityFromLabel(`${route.shortName ?? ''} ${route.longName ?? ''} ${route.routeId}`)
+                return (
+                <li key={route.routeId} className={mobility ? `mobility-${mobility}` : undefined}>
+                  <span className={`route-list-badge${mobility ? ` mobility-tile mobility-${mobility}` : ''}`}><BusFront size={14} /></span>
                   <span className="route-list-copy">
                     <strong>{routeDisplayName(route)}</strong>
                     <small>
@@ -2635,7 +2647,8 @@ function DataCatalogSection({
                     </small>
                   </span>
                 </li>
-              ))}
+                )
+              })}
             </ul>
           )}
         </div>
@@ -2664,15 +2677,18 @@ function DataCatalogSection({
           <ul className="reference-stop-list">
             {referenceStops.map((stop) => {
               const serving = linesServingStop(stop.id)
-              const isTer = stop.id.startsWith('ter')
-              const Icon = isTer ? TrainFront : BusFront
+              const networkId = mobilityFromStopId(stop.id)
               return (
                 <li key={stop.id}>
-                  <button type="button" className="published-stop-row" onClick={() => onFocusReferenceStop(stop)}>
-                    <span className={`stop-row-icon reference-icon-${isTer ? 'ter' : 'brt'}`}><Icon size={15} /></span>
+                  <button type="button" className={`published-stop-row${networkId ? ` mobility-${networkId}` : ''}`} onClick={() => onFocusReferenceStop(stop)}>
+                    <ReferenceStopMark stopId={stop.id} />
                     <span className="stop-row-copy">
                       <strong>{stop.name}</strong>
-                      <small>{serving.map((line) => line.shortName).join(', ')}{stop.note ? ` · ${stop.note}` : ''} · référence</small>
+                      <small>
+                        {networkId && <MobilityBadge id={networkId} />}
+                        {serving.length > 0 ? ` · ${serving.map((line) => line.shortName).join(', ')}` : ''}
+                        {stop.note ? ` · ${stop.note}` : ''} · référence
+                      </small>
                     </span>
                     <ArrowRight size={14} />
                   </button>
@@ -2685,7 +2701,7 @@ function DataCatalogSection({
 
       <div className="filter-scroll" role="group" aria-label="Filtrer les réseaux">
         {filters.map((item) => (
-          <button key={item.id} type="button" className={`filter-chip${filter === item.id ? ' selected' : ''}`} onClick={() => onFilterChange(item.id)}>{item.label}</button>
+          <button key={item.id} type="button" className={`filter-chip${isMobilityId(item.id) ? ` mobility-${item.id}` : ''}${filter === item.id ? ' selected' : ''}`} onClick={() => onFilterChange(item.id)}>{item.label}</button>
         ))}
       </div>
 
@@ -2694,10 +2710,15 @@ function DataCatalogSection({
         {sources.map((network) => {
           const Icon = NETWORK_ICONS[network.id]
           return (
-            <article className="network-source-card" key={network.id}>
-              <span className={`network-source-icon network-${network.id}`}><Icon size={18} strokeWidth={1.85} /></span>
+            <article className={`network-source-card${isMobilityId(network.id) ? ` mobility-${network.id}` : ''}`} key={network.id}>
+              <span className={`network-source-icon network-${network.id}${isMobilityId(network.id) ? ` mobility-tile mobility-${network.id}` : ''}`}><Icon size={18} strokeWidth={1.85} /></span>
               <div className="network-source-copy">
-                <strong>{network.label}</strong>
+                <strong>
+                  {isMobilityId(network.id) ? <MobilityBadge id={network.id}>{network.referenceData?.shortName ?? network.label}</MobilityBadge> : network.label}
+                  {isMobilityId(network.id) && network.label !== (network.referenceData?.shortName ?? network.label)
+                    ? <span className="network-source-fullname"> {network.label}</span>
+                    : null}
+                </strong>
                 <span>{network.description}</span>
               </div>
             </article>
@@ -2785,8 +2806,8 @@ function AlertsPanel({
         <div className="alerts-ai-header">
           <span className="alerts-ai-badge"><Bot size={12} /> Assistant IA</span>
         </div>
-        <p className="alerts-ai-text">{aiSummaryFr}</p>
-        <p className="alerts-ai-text alerts-ai-wolof" lang="wo">{aiSummaryWo}</p>
+        <p className="alerts-ai-text"><MobilityText text={aiSummaryFr} /></p>
+        <p className="alerts-ai-text alerts-ai-wolof" lang="wo"><MobilityText text={aiSummaryWo} /></p>
       </div>
 
       {/* Switch entre vue des alertes agrégées (officielles + trafic + IA)
@@ -2859,9 +2880,10 @@ function AlertsPanel({
                   </div>
                   {alert.affectedLines.length > 0 && (
                     <div className="alert-affected-lines">
-                      {alert.affectedLines.map((line) => (
-                        <span key={line} className="alert-line-chip">{line}</span>
-                      ))}
+                      {alert.affectedLines.map((line) => {
+                        const mobility = mobilityFromLabel(line)
+                        return <span key={line} className={`alert-line-chip${mobility ? ` mobility-badge mobility-${mobility}` : ''}`}>{line}</span>
+                      })}
                     </div>
                   )}
                 </li>
@@ -3043,6 +3065,16 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-10',
+      title: 'Code couleur officiel des mobilités',
+      items: [
+        'Carte : le tracé TER est bleu ferroviaire cerclé de bleu nuit, le tracé BRT est vert électrique cerclé d’émeraude. Les puces d’arrêt reprennent la pastille du réseau.',
+        'Pastilles : TER, BRT, DDD, AFTU et TATA utilisent leur couleur officielle sur l’écran principal, dans Réseaux de référence, les filtres et les listes d’arrêts.',
+        'AFTU et TATA partagent la paire orange ambré / marron : AFTU s’affiche en ambre, TATA en marron, pour les distinguer sans sortir de la palette.',
+        'Assistant et recherche : les étapes de correspondance et les résultats d’itinéraire reprennent le même code. DDD, AFTU et TATA n’ont toujours pas de tracé géographique publié.',
+      ],
+    },
     {
       date: '2026-10-10',
       title: 'Alertes : GPS, arrêts à proximité et synthèse IA temps réel',
