@@ -6,7 +6,7 @@
 export type FrequencyStatus = 'OFFICIAL_REFERENCE' | 'SCHEDULED' | 'ESTIMATED' | 'REAL_TIME' | 'UNKNOWN'
 export type FrequencyAuthority = 'CETUD' | 'TER_DAKAR' | 'SETER' | 'AFTU' | 'DDD'
 export type ServiceDay = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN'
-export type ReferenceNetworkId = 'ter' | 'brt' | 'ddd' | 'aftu'
+export type ReferenceNetworkId = 'ter' | 'brt' | 'ddd' | 'aftu' | 'tata'
 
 export type FrequencySource = {
   authority: FrequencyAuthority
@@ -239,6 +239,26 @@ export const NETWORK_REFERENCE_DATA: Readonly<Record<ReferenceNetworkId, Network
     stationCount: null,
     vehicleCount: 2300,
     gieCount: 14,
+    serviceStart: '06:00',
+    serviceEnd: '21:00',
+    serviceWindow: '06:00–21:00',
+    frequencyStatus: 'UNKNOWN',
+    frequencyLabel: 'Fréquences non publiées ligne par ligne',
+    officialFrequencies: [],
+    sourceAuthority: 'CETUD',
+    source: FREQUENCY_SOURCES.cetud,
+    validityPeriod: NO_CALENDAR_VALIDITY,
+  },
+  tata: {
+    id: 'tata',
+    label: 'TATA',
+    shortName: 'TATA',
+    operator: 'TATA / AFTU',
+    coverage: 'Réseau complémentaire',
+    lineCount: 32,
+    stationCount: null,
+    vehicleCount: 600,
+    gieCount: null,
     serviceStart: '06:00',
     serviceEnd: '21:00',
     serviceWindow: '06:00–21:00',

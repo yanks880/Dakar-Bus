@@ -47,9 +47,16 @@ const THURSDAY_NOON = Date.parse('2026-10-08T12:00:00Z')
 const WINDOW = { days: ['MON', 'TUE', 'WED', 'THU', 'FRI'] as const, start: '06:00', end: '21:00' }
 
 describe('lignes candidates DDD/AFTU', () => {
-  it('ne verse aucune ligne inventée et ne retire pas TER/BRT', () => {
+  it('ne verse aucune ligne inventée et ne retire pas TER/BRT (DDD/AFTU/TATA en pointillés légers)', () => {
     expect(CANDIDATE_LINES).toEqual([])
-    expect(withCandidateOptions(CORRIDOR_LINES.map((item) => item.id))).toEqual(['ter-dakar-diamniadio', 'brt-b1'])
+    // Après ajustement visuel : TER/BRT continus + DDD/AFTU/TATA en pointillés légers
+    const allReferenceIds = CORRIDOR_LINES.map((item) => item.id)
+    expect(allReferenceIds).toContain('ter-dakar-diamniadio')
+    expect(allReferenceIds).toContain('brt-b1')
+    expect(allReferenceIds).toContain('ddd-1')
+    expect(allReferenceIds).toContain('aftu-1')
+    expect(allReferenceIds).toContain('tata-1')
+    expect(withCandidateOptions(CORRIDOR_LINES.map((item) => item.id))).toEqual(allReferenceIds)
     const partial = line({ stops: [line().stops[0]] })
     expect(isDocumentedTrace(partial)).toBe(false)
     expect(withCandidateOptions(['ter-dakar-diamniadio', 'brt-b1'], [partial, line({ assumptions: { speedKph: 18, dwellMin: null, publishedHeadwayMin: null } })])).toEqual([

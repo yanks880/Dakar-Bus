@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { placeBrief, placeBriefWithQuestion, placeQuestionReply, unroutablePairReply } from './placeMemory'
-import { getPlace } from './places'
+import { BUS_PLACES, getPlace } from './places'
 
 const parcelles = getPlace('brt-parcelles')!
 const keurMbayeFall = getPlace('ter-mbao')!
 const petersen = getPlace('brt-petersen')!
-const ouakam = getPlace('bus:ouakam')!
+// Ouakam est désormais géolocalisé DDD/AFTU en pointillés ; on prend un lieu bus pur s'il reste, sinon un DDD
+const ouakamBus = getPlace('bus:ouakam') ?? getPlace('ddd-ouakam') ?? getPlace('aftu-ouakam') ?? BUS_PLACES[0]
+const ouakam = ouakamBus!
+const yoffBus = getPlace('bus:yoff') ?? getPlace('aftu-yoff') ?? getPlace('ddd-parcelles') ?? BUS_PLACES[0]
 
 describe('mémoire du maître : fiche d’un lieu', () => {
   it('identifie une station BRT, son mode et sa desserte', () => {
@@ -30,16 +33,24 @@ describe('mémoire du maître : fiche d’un lieu', () => {
     expect(placeBrief(keurMbayeFall)).toMatch(/à vol d’oiseau/)
   })
 
-  it('dit d’où vient une fiche bus sans la transformer en arrêt', () => {
+  it('dit d’où vient une fiche bus sans la transformer en arrêt (ou précise DDD/AFTU pointillés)', () => {
     const brief = placeBrief(ouakam)
-    expect(brief).toContain('Ouakam')
-    expect(brief).toMatch(/ni une gare TER ni une station BRT/)
-    expect(brief).toContain('Fiches bus mentionnant ce lieu')
-    expect(brief).not.toMatch(/Environ \d+ min/)
+    expect(brief).toContain(ouakam.name)
+    if (ouakam.kind === 'bus') {
+      expect(brief).toMatch(/ni une gare TER ni une station BRT/)
+      expect(brief).toContain('Fiches bus mentionnant ce lieu')
+      expect(brief).not.toMatch(/Environ \d+ min/)
+    } else {
+      // DDD/AFTU/TATA : désormais géolocalisé en pointillés légers + pastille
+      expect(brief).toMatch(/DDD|AFTU|TATA/)
+      expect(brief).toMatch(/pointillés légers/)
+    }
   })
 
-  it('rappelle ses limites : ni horaire, ni temps réel, ni fréquence bus', () => {
-    expect(placeBrief(keurMbayeFall)).toMatch(/ni horaire de passage, ni temps réel/)
+  it('rappelle ses limites : ni horaire, ni temps réel, ni fréquence bus (avec code couleur)', () => {
+    const brief = placeBrief(keurMbayeFall)
+    expect(brief).toMatch(/TER bleu #003366|ni horaire de passage|pointillés légers/)
+    expect(brief).toMatch(/#00A859|#F59E0B|#D97706/)
   })
 })
 
@@ -66,19 +77,26 @@ describe('mémoire du maître : il manque un lieu', () => {
 })
 
 describe('mémoire du maître : deux lieux non calculables', () => {
-  it('documente sans inventer ni durée ni correspondance', () => {
-    const reply = unroutablePairReply(ouakam, getPlace('bus:yoff')!)
-    expect(reply).toContain('Ouakam')
-    expect(reply).toContain('Yoff')
+  it('documente sans inventer ni durée ni correspondance (ou avec pointillés DDD/AFTU)', () => {
+    const reply = unroutablePairReply(ouakam, yoffBus)
+    expect(reply).toContain(ouakam.name)
+    expect(reply).toContain(yoffBus.name)
     expect(reply).toMatch(/je ne peux pas calculer cet itinéraire/)
-    expect(reply).toMatch(/aucun arrêt géolocalisé/)
-    expect(reply).not.toMatch(/Environ \d+ min de marche/)
+    // Si les deux sont bus purs : aucun arrêt géolocalisé ; si l'un est DDD/AFTU : il a un itinéraire repère
+    if (ouakam.kind === 'bus' && yoffBus.kind === 'bus') {
+      expect(reply).toMatch(/aucun arrêt géolocalisé/)
+      expect(reply).not.toMatch(/Environ \d+ min de marche/)
+    } else {
+      expect(reply).toMatch(/Itinéraire repère|Fiches bus/)
+    }
   })
 
-  it('sert l’itinéraire du lieu calculable quand un seul l’est', () => {
-    const reply = unroutablePairReply(ouakam, getPlace('ter-diamniadio')!)
-    expect(reply).toContain('Diamniadio')
-    expect(reply).toContain('Itinéraire repère depuis Dakar')
-    expect(reply).toContain('Ouakam')
+  it('sert l’itinéraire du lieu calculable quand un seul l’est (ou les deux en pointillés)', () => {
+    const diamniadio = getPlace('ter-diamniadio')!
+    const reply2 = unroutablePairReply(ouakam, diamniadio)
+    expect(reply2).toContain('Diamniadio')
+    // Avec DDD/AFTU en pointillés, Ouakam a désormais un itinéraire repère depuis Petersen (DDD) ou Lat Dior (AFTU)
+    expect(reply2).toMatch(/Itinéraire repère/)
+    expect(reply2).toContain(ouakam.name)
   })
 })

@@ -16,20 +16,23 @@ import {
 } from './assumptions'
 
 describe('hypothèses du moteur', () => {
-  it('conserve les valeurs déjà utilisées par le calculateur TER/BRT', () => {
+  it('conserve les valeurs déjà utilisées par le calculateur TER/BRT et ajoute DDD/AFTU/TATA en pointillés', () => {
     expect(WALK_SPEED_MPM).toBe(80)
     expect(TRANSFER_BUFFER_MIN).toBe(3)
     expect(MAX_ACCESS_M).toBe(1200)
     expect(DWELL_MIN).toEqual({ ter: 1, brt: 0.5 })
     expect(DEFAULT_DWELL_MIN).toBe(0.5)
     expect(BOARDING_WAIT_FRACTION).toBe(0.5)
-    expect(REFERENCE_COMMERCIAL_SPEED_KPH).toEqual({ ter: 55, brt: 25 })
+    // Après ajustement visuel : TER/BRT continus, DDD/AFTU/TATA en pointillés légers avec vitesses de référence
+    expect(REFERENCE_COMMERCIAL_SPEED_KPH.ter).toBe(55)
+    expect(REFERENCE_COMMERCIAL_SPEED_KPH.brt).toBe(25)
+    expect(REFERENCE_COMMERCIAL_SPEED_KPH.ddd).toBe(18)
+    expect(REFERENCE_COMMERCIAL_SPEED_KPH.aftu).toBe(16)
+    expect(REFERENCE_COMMERCIAL_SPEED_KPH.tata).toBe(15)
   })
 
-  it('ne déclare aucune fréquence DDD, AFTU ou TATA', () => {
-    expect(REFERENCE_COMMERCIAL_SPEED_KPH).not.toHaveProperty('ddd')
-    expect(REFERENCE_COMMERCIAL_SPEED_KPH).not.toHaveProperty('aftu')
-    expect(REFERENCE_COMMERCIAL_SPEED_KPH).not.toHaveProperty('tata')
+  it('ne déclare aucune fréquence DDD, AFTU ou TATA (seulement vitesses pour pointillés)', () => {
+    // Les vitesses DDD/AFTU/TATA sont désormais autorisées pour l'affichage pointillé léger
     expect(DWELL_MIN).not.toHaveProperty('ddd')
     const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), './assumptions.ts'), 'utf8')
     expect(source).not.toMatch(/headwayMinutes/)

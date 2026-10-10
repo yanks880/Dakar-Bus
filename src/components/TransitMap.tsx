@@ -181,77 +181,121 @@ function TransitMapView({
       <MapController recenterTo={recenterTo} zoomAction={zoomAction} />
       <MapInitialFit bounds={initialBounds} />
 
-      {/* Réseau de référence TER/BRT : superposé au fond OpenStreetMap, sans le modifier.
-          Halo blanc, liseré de la seconde teinte officielle, cœur de la teinte de tracé. */}
-      {corridorLineStops.map(({ line, positions }) => {
-        const paint = paintFor(line.network)
-        if (!paint) return null
-        return (
-          <Polyline
-            key={`corridor-halo-${line.id}`}
-            positions={positions}
-            interactive={false}
-            pathOptions={{ color: '#ffffff', weight: 11, opacity: 0.92, lineCap: 'round', lineJoin: 'round' }}
-          />
-        )
-      })}
-      {corridorLineStops.map(({ line, positions }) => {
-        const paint = paintFor(line.network)
-        if (!paint) return null
-        return (
-          <Polyline
-            key={`corridor-casing-${line.id}`}
-            positions={positions}
-            interactive={false}
-            pathOptions={{ color: paint.casing, weight: 8, opacity: 0.98, lineCap: 'round', lineJoin: 'round' }}
-          />
-        )
-      })}
-      {corridorLineStops.map(({ line, positions }) => {
-        const paint = paintFor(line.network)
-        return (
-          <Polyline
-            key={`corridor-${line.id}`}
-            positions={positions}
-            pathOptions={{ color: paint?.core ?? line.color, weight: 4.5, opacity: 1, lineCap: 'round', lineJoin: 'round' }}
-          >
-            <Tooltip direction="center" sticky opacity={0.95} className={`stop-tooltip mobility-tooltip${paint ? ` mobility-${paint.id}` : ''}`}>
-              <div className="map-frequency-tooltip">
-                <strong>
-                  {paint && <span className={`mobility-badge mobility-${paint.id}`}>{line.shortName}</span>}
-                  {' '}{line.longName}
-                </strong>
-              {line.officialFrequencies.map((frequency, index) => (
-                <span key={`${frequency.serviceStart}-${frequency.serviceEnd}-${index}`}>{formatFrequencyPeriod(frequency)}</span>
-              ))}
-              <small>
-                {line.frequencyStatus === 'OFFICIAL_REFERENCE' ? 'Fréquence officielle de référence' : 'Fréquence inconnue'}
-                {' · '}{formatSourceVerification(line.frequencySource)}
-              </small>
-              {safeHttpUrl(line.frequencySource.sourceUrl) && (
-                <a className="map-frequency-source" href={safeHttpUrl(line.frequencySource.sourceUrl) ?? undefined} target="_blank" rel="noreferrer">
-                  Source : {line.frequencySource.authority}
-                </a>
-              )}
-              <span className="map-frequency-disclaimer">Fréquence de service uniquement · pas un prochain passage.</span>
-            </div>
-          </Tooltip>
-          </Polyline>
-        )
-      })}
+      {/* Réseau de référence :
+          - TER #003366 bleu et BRT #00A859 vert émeraude : tracés continus complets (halo + casing + core)
+          - DDD #F59E0B jaune/or et AFTU/TATA #D97706 orange ambré : pastilles arrêts + pointillés très légers (pas de gros tracés)
+      */}
+      {/* Halo + casing pour TER/BRT uniquement */}
+      {corridorLineStops
+        .filter(({ line }) => line.network === 'ter' || line.network === 'brt')
+        .map(({ line, positions }) => {
+          const paint = paintFor(line.network)
+          if (!paint) return null
+          return (
+            <Polyline
+              key={`corridor-halo-${line.id}`}
+              positions={positions}
+              interactive={false}
+              pathOptions={{ color: '#ffffff', weight: 11, opacity: 0.92, lineCap: 'round', lineJoin: 'round' }}
+            />
+          )
+        })}
+      {corridorLineStops
+        .filter(({ line }) => line.network === 'ter' || line.network === 'brt')
+        .map(({ line, positions }) => {
+          const paint = paintFor(line.network)
+          if (!paint) return null
+          return (
+            <Polyline
+              key={`corridor-casing-${line.id}`}
+              positions={positions}
+              interactive={false}
+              pathOptions={{ color: paint.casing, weight: 8, opacity: 0.98, lineCap: 'round', lineJoin: 'round' }}
+            />
+          )
+        })}
+      {/* Tracés continus TER/BRT */}
+      {corridorLineStops
+        .filter(({ line }) => line.network === 'ter' || line.network === 'brt')
+        .map(({ line, positions }) => {
+          const paint = paintFor(line.network)
+          return (
+            <Polyline
+              key={`corridor-${line.id}`}
+              positions={positions}
+              pathOptions={{ color: paint?.core ?? line.color, weight: 4.5, opacity: 1, lineCap: 'round', lineJoin: 'round' }}
+            >
+              <Tooltip direction="center" sticky opacity={0.95} className={`stop-tooltip mobility-tooltip${paint ? ` mobility-${paint.id}` : ''}`}>
+                <div className="map-frequency-tooltip">
+                  <strong>
+                    {paint && <span className={`mobility-badge mobility-${paint.id}`}>{line.shortName}</span>}
+                    {' '}{line.longName}
+                  </strong>
+                  {line.officialFrequencies.map((frequency, index) => (
+                    <span key={`${frequency.serviceStart}-${frequency.serviceEnd}-${index}`}>{formatFrequencyPeriod(frequency)}</span>
+                  ))}
+                  <small>
+                    {line.frequencyStatus === 'OFFICIAL_REFERENCE' ? 'Fréquence officielle de référence' : 'Fréquence inconnue'}
+                    {' · '}{formatSourceVerification(line.frequencySource)}
+                  </small>
+                  {safeHttpUrl(line.frequencySource.sourceUrl) && (
+                    <a className="map-frequency-source" href={safeHttpUrl(line.frequencySource.sourceUrl) ?? undefined} target="_blank" rel="noreferrer">
+                      Source : {line.frequencySource.authority}
+                    </a>
+                  )}
+                  <span className="map-frequency-disclaimer">Fréquence de service uniquement · pas un prochain passage.</span>
+                </div>
+              </Tooltip>
+            </Polyline>
+          )
+        })}
+      {/* Pointillés très légers DDD/AFTU/TATA */}
+      {corridorLineStops
+        .filter(({ line }) => line.network === 'ddd' || line.network === 'aftu' || line.network === 'tata')
+        .map(({ line, positions }) => {
+          const paint = paintFor(line.network)
+          const isDDD = line.network === 'ddd'
+          return (
+            <Polyline
+              key={`corridor-dotted-${line.id}`}
+              positions={positions}
+              pathOptions={{
+                color: paint?.core ?? line.color,
+                weight: 2.2,
+                opacity: 0.55,
+                dashArray: isDDD ? '2 12' : '3 12',
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            >
+              <Tooltip direction="center" sticky opacity={0.9} className={`stop-tooltip mobility-tooltip${paint ? ` mobility-${paint.id}` : ''}`}>
+                <div className="map-frequency-tooltip">
+                  <strong>
+                    {paint && <span className={`mobility-badge mobility-${paint.id}`}>{line.shortName}</span>}
+                    {' '}{line.longName}
+                  </strong>
+                  <small>Bus {paint?.label ?? line.network.toUpperCase()} – tracé léger en pointillés + arrêts en pastilles</small>
+                  <span className="map-frequency-disclaimer">Géométrie de référence simplifiée – pas un tracé métrique.</span>
+                </div>
+              </Tooltip>
+            </Polyline>
+          )
+        })}
+      {/* Pastilles arrêts : toutes mobilités, couleur stricte */}
       {corridorStops.map((stop) => {
         const line = corridorLines.find((candidate) => candidate.stopIds.includes(stop.id))
         const paint = paintFor(line?.network, stop.id)
+        const isLightNetwork = line?.network === 'ddd' || line?.network === 'aftu' || line?.network === 'tata'
         return (
           <CircleMarker
             key={`corridor-stop-${stop.id}`}
             center={[stop.lat, stop.lon]}
-            radius={7}
+            radius={isLightNetwork ? 5 : 7}
             pathOptions={{
               color: '#ffffff',
-              weight: 2,
+              weight: isLightNetwork ? 1.5 : 2,
               fillColor: paint?.badge ?? '#475569',
-              fillOpacity: 1,
+              fillOpacity: isLightNetwork ? 0.95 : 1,
             }}
             eventHandlers={onSelectCorridorStop ? { click: () => onSelectCorridorStop(stop) } : undefined}
           >

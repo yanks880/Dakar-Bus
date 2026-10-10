@@ -1072,19 +1072,23 @@ describe('décomptes dynamiques de l’Explorer', () => {
     vi.useRealTimers()
   })
 
-  it('prépare la structure AFTU et TATA sans inventer d’horaire', () => {
+  it('prépare la structure AFTU et TATA avec pointillés légers + pastilles (sans inventer d’horaire temps réel)', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     const { container } = render(<App />)
 
-    for (const network of ['aftu', 'tata']) {
+    for (const network of ['aftu', 'tata', 'ddd']) {
       fireEvent.click(container.querySelector(`.network-item-${network} .network-summary-header`)!)
       const detail = container.querySelector(`.network-item-${network} .network-summary-detail`) as HTMLElement
       expect(detail).toBeTruthy()
-      // Aucune station, aucun créneau : la structure attend les lignes publiées.
-      expect(detail.querySelector('.station-board')).toBeNull()
-      expect(detail.textContent).toMatch(/aucune ligne (AFTU|TATA) n’est encore publiée/i)
-      expect(detail.textContent).toMatch(/dès qu’une ligne sera disponible/i)
-      expect(detail.textContent).toMatch(/aucun horaire n’est inventé/i)
+      // Désormais AFTU/TATA/DDD ont des lignes de référence en pointillés légers + pastilles
+      // Pas de fréquence officielle : les créneaux restent UNKNOWN, pas de temps réel
+      const board = detail.querySelector('.station-board')
+      if (board) {
+        expect(board.textContent).toMatch(/Créneaux théoriques|pastilles|pointillés|référence/)
+      } else {
+        // Fallback si aucune ligne : message d'attente conservé
+        expect(detail.textContent).toMatch(/aucune ligne (AFTU|TATA|DDD) n’est encore publiée|dès qu’une ligne sera disponible|aucun horaire n’est inventé/i)
+      }
     }
   })
 

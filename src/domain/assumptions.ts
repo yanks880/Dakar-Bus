@@ -31,9 +31,10 @@ export const DEFAULT_DWELL_MIN = 0.5
 
 /**
  * Vitesse commerciale retenue pour estimer un parcours de référence (km/h).
- * Hypothèse, pas une vitesse officielle publiée. Pas de clé `ddd` ni `aftu`.
+ * Hypothèse, pas une vitesse officielle publiée.
+ * DDD/AFTU/TATA : vitesses plus basses en milieu urbain dense.
  */
-export const REFERENCE_COMMERCIAL_SPEED_KPH = { ter: 55, brt: 25 } as const
+export const REFERENCE_COMMERCIAL_SPEED_KPH = { ter: 55, brt: 25, ddd: 18, aftu: 16, tata: 15 } as const
 
 /**
  * Part de l'intervalle officiel retenue comme attente d'embarquement
