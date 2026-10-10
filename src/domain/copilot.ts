@@ -35,6 +35,8 @@ import {
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint, type PlannerLeg } from './planner'
 import {
   REFERENTIAL_LINES,
+  REFERENTIAL_STOPS,
+  REFERENTIAL_TRANSFERS,
   findReferentialLine,
   findReferentialStops,
   formatReferentialSource,
@@ -162,10 +164,30 @@ function nearestStopReply(context: AssistantContext, language: ResponseLanguage)
   return `L’arrêt de référence le plus proche est ${nearest.stop.name} (${lines}), à environ ${nearest.distanceM < 1000 ? `${Math.round(nearest.distanceM)} m` : `${(nearest.distanceM / 1000).toFixed(1).replace('.', ',')} km`} de votre position.${precision} Ce calcul porte sur les arrêts TER/BRT du référentiel ; DDD/AFTU ne sont pas intégrés.`
 }
 
-function stopsBetweenReply(question: string): string | null {
+function stopsBetweenReply(question: string, memory: ConversationMemory): string | null {
   const text = normalize(question)
   if (!/\barrets\b.*\bentre\b|\bentre\b.*\bet\b.*\bquels\b|\bquels arrets\b/.test(text) && !/arrets (?:se trouvant|situes) entre/.test(text)) {
     return null
+  }
+  // Variante déictique : « entre mon point de départ et ma destination ».
+  if (/entre mon (?:point de )?depart et ma destination|entre mon depart et ma destination/.test(text)) {
+    const originId = memory.lastOrigin?.stopId
+    const destinationId = memory.lastDestination?.stopId
+    if (!originId || !destinationId) {
+      return 'Je n’ai pas encore de départ et de destination en mémoire : demandez d’abord un trajet, puis reposez la question.'
+    }
+    for (const line of REFERENTIAL_LINES) {
+      const sequence = stopsBetween(line, originId, destinationId)
+      if (sequence) {
+        const list = sequence.map((stop, index) => `${index + 1}. ${stop.name}`).join('\n')
+        return `Arrêts de la ligne ${line.shortName} sur votre trajet (${sequence[0].name} → ${sequence[sequence.length - 1].name}) :\n${list}\nOrdre de desserte du référentiel — pas un horaire.`
+      }
+    }
+    const journey = memory.lastJourney
+    if (journey && journey.steps.length > 0) {
+      return `Votre trajet ${journey.origin.label} → ${journey.destination.label} n’emprunte pas une seule ligne de bout en bout :\n${journey.steps.map((step) => `• ${step}`).join('\n')}\nIl n’existe donc pas de liste unique d’arrêts intermédiaires sur une seule ligne.`
+    }
+    return 'Ces deux points ne sont pas sur la même ligne du référentiel TER/BRT.'
   }
   const pair = /\bentre\s+([a-z0-9 .-]{2,55}?)\s+(?:et|a|jusqu\s+a)\s+([a-z0-9 .-]{2,65})/.exec(text)
   if (!pair) return 'Pour lister les arrêts entre deux points, indiquez « arrêts entre [arrêt] et [arrêt] ».'
@@ -186,10 +208,27 @@ function stopsBetweenReply(question: string): string | null {
   return `${from.name} et ${to.name} ne sont pas sur la même ligne du référentiel TER/BRT : je ne peux pas lister d’arrêts intermédiaires sans ligne commune vérifiée.`
 }
 
-function lineNumberReply(question: string): string | null {
+function lineNumberReply(question: string, memory: ConversationMemory): string | null {
   const text = normalize(question)
-  if (!/numero de la ligne|quelle ligne (?:va|dessert|passe|men?e)|quelle est la ligne|ligne qui dessert|code de la ligne/.test(text)) {
+  const deicticStop = /\b(?:cet|cette|ce)\s+(?:arret|station|gare)\b/.test(text)
+  const deicticDestination = /cette destination|ma destination/.test(text)
+  if (!deicticStop && !deicticDestination && !/numero de la ligne|quelles? lignes? (?:passent?|passe|desservent?|va|men[èe]nt?)|quelle ligne (?:va|dessert|passe|men?e)|quelle est la ligne|ligne qui dessert|code de la ligne|quelles lignes/.test(text)) {
     return null
+  }
+  let deicticStopId: string | null = null
+  if (deicticStop) {
+    deicticStopId = memory.lastStopId
+    if (!deicticStopId) return 'De quel arrêt parlez-vous ? Nommez-le (« lignes à Petersen ») ou mentionnez d’abord un arrêt : je ne devine pas l’arrêt courant.'
+  } else if (deicticDestination) {
+    deicticStopId = memory.lastDestination?.stopId ?? null
+    if (!deicticStopId) return 'Quelle destination ? Donnez-moi un lieu reconnu (gare ou station) : je ne devine pas la destination courante.'
+  }
+  if (deicticStopId) {
+    const deicticStop = REFERENTIAL_STOPS.find((entry) => entry.id === deicticStopId) ?? null
+    if (!deicticStop) return 'L’arrêt gardé en mémoire n’est plus dans le référentiel.'
+    const deicticLines = linesForStop(deicticStop.id)
+    if (deicticLines.length === 0) return `${deicticStop.name} figure dans le référentiel, mais aucune ligne de référence n’y est associée.`
+    return `${deicticStop.name} est desservi par : ${deicticLines.map((line) => `${line.shortName} (${line.terminusFrom} ↔ ${line.terminusTo})`).join(', ')}. Réseau de référence — source dans Paramètres, état des données.`
   }
   const target = /\b(?:vers|a|pour|jusqu a)\s+([a-z0-9 .-]{2,65})$/.exec(text)
   const stops = target ? findReferentialStops(target[1]) : findReferentialStops(question)
@@ -201,7 +240,41 @@ function lineNumberReply(question: string): string | null {
   if (lines.length === 0) {
     return `${stop.name} figure dans le référentiel, mais aucune ligne de référence n’y est associée.`
   }
+  memory.lastStopId = stop.id
   return `${stop.name} est desservi par : ${lines.map((line) => `${line.shortName} (${line.terminusFrom} ↔ ${line.terminusTo})`).join(', ')}. Réseau de référence — source dans Paramètres, état des données.`
+}
+
+/** Correspondances déclarées entre le TER et le BRT : les seules connues. */
+function transfersReply(question: string): string | null {
+  const text = normalize(question)
+  if (!/correspondance entre|comment faire une correspondance|changer entre|passer du ter au brt|passer du brt au ter|liaison entre/.test(text)) {
+    return null
+  }
+  const list = REFERENTIAL_TRANSFERS
+    .map((transfer) => `• ${transfer.label}`)
+    .join('\n')
+  return `Correspondances déclarées entre le TER et le BRT :\n${list}\nDistances de marche de référence (estimations, pas un cheminement mesuré). Aucune autre correspondance officielle n’est intégrée : DDD/AFTU ne sont pas vérifiés dans le dépôt.`
+}
+
+/** Classement par critère d'un trajet déjà en mémoire — options réellement
+ *  calculées uniquement, jamais de classement sur des données absentes. */
+function criterionReply(question: string, memory: ConversationMemory): string | null {
+  const text = normalize(question)
+  const criterion: 'fastest' | 'lessWalking' | 'fewerTransfers' | null =
+    /moins de marche|marcher le moins/.test(text) ? 'lessWalking'
+      : /moins de correspondances|sans correspondance|le plus simple/.test(text) ? 'fewerTransfers'
+        : /plus rapide|le plus court|meilleur temps/.test(text) ? 'fastest' : null
+  if (!criterion) return null
+  const origin = memory.lastOrigin
+  const destination = memory.lastDestination
+  if (!origin || !destination) {
+    return 'Pour comparer selon ce critère, indiquez d’abord un départ et une destination (« trajet de … à … ») : je ne classe que des itinéraires réellement calculés.'
+  }
+  const comparison = compareReferenceJourneys(origin, destination)
+  if (!comparison.ok) return comparison.message
+  const chosen = comparison.options.find((option) => option.priority === comparison.bestBy[criterion])!
+  const ranking = criterion === 'fastest' ? 'Le plus rapide' : criterion === 'lessWalking' ? 'Le moins de marche' : 'Le moins de correspondances'
+  return `${ranking} parmi ${comparison.options.length} option(s) réellement calculée(s) entre ${origin.label} et ${destination.label} : ${chosen.result.boardedLines.join(' + ') || 'à pied'} — environ ${chosen.result.totalMinutes} min, ${formatMeters(chosen.result.totalWalkM)} de marche, ${chosen.result.transfers} correspondance(s). Estimations du réseau de référence : ni horaires de passage, ni temps réel. Tarif non comparé (données insuffisantes).`
 }
 
 function lastDepartureReply(question: string): string | null {
@@ -364,16 +437,32 @@ export function copilotAnswer(
     memory.lastAnswer = replyText
     return { text: replyText, language }
   }
-  const between = stopsBetweenReply(question)
-  if (between) {
-    memory.lastAnswer = between
-    return { text: between, language: 'fr' }
-  }
-  const lineNumber = lineNumberReply(question)
-  if (lineNumber) {
-    memory.lastAnswer = lineNumber
-    return { text: lineNumber, language: 'fr' }
-  }
+    const between = stopsBetweenReply(question, memory)
+    if (between) {
+      memory.lastAnswer = between
+      return { text: between, language: 'fr' }
+    }
+    const lineNumber = lineNumberReply(question, memory)
+    if (lineNumber) {
+      memory.lastAnswer = lineNumber
+      return { text: lineNumber, language: 'fr' }
+    }
+    const transfers = transfersReply(question)
+    if (transfers) {
+      memory.lastAnswer = transfers
+      return { text: transfers, language: 'fr' }
+    }
+    // Le classement par critère ne s'applique qu'aux questions sans lieux
+    // explicites : une demande « trajet de X à Y, moins de marche » suit le
+    // chemin principal du calculateur.
+    const explicitRoute = extractMobilityIntent(question)
+    if (!explicitRoute || (!explicitRoute.origin && !explicitRoute.destination)) {
+      const criterion = criterionReply(question, memory)
+      if (criterion) {
+        memory.lastAnswer = criterion
+        return { text: criterion, language: 'fr' }
+      }
+    }
   const lastDeparture = lastDepartureReply(question)
   if (lastDeparture) {
     memory.lastAnswer = lastDeparture

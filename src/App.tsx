@@ -2896,6 +2896,16 @@ function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
     {
       date: '2026-10-10',
+      title: 'Copilote de mobilité : fenêtre fiabilisée, référentiel, wolof et voix',
+      items: [
+        'Assistant : la fenêtre reste ouverte et lisible — réponses au-dessus de la carte et des barres mobiles, état de chargement, envoi unique, défilement vers la dernière réponse ; « Ouvrir dans Trajet » garde la conversation.',
+        'Assistant : questions libres branchées sur le référentiel des mobilités — station la plus proche, ligne qui dessert une destination, arrêts entre deux points, dernier départ publié, correspondances TER↔BRT, alternatives calculables, explication du trajet, état des connaissances ; questions de suivi (sens inverse, où descendre) sans répéter les lieux.',
+        'Langues : réponses en français ou en wolof (modèles de base, à valider par des locuteurs), détection automatique des phrases mixtes, préférence Auto/FR/WO conservée.',
+        'Voix : microphone et lecture audio des réponses quand le navigateur les fournit ; wolof parlé et voix wolof annoncés non pris en charge plutôt que simulés ; aucun audio enregistré par l’application.',
+      ],
+    },
+    {
+      date: '2026-10-10',
       title: 'Copilote local et comparaison des trajets de référence',
       items: [
         'Assistant : demandes de trajet avec priorité durée, marche ou correspondances et heure d’arrivée à Dakar ; lieux explicitement nommés seulement, tarif non comparable faute de données complètes.',

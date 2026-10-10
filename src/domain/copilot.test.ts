@@ -105,6 +105,40 @@ describe('copilote : questions libres fondées sur les données', () => {
     expect(reply.text).not.toContain('temps réel connecté')
   })
 
+  it('explique comment faire une correspondance entre le TER et le BRT', () => {
+    const { reply } = ask('Comment faire une correspondance entre le TER et le BRT ?')
+    expect(reply.text).toContain('Gare TER Dakar ↔ station BRT Petersen')
+    expect(reply.text).toContain('Gare TER Colobane ↔ station BRT Place de la Nation')
+    expect(reply.text).toContain('estimations')
+  })
+
+  it('répond aux questions déictiques avec le contexte : lignes à « cet arrêt »', () => {
+    const memory = createConversationMemory()
+    copilotAnswer('Quelles lignes passent à Petersen ?', CONTEXT, memory, 'auto', NOW)
+    const reply = copilotAnswer('Quelles lignes passent à cet arrêt ?', CONTEXT, memory, 'auto', NOW)
+    expect(reply.text).toContain('B1')
+    const empty = ask('Quelles lignes passent à cet arrêt ?')
+    expect(empty.reply.text).toContain('De quel arrêt')
+  })
+
+  it('classe selon un critère uniquement à partir d’un trajet réellement en mémoire', () => {
+    const without = ask('Quel trajet nécessite le moins de marche ?')
+    expect(without.reply.text).toContain('indiquez d’abord un départ')
+    const memory = createConversationMemory()
+    copilotAnswer('Trajet de Guédiawaye à Diamniadio', CONTEXT, memory, 'auto', NOW)
+    const reply = copilotAnswer('Quel itinéraire est le plus rapide ?', CONTEXT, memory, 'auto', NOW)
+    expect(reply.text).toContain('Le plus rapide')
+    expect(reply.text).toContain('réellement calculée')
+  })
+
+  it('liste les arrêts entre le départ et la destination gardés en mémoire', () => {
+    const memory = createConversationMemory()
+    copilotAnswer('Trajet de Petersen à Sacré-Cœur', CONTEXT, memory, 'auto', NOW)
+    const reply = copilotAnswer('Quels arrêts entre mon point de départ et ma destination ?', CONTEXT, memory, 'auto', NOW)
+    expect(reply.text).toContain('1. Petersen')
+    expect(reply.text).toContain('Sacré-Cœur')
+  })
+
   it('les réseaux non couverts sont annoncés comme tels, jamais inventés', () => {
     const { reply } = ask('Quel bus DDD pour aller à Yoff ?')
     expect(reply.text.toLowerCase()).toContain('ddd')
