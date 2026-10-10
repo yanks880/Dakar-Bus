@@ -22,7 +22,10 @@ import { getRemainingMinutes } from './truth'
 import { formatPassageCountdown } from './headways'
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint } from './planner'
 import { compareReferenceJourneys, PRIORITY_LABELS } from './comparison'
-import { departureAdvice, extractMobilityIntent } from './intent'
+import { departureAdvice, extractMobilityIntent, routePreferencesFrom } from './intent'
+import { placeBriefWithQuestion, placeQuestionReply, unroutablePairReply } from './placeMemory'
+import { findPlaceMentions, isRouteQuestion, placeEndpoint, resolveJourneyEndpoints, unrecognizedPlaceNote } from './places'
+import type { PlannerPriority } from './planner'
 
 export interface AssistantContext {
   /** Un snapshot GTFS est publié et servi par l'API de lecture. */
@@ -111,13 +114,60 @@ function noReliableDepartureAnswer(network: 'brt' | 'ter'): string {
 const OFFICIAL_CHANNELS =
   'Canaux officiels d’information voyageurs : Sen TER (sentersa.sn, centre d’appels SETER), SunuBRT (sunubrt.sn, Dakar Mobilité) et le CETUD (cetud.sn). Aucune de ces sources n’est connectée en temps réel à cette application pour l’instant.'
 
+/** Réponses communes au calcul d'itinéraire, quelle que soit la formulation. */
+const CHEAPEST_REPLY =
+  'Je ne peux pas classer les trajets par prix : les tarifs complets et vérifiés TER/BRT ne sont pas disponibles ici. Je peux comparer la durée, la marche ou les correspondances, pas inventer un coût.'
+const INVALID_ARRIVAL_REPLY =
+  'Heure d’arrivée invalide : indiquez une heure de Dakar au format « avant 9 h » ou « avant 09:30 ». Aucun départ ne peut être conseillé sans heure valide.'
+
 const HONEST_LIMIT =
   'Je raisonne sur les références officielles TER/BRT et les horaires GTFS publiés lorsqu’ils existent : aucune position de véhicule ni donnée temps réel. Pour DDD et AFTU, je consulte aussi des fiches de lignes et des points de passage textuels sourcés ; les fréquences par ligne et les correspondances bus ne sont pas validées.'
 
 /** Extrait un couple (origine, destination) sans inférer une position actuelle. */
 export function extractJourneyRequest(question: string): { origin: PlannerEndpoint; destination: PlannerEndpoint } | null {
   const intent = extractMobilityIntent(question)
-  return intent?.origin && intent.destination ? { origin: intent.origin, destination: intent.destination } : null
+  if (intent?.origin && intent.destination) return { origin: intent.origin, destination: intent.destination }
+  // Deux lieux calculables suffisent, même sans verbe de déplacement.
+  const resolved = resolveJourneyEndpoints(question)
+  const origin = resolved?.origin ? placeEndpoint(resolved.origin) : null
+  const destination = resolved?.destination ? placeEndpoint(resolved.destination) : null
+  return origin && destination ? { origin, destination } : null
+}
+
+export interface JourneyReplyOptions {
+  priority: PlannerPriority
+  compare: boolean
+  /** Minutes après minuit (heure de Dakar) ; null si aucune heure demandée. */
+  arrivalMinutes: number | null
+  tomorrow: boolean
+  now: number
+}
+
+/**
+ * Itinéraire calculé, partagé par le moteur de réponses et le copilote : une
+ * seule composition pour un même calcul, qu'il vienne d'une phrase libre, d'un
+ * suivi de conversation ou de la mémoire des lieux.
+ */
+export function journeyReply(
+  origin: PlannerEndpoint,
+  destination: PlannerEndpoint,
+  options: JourneyReplyOptions,
+): string {
+  const { priority, compare, arrivalMinutes, tomorrow, now } = options
+  if (compare || priority !== 'fastest') {
+    const comparison = compareReferenceJourneys(origin, destination)
+    if (!comparison.ok) return comparison.message
+    const chosen = comparison.options.find((option) => option.priority === comparison.bestBy[priority])!
+    const alternatives = comparison.options.map((option, index) =>
+      `• Option ${index + 1} (${option.result.boardedLines.join(' + ') || 'à pied'}) : environ ${option.result.totalMinutes} min, ${formatMeters(option.result.totalWalkM)} de marche, ${option.result.transfers} correspondance(s).`).join('\n')
+    const advice = arrivalMinutes === null ? '' : `\n${departureAdvice(arrivalMinutes, chosen.result.totalMinutes, now, tomorrow)}`
+    return `Copilote · ${origin.label} → ${destination.label}. ${PRIORITY_LABELS[priority]} : option ${comparison.options.indexOf(chosen) + 1}.\n${alternatives}\n${comparison.options.length === 1 ? 'Une seule option distincte est calculable. ' : ''}Classement parmi ces options calculées. Données : réseau de référence TER/BRT, marche et attente estimées, sans horaires de passage ni temps réel. Tarif non comparable (données insuffisantes).${advice} Ouvrez Trajet pour voir le détail et comparer les options.`
+  }
+  const outcome = planReferenceJourney(origin, destination)
+  if (!outcome.ok) return outcome.message
+  const steps = outcome.legs.map((leg) => `• ${describeLeg(leg)}`).join('\n')
+  const advice = arrivalMinutes === null ? '' : `\n${departureAdvice(arrivalMinutes, outcome.totalMinutes, now, tomorrow)}`
+  return `Itinéraire de référence ${origin.label} → ${destination.label} — environ ${outcome.totalMinutes} min, ${outcome.transfers} correspondance${outcome.transfers > 1 ? 's' : ''}, ${formatMeters(outcome.totalWalkM)} de marche :\n${steps}\n${outcome.limitation}${advice}`
 }
 
 export function answerAssistant(question: string, context: AssistantContext, now = Date.now()): string {
@@ -133,14 +183,17 @@ export function answerAssistant(question: string, context: AssistantContext, now
   }
 
 
-  // 1) Salutations et aide.
-  if (/^(bonjour|bonsoir|salut|coucou|bonjour dakarbus)/.test(text) || text.length <= 3) {
-    return `Bonjour ! Je suis l’assistant mobilité de Dakar Bus. Je connais les 23 stations du BRT et les 13 gares du TER, je peux proposer un itinéraire multimodal (TER + BRT avec correspondances) et vous renseigner sur les fréquences. ${HONEST_LIMIT}`
+  // 1) Salutations et aide. Une salutation qui porte une demande réelle
+  //    (« bonjour, je suis à Rufisque… ») est traitée comme une demande.
+  const greeted = /^(bonjour|bonsoir|salut|coucou|bonjour dakarbus)/.test(text)
+  if ((greeted && !isRouteQuestion(question) && findPlaceMentions(question).length === 0) || text.length <= 3) {
+    return `Bonjour ! Décrivez votre déplacement comme vous le parlez — « je suis à Keur Mbaye Fall, comment aller à Dakar ? » — : je repère vos lieux, je choisis le mode le plus adapté (TER, BRT, lignes DDD/AFTU documentées) et je calcule l’itinéraire avec les correspondances. Je connais les 23 stations du BRT, les 13 gares du TER et les fiches de lignes DDD/AFTU. ${HONEST_LIMIT}`
   }
   if (includesAny(text, ['aide', 'qui es tu', 'que sais tu', 'capable', 'comment ca marche'])) {
     return `Je peux :
+• Comprendre une phrase libre (« je suis à Parcelles Assainies, je voudrais aller à Diamniadio ») et en déduire départ, destination et itinéraire ;
 • Lister les 23 stations BRT ou les 13 gares TER (« liste des stations BRT ») ;
-• Dire si un lieu est desservi (« le BRT va-t-il à Guédiawaye ? ») ;
+• Dire si un lieu est desservi, par quel mode et avec quelles correspondances (« Parcelles Assainies », « Rufisque ») ;
 • Calculer un itinéraire multimodal (« trajet de Petersen à Rufisque ») ;
 • Comparer durée, marche ou correspondances (« compare les trajets de Guédiawaye à Rufisque, moins de marche »), estimer un départ pour une heure d’arrivée sans garantir le service ;
 • Donner les fréquences et tarifs de référence publiés ;
@@ -148,32 +201,44 @@ export function answerAssistant(question: string, context: AssistantContext, now
 ${HONEST_LIMIT}`
   }
 
-  // 2) Copilote : intention explicite puis calculateur de référence existant.
+  // 2) Langage naturel : intention de déplacement puis calculateur de référence.
   const intent = extractMobilityIntent(question)
   if (intent) {
-    if (!intent.origin && !intent.destination) return 'Ni votre départ ni votre destination ne sont reconnus sur le réseau de référence TER/BRT. Donnez-moi des lieux déclarés (gares, stations) ; je préfère le dire plutôt qu’inventer un trajet.'
-    if (!intent.origin) return 'Quel est votre point de départ ? Indiquez « trajet de [gare ou station] à [destination] » : je ne déduis pas votre position.'
-    if (!intent.destination) return 'Destination non reconnue sur le réseau de référence TER/BRT. Choisissez une gare ou une station déclarée ; DDD/AFTU ne sont pas encore intégrés.'
-    if (intent.priority === 'cheapest') return 'Je ne peux pas classer les trajets par prix : les tarifs complets et vérifiés TER/BRT ne sont pas disponibles ici. Je peux comparer la durée, la marche ou les correspondances, pas inventer un coût.'
-    if (intent.arrivalRequested && intent.arrivalMinutes === null) return 'Heure d’arrivée invalide : indiquez une heure de Dakar au format « avant 9 h » ou « avant 09:30 ». Aucun départ ne peut être conseillé sans heure valide.'
-    const priority = intent.priority
-    const journey = { origin: intent.origin, destination: intent.destination }
-    if (intent.compare || intent.priority !== 'fastest') {
-      const comparison = compareReferenceJourneys(journey.origin, journey.destination)
-      if (!comparison.ok) return comparison.message
-      const chosen = comparison.options.find((option) => option.priority === comparison.bestBy[priority])!
-      const alternatives = comparison.options.map((option, index) =>
-        `• Option ${index + 1} (${option.result.boardedLines.join(' + ') || 'à pied'}) : environ ${option.result.totalMinutes} min, ${formatMeters(option.result.totalWalkM)} de marche, ${option.result.transfers} correspondance(s).`).join('\n')
-      const advice = intent.arrivalMinutes === null ? '' : `\n${departureAdvice(intent.arrivalMinutes, chosen.result.totalMinutes, now, intent.tomorrow)}`
-      return `Copilote · ${journey.origin.label} → ${journey.destination.label}. ${PRIORITY_LABELS[priority]} : option ${comparison.options.indexOf(chosen) + 1}.\n${alternatives}\n${comparison.options.length === 1 ? 'Une seule option distincte est calculable. ' : ''}Classement parmi ces options calculées. Données : réseau de référence TER/BRT, marche et attente estimées, sans horaires de passage ni temps réel. Tarif non comparable (données insuffisantes).${advice} Ouvrez Trajet pour voir le détail et comparer les options.`
+    if (!intent.originPlace && !intent.destinationPlace) {
+      const unknown = unrecognizedPlaceNote(question)
+      const recall = 'Donnez-moi un lieu déclaré — « je suis à Keur Mbaye Fall, je vais à Dakar » — : je préfère le dire plutôt qu’inventer un trajet.'
+      return unknown
+        ? `${unknown} ${recall}`
+        : `Ni votre départ ni votre destination ne sont reconnus dans la mémoire des lieux (13 gares TER, 23 stations BRT et les lieux des fiches DDD/AFTU). ${recall}`
     }
-    const outcome = planReferenceJourney(journey.origin, journey.destination)
-    if (!outcome.ok) return outcome.message
-    const steps = outcome.legs.map((leg) => `• ${describeLeg(leg)}`).join('\n')
-    const advice = intent.arrivalMinutes === null ? '' : `\n${departureAdvice(intent.arrivalMinutes, outcome.totalMinutes, now, intent.tomorrow)}`
-    return `Itinéraire de référence ${journey.origin.label} → ${journey.destination.label} — environ ${outcome.totalMinutes} min, ${outcome.transfers} correspondance${outcome.transfers > 1 ? 's' : ''}, ${formatMeters(outcome.totalWalkM)} de marche :
-${steps}
-${outcome.limitation}${advice}`
+    if (intent.priority === 'cheapest') return CHEAPEST_REPLY
+    if (intent.arrivalRequested && intent.arrivalMinutes === null) return INVALID_ARRIVAL_REPLY
+    if (intent.origin && intent.destination) {
+      return journeyReply(intent.origin, intent.destination, {
+        priority: intent.priority,
+        compare: intent.compare,
+        arrivalMinutes: intent.arrivalMinutes,
+        tomorrow: intent.tomorrow,
+        now,
+      })
+    }
+    // Un lieu cité et inconnu est nommé : l'usager l'a écrit, la réponse le
+    // reprend au lieu de l'ignorer.
+    const unknown = unrecognizedPlaceNote(question)
+    // Deux lieux reconnus mais au moins un non calculable (fiche bus) : tout
+    // ce qui est documenté est donné, rien n'est complété à la place de
+    // l'opérateur.
+    if (intent.originPlace && intent.destinationPlace) {
+      const pair = unroutablePairReply(intent.originPlace, intent.destinationPlace)
+      return unknown ? `${unknown}\n${pair}` : pair
+    }
+    // Un seul lieu : la fiche du lieu d'abord — avec un itinéraire réellement
+    // calculé depuis le pôle central — puis une question courte. Jamais une
+    // phrase toute faite qui ignorerait ce que l'usager vient d'écrire.
+    const known = intent.destinationPlace ?? intent.originPlace!
+    const missing = intent.destinationPlace ? 'origin' : 'destination'
+    const brief = placeBriefWithQuestion(known, missing, { arrivalRequested: intent.arrivalRequested })
+    return unknown ? `${unknown}\n${brief}` : brief
   }
 
   // 3) Prochain départ / fréquence officielle de référence.
@@ -284,14 +349,44 @@ Une fréquence ne donne pas l’heure du prochain passage : aucun départ indivi
     return `État réel du système : ${context.publishedAvailable ? 'un snapshot GTFS est publié et servi par l’API de lecture.' : 'aucun snapshot GTFS n’est publié : les API répondent NOT_PUBLISHED pour les données de transport.'} ${context.adminOnline ? 'L’API de gouvernance locale est en ligne (onglet Paramètres, console technique).' : 'L’API de gouvernance locale ne répond pas : démarrez-la avec npm run admin:api.'} Le réseau de référence TER/BRT affiché dans l’onglet Explorer est une couche distincte, clairement étiquetée, issue de sources publiques (Sen TER, CETUD/SunuBRT, OpenStreetMap) — pas un flux opérateur validé.`
   }
 
-  // 10) Recherche d'arrêt simple.
+  // 10) Mémoire des lieux : un lieu cité reçoit une fiche complète (mode le
+  //     plus adapté, correspondances, itinéraire calculé depuis le pôle
+  //     central), sans redemander ce que le message a déjà dit.
+  const mentions = findPlaceMentions(question)
+  if (mentions.length > 0) {
+    const resolved = resolveJourneyEndpoints(question)
+    const origin = resolved?.origin ? placeEndpoint(resolved.origin) : null
+    const destination = resolved?.destination ? placeEndpoint(resolved.destination) : null
+    if (origin && destination) {
+      // Deux lieux calculables : l'itinéraire est proposé directement, même
+      // sans verbe de déplacement (« Keur Mbaye Fall Dakar »), avec les mêmes
+      // critères que pour une phrase complète.
+      const preferences = routePreferencesFrom(question)
+      if (preferences.priority === 'cheapest') return CHEAPEST_REPLY
+      if (preferences.arrivalRequested && preferences.arrivalMinutes === null) return INVALID_ARRIVAL_REPLY
+      return journeyReply(origin, destination, {
+        priority: preferences.priority,
+        compare: preferences.compare,
+        arrivalMinutes: preferences.arrivalMinutes,
+        tomorrow: preferences.tomorrow,
+        now,
+      })
+    }
+    if (resolved?.origin && resolved?.destination) {
+      return unroutablePairReply(resolved.origin, resolved.destination)
+    }
+    const missing = resolved?.destination ? 'origin' : resolved?.origin ? 'destination' : null
+    return placeQuestionReply(mentions[0].place, missing)
+  }
+
+  // 11) Recherche d'arrêt simple.
   const stops = searchCorridorStops(question)
   if (stops.length > 0) {
     const stop = stops[0]
     const lines = linesServingStop(stop.id)
     const network = CORRIDOR_NETWORKS[lines[0]?.network ?? (stop.id.startsWith('ter') ? 'ter' : 'brt')]
-    return `${stop.name} — ${network.label}, ${network.operator}. Desservi par ${lines.map((line) => line.shortName).join(', ') || 'aucune ligne de référence'}. ${stop.note ? `${stop.note}. ` : ''}Demandez « trajet de … vers ${stop.name} » pour un itinéraire multimodal.`
+    return `${stop.name} — ${network.label}, ${network.operator}. Desservi par ${lines.map((line) => line.shortName).join(', ') || 'aucune ligne de référence'}. ${stop.note ? `${stop.note}. ` : ''}Demandez « je suis à … , je vais vers ${stop.name} » pour un itinéraire multimodal.`
   }
 
-  return `Je n’ai pas reconnu cette demande dans mes données de référence — et je préfère le dire plutôt que d’inventer. ${HONEST_LIMIT} Essayez : « liste des stations BRT », « le TER va-t-il à Rufisque ? », « trajet de Guédiawaye à Diamniadio ».`
+  return `Je n’ai pas reconnu cette demande dans mes données de référence — et je préfère le dire plutôt que d’inventer. ${HONEST_LIMIT} Parlez-moi comme à un guichetier : « je suis à Keur Mbaye Fall, comment aller à Dakar ? », « liste des stations BRT », « le TER va-t-il à Rufisque ? ».`
 }

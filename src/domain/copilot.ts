@@ -17,23 +17,26 @@ import {
   answerAssistant,
   extractJourneyRequest,
   getAssistantCountdownMinutes,
+  journeyReply,
   type AssistantContext,
 } from './assistant'
 import { compareReferenceJourneys } from './comparison'
 import {
   detectFollowUp,
   rememberJourney,
+  rememberPendingPlace,
   reversedJourney,
   type ConversationMemory,
 } from './conversation'
 import { extractMobilityIntent } from './intent'
+import { isRouteQuestion, placeEndpoint, resolveJourneyEndpoints } from './places'
 import {
   detectLanguage,
   resolveResponseLanguage,
   type AssistantLanguagePreference,
   type ResponseLanguage,
 } from './language'
-import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint, type PlannerLeg } from './planner'
+import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint, type PlannerLeg, type PlannerPriority } from './planner'
 import {
   REFERENTIAL_LINES,
   REFERENTIAL_STOPS,
@@ -344,6 +347,47 @@ function alightReply(memory: ConversationMemory, language: ResponseLanguage): st
 }
 
 /**
+ * Mémoire des lieux : un départ ou une destination déjà énoncé complète la
+ * phrase suivante au lieu d'être redemandé. Le lieu repris est toujours
+ * nommé dans la réponse, jamais présenté comme une déduction.
+ */
+function journeyCompletion(
+  intent: ReturnType<typeof extractMobilityIntent>,
+  memory: ConversationMemory,
+): { origin: PlannerEndpoint; destination: PlannerEndpoint; fromMemory: 'origin' | 'destination' } | null {
+  if (!intent) return null
+  const pending = memory.pendingPlace
+  if (!pending) return null
+  if (intent.origin && intent.destination) return null
+  if (intent.destination && !intent.origin && pending.role === 'origin') {
+    return { origin: pending.place, destination: intent.destination, fromMemory: 'origin' }
+  }
+  if (intent.origin && !intent.destination && pending.role === 'destination') {
+    return { origin: intent.origin, destination: pending.place, fromMemory: 'destination' }
+  }
+  return null
+}
+
+/**
+ * Enregistre le lieu énoncé seul, pour la question suivante. Seules les
+ * formulations explicites (« je suis à … », « je vais à … ») sont mémorisées :
+ * un lieu isolé n'est pas un départ supposé.
+ */
+function memRememberPendingPlace(memory: ConversationMemory, question: string): void {
+  const resolved = resolveJourneyEndpoints(question)
+  if (!resolved?.explicit) return
+  const single = resolved.origin && !resolved.destination
+    ? { role: 'origin' as const, place: resolved.origin }
+    : resolved.destination && !resolved.origin
+      ? { role: 'destination' as const, place: resolved.destination }
+      : null
+  if (!single) return
+  const endpoint = placeEndpoint(single.place)
+  if (!endpoint) return
+  rememberPendingPlace(memory, single.role, endpoint)
+}
+
+/**
  * Répond à une question libre en s'appuyant sur le référentiel, le moteur
  * d'itinéraires et le contexte de conversation. `memory` est mis à jour.
  */
@@ -447,6 +491,42 @@ export function copilotAnswer(
     }
   }
 
+  // 3b) Mémoire des lieux : le départ (ou la destination) déjà énoncé complète
+  //     la phrase suivante. Le lieu repris est nommé, jamais sous-entendu.
+  if (isRouteQuestion(question)) {
+    const intent = extractMobilityIntent(question)
+    const completion = journeyCompletion(intent, memory)
+    // Les deux seules réponses que le moteur rend avant le calcul gardent la
+    // main : un classement par prix impossible, une heure d'arrivée invalide.
+    const blockedByPriority = intent?.priority === 'cheapest'
+      || Boolean(intent?.arrivalRequested && intent?.arrivalMinutes === null)
+    if (completion && intent && !blockedByPriority) {
+      const priority: PlannerPriority = intent.priority === 'cheapest' ? 'fastest' : intent.priority
+      const note = completion.fromMemory === 'origin'
+        ? `Départ repris de ce que vous m’avez dit : ${completion.origin.label}.`
+        : `Destination reprise de ce que vous m’avez dit : ${completion.destination.label}.`
+      if (language === 'wo') {
+        const reply = wolofJourneyReply(memory, completion.origin, completion.destination)
+        const text = `${note}\n${reply.text}`
+        memory.lastAnswer = text
+        return { ...reply, text }
+      }
+      const outcome = planReferenceJourney(completion.origin, completion.destination, priority)
+      if (outcome.ok) rememberLastJourney(memory, outcome.legs, completion.origin, completion.destination, outcome)
+      const text = `${note}\n${journeyReply(completion.origin, completion.destination, {
+        priority,
+        compare: intent.compare,
+        arrivalMinutes: intent.arrivalMinutes,
+        tomorrow: intent.tomorrow,
+        now,
+      })}`
+      memory.lastOrigin = completion.origin
+      memory.lastDestination = completion.destination
+      memory.lastAnswer = text
+      return { text, language: 'fr', journey: { origin: completion.origin, destination: completion.destination } }
+    }
+  }
+
   // 4) Familles nouvelles, servies par le référentiel.
   if (/station la plus proche|arret le plus proche|gare la plus proche|arret pres de|station pres de|ou se trouve la station|ou est la station|ou se trouve l arret|ou est l arret|proche de moi/.test(text)) {
     const replyText = nearestStopReply(context, language)
@@ -513,9 +593,12 @@ export function copilotAnswer(
       memory.lastOrigin = journey.origin
       memory.lastDestination = journey.destination
     }
+    memory.pendingPlace = null
   } else {
     const stops = findReferentialStops(question)
     if (stops.length > 0) memory.lastStopId = stops[0].id
+    // Un lieu énoncé seul reste disponible pour la question suivante.
+    memRememberPendingPlace(memory, question)
   }
   const finalText = language === 'wo' ? woFrenchFallbackPrefix() + base : base
   memory.lastAnswer = finalText

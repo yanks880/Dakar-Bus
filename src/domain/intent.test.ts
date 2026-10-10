@@ -32,8 +32,18 @@ describe('copilote local à intentions explicites', () => {
     expect(answerAssistant('Trajet de Petersen à Rufisque avant 25 h', CONTEXT, NOW)).toContain('Heure d’arrivée invalide')
   })
 
-  it('demande le départ et refuse les lieux absents des références', () => {
-    expect(answerAssistant('Je veux aller à Rufisque avant 9h', CONTEXT, NOW)).toContain('Quel est votre point de départ')
-    expect(answerAssistant('trajet de Mbour à Rufisque', CONTEXT, NOW)).toContain('Quel est votre point de départ')
+  it('donne l’essentiel sur le lieu connu au lieu d’une phrase toute faite', () => {
+    const destinationOnly = answerAssistant('Je veux aller à Rufisque avant 9h', CONTEXT, NOW)
+    expect(destinationOnly).toContain('Rufisque')
+    expect(destinationOnly).toContain('Itinéraire repère')
+    expect(destinationOnly).toContain('Il me manque votre point de départ')
+    expect(destinationOnly).not.toContain('Quel est votre point de départ ?')
+    expect(destinationOnly).toContain('aucune heure de départ')
+
+    const unknownOrigin = answerAssistant('trajet de Mbour à Rufisque', CONTEXT, NOW)
+    expect(unknownOrigin).toContain('Mbour')
+    expect(unknownOrigin).toContain('Rufisque')
+    expect(unknownOrigin).toContain('Itinéraire repère')
+    expect(unknownOrigin).not.toContain('Quel est votre point de départ ?')
   })
 })

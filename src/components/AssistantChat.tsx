@@ -383,7 +383,7 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
               aria-label="Votre question à l’assistant"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder={listening ? 'Je vous écoute…' : 'Ex. : le BRT va-t-il à Parcelles ?'}
+              placeholder={listening ? 'Je vous écoute…' : 'Ex. : je suis à Keur Mbaye Fall, je vais à Dakar'}
               enterKeyHint="send"
             />
             <button
@@ -410,8 +410,8 @@ export function AssistantChat({ context, onOpenJourney }: { context: AssistantCo
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <Sparkles size={18} />
-        <span>Assistant IA</span>
+        <Sparkles size={16} />
+        <span>IA</span>
       </button>
     </div>
   )
