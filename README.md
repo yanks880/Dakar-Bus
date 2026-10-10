@@ -399,6 +399,45 @@ Règles appliquées par le code et vérifiées par les tests (`src/App.test.tsx`
 
 Le fond actuel utilise les tuiles standard OpenStreetMap (`tile.openstreetmap.org`) avec attribution. Avant une mise en production à audience significative, choisir et configurer un fournisseur de tuiles adapté à la charge et respecter ses conditions d'utilisation. Les couches de transport doivent provenir de datasets distincts, versionnés et réutilisables légalement.
 
+## Copilote de mobilité, wolof et voix (ajouts du 10 octobre 2026)
+
+Le copilote passe d'un jeu de formulations reconnues à un moteur de questions
+libres, toujours local et sans service externe :
+
+- **Référentiel central** (`src/domain/referential.ts`) : modèle commun des
+  mobilités de Dakar (TER, BRT, DDD, AFTU, TATA) qui alimente la carte, la
+  recherche, le calculateur et le copilote — statuts d'intégration,
+  provenance, statuts temporels SCHEDULED/ESTIMATED/REAL_TIME/UNKNOWN. Les
+  réseaux sans données vérifiées (DDD, AFTU, TATA) restent limités à leurs
+  métadonnées déclarées ; rien n'est inventé.
+- **Questions libres** (`src/domain/copilot.ts`) : station la plus proche,
+  ligne qui dessert une destination, arrêts entre deux points, dernier départ
+  publié, correspondances TER↔BRT, alternatives réellement calculables,
+  explication d'un trajet proposé, état des connaissances (« qu'est-ce qui
+  est confirmé ? »), météo annoncée hors périmètre faute de source.
+- **Contexte de conversation** (`src/domain/conversation.ts`) : questions de
+  suivi sans répéter les lieux (« et en sens inverse ? », « où dois-je
+  descendre ? », « pourquoi ce trajet ? »).
+- **Français et wolof** (`src/domain/language.ts`, `src/domain/wolof.ts`) :
+  détection français / wolof / phrases mixtes, préférence de réponse
+  Auto/FR/WO persistée, salutations et trajets répondus en wolof (modèles de
+  base explicitement marqués « à valider par des locuteurs »), repli français
+  annoncé honnêtement pour le reste.
+- **Voix** (`src/domain/speech.ts`) : microphone (reconnaissance du
+  navigateur, feature-detectée, texte reconnu proposé à la correction) et
+  lecture audio des réponses avec arrêt. Le wolof parlé et les voix wolof
+  sont annoncés non pris en charge plutôt que simulés ; aucun audio n'est
+  enregistré ni conservé par l'application.
+- **Fenêtre fiabilisée** : le panneau de discussion est peint au-dessus de
+  tous les plans (il n'est plus rogné par la carte ni masqué par les barres
+  mobiles), l'envoi est unique (garde anti double-clic), un état de
+  chargement est visible, les erreurs s'affichent dans le panneau, le
+  défilement suit la dernière réponse et la fenêtre reste ouverte après
+  « Ouvrir dans Trajet ».
+
+Inventaire complet des données intégrées, sources et lacunes :
+`docs/donnees-mobilite-2026-10-10.md`.
+
 ## Prochaines étapes de la feuille de route
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.

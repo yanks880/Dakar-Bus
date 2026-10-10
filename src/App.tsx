@@ -1249,13 +1249,6 @@ function App() {
         <div className="map-attribution-note">
           <span className="map-attribution-dot" /> Fond cartographique OpenStreetMap
         </div>
-
-        {/* Assistant IA : bouton flottant en bas à gauche de la carte. */}
-        <AssistantChat context={{
-          publishedAvailable: dataAvailable,
-          adminOnline: governance.status === 'ready',
-          nextDepartureAt: assistantScheduleFromJourney(journey.search, countdownNow),
-        }} onOpenJourney={openAssistantJourney} />
       </section>
       )}
 
@@ -1442,6 +1435,20 @@ function App() {
           <button type="button" className="footer-link" onClick={() => { setActiveTab('settings'); setConsoleOpen(false) }}>Aide, CGU & sources <ArrowRight size={13} /></button>
         </footer>
       </aside>
+
+      {/* Assistant IA : monté au niveau de l'app-shell, hors de la carte, pour
+          rester au-dessus de tous les plans (la section carte isole son
+          contexte d'empilement et rogne ses débordements) et conserver la
+          conversation quand on quitte l'onglet Explorer. Visible dans Explorer
+          uniquement (CSS), jamais démonté. */}
+      <AssistantChat context={{
+        publishedAvailable: dataAvailable,
+        adminOnline: governance.status === 'ready',
+        nextDepartureAt: assistantScheduleFromJourney(journey.search, countdownNow),
+        userLocation: gpsState === 'ready' && location
+          ? { lat: location.lat, lon: location.lng, accuracyM: location.accuracy }
+          : null,
+      }} onOpenJourney={openAssistantJourney} />
 
       <nav className="mobile-nav" aria-label="Navigation principale">
         {NAV_ITEMS.map((item) => {
@@ -2887,6 +2894,16 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-10',
+      title: 'Copilote de mobilité : fenêtre fiabilisée, référentiel, wolof et voix',
+      items: [
+        'Assistant : la fenêtre reste ouverte et lisible — réponses au-dessus de la carte et des barres mobiles, état de chargement, envoi unique, défilement vers la dernière réponse ; « Ouvrir dans Trajet » garde la conversation.',
+        'Assistant : questions libres branchées sur le référentiel des mobilités — station la plus proche, ligne qui dessert une destination, arrêts entre deux points, dernier départ publié, correspondances TER↔BRT, alternatives calculables, explication du trajet, état des connaissances ; questions de suivi (sens inverse, où descendre) sans répéter les lieux.',
+        'Langues : réponses en français ou en wolof (modèles de base, à valider par des locuteurs), détection automatique des phrases mixtes, préférence Auto/FR/WO conservée.',
+        'Voix : microphone et lecture audio des réponses quand le navigateur les fournit ; wolof parlé et voix wolof annoncés non pris en charge plutôt que simulés ; aucun audio enregistré par l’application.',
+      ],
+    },
     {
       date: '2026-10-10',
       title: 'Copilote local et comparaison des trajets de référence',
