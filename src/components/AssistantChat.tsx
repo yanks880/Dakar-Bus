@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Bot, Send, Sparkles, X } from 'lucide-react'
 import { answerAssistant, getAssistantCountdownMinutes, type AssistantContext, type AssistantMessage } from '../domain/assistant'
+import { extractJourneyRequest } from '../domain/assistant'
+import type { PlannerEndpoint } from '../domain/planner'
 
 const SUGGESTIONS: readonly string[] = [
   'Quel est le prochain BRT vers Guédiawaye ?',
   'Liste des gares TER',
   'Trajet de Petersen à Rufisque',
+  'Compare les trajets de Guédiawaye à Rufisque, moins de marche',
   'Y a-t-il des perturbations ?',
 ]
 
@@ -25,10 +28,12 @@ function greetingFor(context: AssistantContext): AssistantMessage {
 function createReply(question: string, context: AssistantContext): AssistantMessage {
   const now = Date.now()
   const countdownMinutes = getAssistantCountdownMinutes(question, context, now)
+  const journey = extractJourneyRequest(question)
   return {
     id: nextMessageId++,
     role: 'assistant',
     text: answerAssistant(question, context, now),
+    ...(journey ? { journey } : {}),
     ...(countdownMinutes === null ? {} : { countdownMinutes }),
   }
 }
@@ -56,7 +61,7 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
  * le réseau de référence TER/BRT, le calculateur de correspondances et l'état
  * réel des API — aucune conversation n'est envoyée à un service externe.
  */
-export function AssistantChat({ context }: { context: AssistantContext }) {
+export function AssistantChat({ context, onOpenJourney }: { context: AssistantContext; onOpenJourney?: (origin: PlannerEndpoint, destination: PlannerEndpoint) => void }) {
   const [open, setOpen] = useState(false)
   const [exchanges, setExchanges] = useState<AssistantMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -99,7 +104,15 @@ export function AssistantChat({ context }: { context: AssistantContext }) {
             <button type="button" className="icon-button" aria-label="Fermer l’assistant" onClick={() => setOpen(false)}><X size={16} /></button>
           </header>
           <div className="assistant-messages" ref={listRef} role="log" aria-live="polite">
-            {messages.map((message) => <AssistantBubble key={message.id} message={message} />)}
+            {messages.map((message) => message.journey && onOpenJourney ? (
+              <div key={message.id} className="assistant-route-reply">
+                <AssistantBubble message={message} />
+                <button type="button" className="assistant-chip" onClick={() => {
+                  onOpenJourney(message.journey!.origin, message.journey!.destination)
+                  setOpen(false)
+                }}>Ouvrir dans Trajet</button>
+              </div>
+            ) : <AssistantBubble key={message.id} message={message} />)}
           </div>
           <div className="assistant-suggestions">
             {SUGGESTIONS.map((suggestion) => (

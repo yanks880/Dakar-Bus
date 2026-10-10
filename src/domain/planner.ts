@@ -80,6 +80,13 @@ export interface PlannerFailure {
 
 export type PlannerOutcome = PlannerResult | PlannerFailure
 
+/** The default keeps the original fastest-route calculation unchanged. Other
+ * priorities vary the search cost, never the duration displayed to the user. */
+export type PlannerPriority = 'fastest' | 'lessWalking' | 'fewerTransfers'
+
+const WALK_WEIGHT: Record<PlannerPriority, number> = { fastest: 1, lessWalking: 6, fewerTransfers: 1 }
+const TRANSFER_PENALTY: Record<PlannerPriority, number> = { fastest: 0, lessWalking: 0, fewerTransfers: 60 }
+
 // Vitesses, arrêts et attente : hypothèses nommées dans assumptions.ts.
 // Les constantes historiques restent exportées pour ne pas casser les appelants.
 
@@ -91,6 +98,8 @@ interface GraphEdge {
 
 interface NodeState {
   cost: number
+  /** Unweighted elapsed time: optimization penalties are not travel time. */
+  elapsed: number
   previous: string | null
   edge: GraphEdge | null
   /** Ligne sur laquelle on est monté en arrivant ici (pour la continuité de trajet). */
@@ -127,7 +136,9 @@ function walkLeg(kind: PlannerLegKind, from: string, to: string, meters: number)
  * Les points peuvent être des coordonnées libres (clic carte, GPS) ou des
  * arrêts de référence choisis dans la liste.
  */
-export function planReferenceJourney(origin: PlannerEndpoint, destination: PlannerEndpoint): PlannerOutcome {
+export function planReferenceJourney(origin: PlannerEndpoint, destination: PlannerEndpoint, priority: PlannerPriority = 'fastest'): PlannerOutcome {
+  const walkWeight = WALK_WEIGHT[priority]
+  const transferPenalty = TRANSFER_PENALTY[priority]
   if (Math.abs(origin.lat - destination.lat) < 1e-9 && Math.abs(origin.lon - destination.lon) < 1e-9) {
     return { ok: false, reason: 'SAME_POINT', message: 'Le départ et la destination sont identiques : aucun trajet à calculer.' }
   }
@@ -156,7 +167,8 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
 
   for (const entry of access) {
     states.set(entry.stop.id, {
-      cost: entry.meters / WALK_SPEED_MPM,
+      cost: entry.meters / WALK_SPEED_MPM * walkWeight,
+      elapsed: entry.meters / WALK_SPEED_MPM,
       previous: null,
       edge: entry.meters > 0
         ? { to: entry.stop.id, cost: 0, leg: walkLeg('walk_access', origin.label, entry.stop.name, entry.meters) }
@@ -169,10 +181,12 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
   const relax = (fromId: string, edge: GraphEdge, ridingLine: string | null) => {
     const current = states.get(fromId)
     if (!current) return
-    const nextCost = current.cost + edge.cost
+    const walkMinutes = edge.leg.kind.startsWith('walk') ? (edge.leg.distanceM ?? 0) / WALK_SPEED_MPM : 0
+    const nextCost = current.cost + edge.cost + (walkWeight - 1) * walkMinutes
+      + (edge.leg.kind === 'walk_transfer' ? transferPenalty : 0)
     const existing = states.get(edge.to)
     if (!existing || nextCost < existing.cost) {
-      states.set(edge.to, { cost: nextCost, previous: fromId, edge, ridingLine })
+      states.set(edge.to, { cost: nextCost, elapsed: current.elapsed + edge.cost, previous: fromId, edge, ridingLine })
       queue.push(edge.to)
     }
   }
@@ -235,13 +249,13 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
   }
 
   // Meilleure arrivée : arrêt accessible à la destination, marche finale incluse.
-  let bestStop: { stop: CorridorStop; meters: number; total: number } | null = null
+  let bestStop: { stop: CorridorStop; meters: number; cost: number; elapsed: number } | null = null
   for (const entry of egress) {
     const state = states.get(entry.stop.id)
     if (!state) continue
-    const total = state.cost + entry.meters / WALK_SPEED_MPM
-    if (!bestStop || total < bestStop.total) {
-      bestStop = { stop: entry.stop, meters: entry.meters, total }
+    const cost = state.cost + entry.meters / WALK_SPEED_MPM * walkWeight
+    if (!bestStop || cost < bestStop.cost) {
+      bestStop = { stop: entry.stop, meters: entry.meters, cost, elapsed: state.elapsed + entry.meters / WALK_SPEED_MPM }
     }
   }
   if (!bestStop) {
@@ -310,7 +324,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
   return {
     ok: true,
     legs,
-    totalMinutes: Math.max(1, Math.round(bestStop.total)),
+    totalMinutes: Math.max(1, Math.round(bestStop.elapsed)),
     totalWalkM,
     transfers,
     boardedLines,
