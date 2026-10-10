@@ -5,6 +5,7 @@ import type { PublishedStop, SnapshotBounds } from '../domain/published'
 import type { CorridorLine, CorridorStop } from '../domain/corridors'
 import { formatFrequencyPeriod, formatSourceVerification } from '../domain/frequencies'
 import { safeHttpUrl } from '../domain/http'
+import { mobilityFromStopId, mobilityPaint, type MobilityPaint } from '../domain/mobilityColors'
 
 export interface Coordinates {
   lat: number
@@ -122,6 +123,10 @@ function makeMarker(className: string, label: string, color: string): DivIcon {
   })
 }
 
+function paintFor(network: string | undefined, stopId?: string): MobilityPaint | null {
+  return mobilityPaint(network) ?? mobilityPaint(mobilityFromStopId(stopId ?? ''))
+}
+
 function TransitMapView({
   location,
   routePoints,
@@ -176,23 +181,46 @@ function TransitMapView({
       <MapController recenterTo={recenterTo} zoomAction={zoomAction} />
       <MapInitialFit bounds={initialBounds} />
 
-      {/* Réseau de référence TER/BRT : superposé au fond OpenStreetMap, sans le modifier. */}
-      {corridorLineStops.map(({ line, positions }) => (
-        <Polyline
-          key={`corridor-halo-${line.id}`}
-          positions={positions}
-          pathOptions={{ color: '#ffffff', weight: 7, opacity: 0.85 }}
-        />
-      ))}
-      {corridorLineStops.map(({ line, positions }) => (
-        <Polyline
-          key={`corridor-${line.id}`}
-          positions={positions}
-          pathOptions={{ color: line.color, weight: 4, opacity: 0.95 }}
-        >
-          <Tooltip direction="center" sticky opacity={0.95} className="stop-tooltip">
-            <div className="map-frequency-tooltip">
-              <strong>{line.shortName} — {line.longName}</strong>
+      {/* Réseau de référence TER/BRT : superposé au fond OpenStreetMap, sans le modifier.
+          Halo blanc, liseré de la seconde teinte officielle, cœur de la teinte de tracé. */}
+      {corridorLineStops.map(({ line, positions }) => {
+        const paint = paintFor(line.network)
+        if (!paint) return null
+        return (
+          <Polyline
+            key={`corridor-halo-${line.id}`}
+            positions={positions}
+            interactive={false}
+            pathOptions={{ color: '#ffffff', weight: 11, opacity: 0.92, lineCap: 'round', lineJoin: 'round' }}
+          />
+        )
+      })}
+      {corridorLineStops.map(({ line, positions }) => {
+        const paint = paintFor(line.network)
+        if (!paint) return null
+        return (
+          <Polyline
+            key={`corridor-casing-${line.id}`}
+            positions={positions}
+            interactive={false}
+            pathOptions={{ color: paint.casing, weight: 8, opacity: 0.98, lineCap: 'round', lineJoin: 'round' }}
+          />
+        )
+      })}
+      {corridorLineStops.map(({ line, positions }) => {
+        const paint = paintFor(line.network)
+        return (
+          <Polyline
+            key={`corridor-${line.id}`}
+            positions={positions}
+            pathOptions={{ color: paint?.core ?? line.color, weight: 4.5, opacity: 1, lineCap: 'round', lineJoin: 'round' }}
+          >
+            <Tooltip direction="center" sticky opacity={0.95} className={`stop-tooltip mobility-tooltip${paint ? ` mobility-${paint.id}` : ''}`}>
+              <div className="map-frequency-tooltip">
+                <strong>
+                  {paint && <span className={`mobility-badge mobility-${paint.id}`}>{line.shortName}</span>}
+                  {' '}{line.longName}
+                </strong>
               {line.officialFrequencies.map((frequency, index) => (
                 <span key={`${frequency.serviceStart}-${frequency.serviceEnd}-${index}`}>{formatFrequencyPeriod(frequency)}</span>
               ))}
@@ -208,26 +236,31 @@ function TransitMapView({
               <span className="map-frequency-disclaimer">Fréquence de service uniquement · pas un prochain passage.</span>
             </div>
           </Tooltip>
-        </Polyline>
-      ))}
+          </Polyline>
+        )
+      })}
       {corridorStops.map((stop) => {
         const line = corridorLines.find((candidate) => candidate.stopIds.includes(stop.id))
+        const paint = paintFor(line?.network, stop.id)
         return (
           <CircleMarker
             key={`corridor-stop-${stop.id}`}
             center={[stop.lat, stop.lon]}
-            radius={6}
+            radius={7}
             pathOptions={{
               color: '#ffffff',
               weight: 2,
-              fillColor: stop.id.startsWith('ter') ? '#2f6fb3' : '#198754',
-              fillOpacity: 0.95,
+              fillColor: paint?.badge ?? '#475569',
+              fillOpacity: 1,
             }}
             eventHandlers={onSelectCorridorStop ? { click: () => onSelectCorridorStop(stop) } : undefined}
           >
-            <Tooltip direction="top" offset={[0, -6]} opacity={1} className="stop-tooltip">
+            <Tooltip direction="top" offset={[0, -8]} opacity={1} className={`stop-tooltip mobility-tooltip${paint ? ` mobility-${paint.id}` : ''}`}>
               <div className="map-frequency-tooltip">
-                <strong>{stop.name}{stop.note ? ` · ${stop.note}` : ''}</strong>
+                <strong>
+                  {paint && <span className={`mobility-badge mobility-${paint.id}`}>{paint.label}</span>}
+                  {' '}{stop.name}{stop.note ? ` · ${stop.note}` : ''}
+                </strong>
                 {line?.officialFrequencies.map((frequency, index) => (
                   <span key={`${frequency.serviceStart}-${frequency.serviceEnd}-${index}`}>{formatFrequencyPeriod(frequency)}</span>
                 ))}

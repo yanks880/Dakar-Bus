@@ -31,6 +31,25 @@
      Le thème sombre redéfinit le jeton : #00B140 y reste lisible. */
   --passage-green: #007A2D;
   --passage-green-tint: #e5f7ec;
+  /* Code couleur officiel des mobilités. Constant en clair et en sombre :
+     ce n’est pas une teinte de thème, c’est l’identité du réseau.
+     TER bleu nuit / ferroviaire, BRT vert électrique / émeraude,
+     DDD jaune / or national, AFTU ambre, TATA marron. */
+  --mobility-ter: #003366;
+  --mobility-ter-bright: #1D4ED8;
+  --mobility-ter-ink: #FFFFFF;
+  --mobility-brt: #00A859;
+  --mobility-brt-bright: #10B981;
+  --mobility-brt-ink: #1C1408;
+  --mobility-ddd: #F59E0B;
+  --mobility-ddd-bright: #EAB308;
+  --mobility-ddd-ink: #1C1408;
+  --mobility-aftu: #D97706;
+  --mobility-aftu-bright: #C05621;
+  --mobility-aftu-ink: #1C1408;
+  --mobility-tata: #C05621;
+  --mobility-tata-bright: #D97706;
+  --mobility-tata-ink: #FFFFFF;
   /* Surfaces légèrement teintées : moins de blanc pur, même lisibilité. */
   --surface-shell: #f3f8f5;
   --surface-panel: #fafdfc;
@@ -181,11 +200,11 @@ button:disabled { cursor: not-allowed; }
 .layer-option:hover { background: var(--green-50); }
 .layer-option input { width: 15px; height: 15px; margin: 0; accent-color: var(--green-600); cursor: pointer; }
 .layer-icon, .network-source-icon { display: grid; flex: 0 0 auto; width: 31px; height: 31px; place-items: center; border-radius: 10px; background: #ebf7f1; color: #198754; }
-.layer-icon-ter, .network-ter { background: #eef1fb; color: #526aa9; }
-.layer-icon-brt, .network-brt { background: #e7f5ef; color: #198754; }
-.layer-icon-ddd, .network-ddd { background: #f2f1fb; color: #7568b4; }
-.layer-icon-aftu, .network-aftu { background: #fcf2e7; color: #b67b31; }
-.layer-icon-tata, .network-tata { background: #eef3f2; color: #597772; }
+.layer-icon-ter, .network-ter { background: var(--mobility-ter); color: var(--mobility-ter-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-ter-bright); }
+.layer-icon-brt, .network-brt { background: var(--mobility-brt); color: var(--mobility-brt-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-brt-bright); }
+.layer-icon-ddd, .network-ddd { background: var(--mobility-ddd); color: var(--mobility-ddd-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-ddd-bright); }
+.layer-icon-aftu, .network-aftu { background: var(--mobility-aftu); color: var(--mobility-aftu-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-aftu-bright); }
+.layer-icon-tata, .network-tata { background: var(--mobility-tata); color: var(--mobility-tata-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-tata-bright); }
 .layer-label { flex: 1; color: #284437; font-size: 12px; font-weight: 650; }
 .layer-empty { color: #8c9e97; font-size: 9px; white-space: nowrap; }
 .popover-footnote { display: flex; align-items: center; margin-top: 11px; padding-top: 11px; border-top: 1px solid #edf2f0; color: #687f74; font-size: 10px; gap: 7px; }
@@ -808,8 +827,11 @@ button:disabled { cursor: not-allowed; }
 .mobility-flow-list { display: grid; gap: 6px; margin: 9px 0 0; padding: 0; list-style: none; }
 .mobility-row { display: flex; align-items: flex-start; padding: 10px; border: 1px solid #e7f1ec; border-radius: 13px; background: #fdfefe; gap: 9px; }
 .mobility-icon { display: grid; width: 29px; height: 29px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #ecf6f1; color: #325143; }
-.mobility-ter .mobility-icon { background: #e3f0ff; color: #2f6fb3; }
-.mobility-brt .mobility-icon { background: #e0f2ea; color: #198754; }
+.mobility-ter .mobility-icon { background: var(--mobility-ter); color: var(--mobility-ter-ink); }
+.mobility-brt .mobility-icon { background: var(--mobility-brt); color: var(--mobility-brt-ink); }
+.mobility-ddd .mobility-icon { background: var(--mobility-ddd); color: var(--mobility-ddd-ink); }
+.mobility-aftu .mobility-icon { background: var(--mobility-aftu); color: var(--mobility-aftu-ink); }
+.mobility-tata .mobility-icon { background: var(--mobility-tata); color: var(--mobility-tata-ink); }
 .mobility-copy { display: grid; min-width: 0; flex: 1 1 auto; gap: 1px; }
 .mobility-copy strong { color: #214333; font-size: 11px; font-weight: 700; }
 .mobility-copy small { color: #6f8b7e; font-size: 9.5px; line-height: 1.4; }
@@ -1013,8 +1035,8 @@ button:disabled { cursor: not-allowed; }
 .planner-legs { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
 .planner-leg { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-card); }
 .planner-leg-icon { display: grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 8px; background: #ecf6f1; color: #415e51; }
-.planner-leg-ride .planner-leg-icon { background: #e3f0ff; color: #2f6fb3; }
-.planner-leg-ride.planner-leg-ter .planner-leg-icon { background: #e3f0ff; color: #2f6fb3; }
+.planner-leg-ride .planner-leg-icon { background: var(--mobility-brt); color: var(--mobility-brt-ink); }
+.planner-leg-ride.planner-leg-ter .planner-leg-icon { background: var(--mobility-ter); color: var(--mobility-ter-ink); }
 .planner-leg-copy { flex: 1 1 auto; min-width: 0; }
 .planner-leg-copy strong { display: block; font-size: 11.5px; color: var(--green-950); }
 .planner-leg-copy small { display: block; font-size: 9.5px; color: var(--muted); line-height: 1.4; margin-top: 1px; }
@@ -1026,8 +1048,8 @@ button:disabled { cursor: not-allowed; }
 .reference-network-block { margin-top: 16px; }
 .reference-provenance { margin: 6px 0 10px; font-size: 9.5px; line-height: 1.5; color: var(--muted); }
 .reference-stop-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.reference-icon-ter { background: #e3f0ff !important; color: #2f6fb3 !important; }
-.reference-icon-brt { background: #e0f2ea !important; color: #198754 !important; }
+.reference-icon-ter { background: var(--mobility-ter); color: var(--mobility-ter-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-ter-bright); }
+.reference-icon-brt { background: var(--mobility-brt); color: var(--mobility-brt-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-brt-bright); }
 
 /* Canaux officiels (onglet Alertes) */
 .alert-channels-card { margin-top: 14px; padding: 13px; border: 1px solid #d4ebe0; border-radius: 14px; background: var(--green-50); }
@@ -1146,8 +1168,11 @@ button:disabled { cursor: not-allowed; }
 .network-reference-card { display: grid; min-width: 0; gap: 6px; padding: 10px 11px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--surface-card); }
 .network-reference-card-head { display: flex; align-items: center; gap: 8px; }
 .network-reference-icon { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: #ecf6f1; color: #385a4a; }
-.network-reference-icon.network-ter { background: #edf3fb; color: #2f6fb3; }
-.network-reference-icon.network-brt { background: var(--green-100); color: var(--green-700); }
+.network-reference-icon.network-ter { background: var(--mobility-ter); color: var(--mobility-ter-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-ter-bright); }
+.network-reference-icon.network-brt { background: var(--mobility-brt); color: var(--mobility-brt-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-brt-bright); }
+.network-reference-icon.network-ddd { background: var(--mobility-ddd); color: var(--mobility-ddd-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-ddd-bright); }
+.network-reference-icon.network-aftu { background: var(--mobility-aftu); color: var(--mobility-aftu-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-aftu-bright); }
+.network-reference-icon.network-tata { background: var(--mobility-tata); color: var(--mobility-tata-ink); box-shadow: inset 0 0 0 1.5px var(--mobility-tata-bright); }
 .network-reference-title { display: grid; min-width: 0; gap: 2px; }
 .network-reference-title strong { color: var(--text); font-size: 13px; font-weight: 780; }
 .network-reference-title small { color: var(--muted); font-size: 10px; line-height: 1.35; }
@@ -1354,8 +1379,8 @@ button:disabled { cursor: not-allowed; }
 }
 
 /* --- Pastilles d'icônes : un seul vert, un seul anneau --------------------
-   Les pastilles des réseaux (TER, AFTU, DDD, Tata) gardent leur couleur
-   d'identité ; seules les pastilles de la charte sont alignées sur le vert
+   Les pastilles des réseaux (TER, BRT, DDD, AFTU, TATA) gardent leur couleur
+   officielle ; seules les pastilles de la charte sont alignées sur le vert
    signature. */
 .place-icon,
 .transport-note-icon,
@@ -1370,9 +1395,9 @@ button:disabled { cursor: not-allowed; }
 .stop-route-badge,
 .governance-empty-icon,
 .nearby-empty-icon,
-.network-reference-icon:not(.network-ter):not(.network-ddd):not(.network-aftu):not(.network-tata),
-.layer-icon:not(.layer-icon-ter):not(.layer-icon-ddd):not(.layer-icon-aftu):not(.layer-icon-tata),
-.network-source-icon:not(.network-ter):not(.network-ddd):not(.network-aftu):not(.network-tata) {
+.network-reference-icon:not(.network-ter):not(.network-brt):not(.network-ddd):not(.network-aftu):not(.network-tata),
+.layer-icon:not(.layer-icon-ter):not(.layer-icon-brt):not(.layer-icon-ddd):not(.layer-icon-aftu):not(.layer-icon-tata),
+.network-source-icon:not(.network-ter):not(.network-brt):not(.network-ddd):not(.network-aftu):not(.network-tata) {
   background: var(--green-100);
   box-shadow: inset 0 0 0 1px rgba(25, 135, 84, .16);
   color: var(--green-700);
@@ -1462,8 +1487,8 @@ button:disabled { cursor: not-allowed; }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes dot-pulse {
-  0%, 100% { box-shadow: 0 0 0 4px rgba(25, 135, 84, .18); }
-  50% { box-shadow: 0 0 0 7px rgba(25, 135, 84, .07); }
+  0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dot, var(--green-600)) 28%, transparent); }
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--dot, var(--green-600)) 8%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
   .network-summary-dot.is-counting { animation: none; }
@@ -1567,7 +1592,7 @@ button:disabled { cursor: not-allowed; }
 /* =========================================================================
    Trajet — champs de recherche (combobox) et récapitulatif
    ========================================================================= */
-.route-coverage { margin-top: 6px !important; color: var(--green-700) !important; font-size: 11px !important; font-weight: 800; letter-spacing: .06em; }
+.route-coverage { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px !important; color: var(--text) !important; font-size: 11px !important; font-weight: 800; letter-spacing: 0; }
 .route-fields-wrap { position: relative; display: grid; gap: 8px; }
 .point-field { gap: 8px; padding-right: 10px; border-radius: 14px; }
 .point-field:focus-within { border-color: var(--green-500); background: var(--surface-raised); box-shadow: 0 0 0 3px rgba(25, 135, 84, .14); }
@@ -1978,4 +2003,316 @@ button:disabled { cursor: not-allowed; }
 @media (max-width: 820px) {
   .mobile-nav-item { border-radius: 11px; }
   .mobile-nav-item.active { background: var(--surface-sunken); }
+}
+
+/* =========================================================================
+   Code couleur officiel des mobilités
+   TER bleu nuit / ferroviaire, BRT vert électrique / émeraude,
+   DDD jaune / or national, AFTU orange ambré, TATA marron.
+   Les variables sont posées sur le conteneur ; la pastille et le tracé
+   les consomment. Le décompte des minutes reste sur --passage-green.
+   ========================================================================= */
+.mobility-ter {
+  --mobility-badge: var(--mobility-ter);
+  --mobility-ink: var(--mobility-ter-ink);
+  --mobility-stroke: var(--mobility-ter-bright);
+  --mobility-bright: var(--mobility-ter-bright);
+  --dot: var(--mobility-ter-bright);
+}
+.mobility-brt {
+  --mobility-badge: var(--mobility-brt);
+  --mobility-ink: var(--mobility-brt-ink);
+  --mobility-stroke: var(--mobility-brt);
+  --mobility-bright: var(--mobility-brt-bright);
+  --dot: var(--mobility-brt);
+}
+.mobility-ddd {
+  --mobility-badge: var(--mobility-ddd);
+  --mobility-ink: var(--mobility-ddd-ink);
+  --mobility-stroke: var(--mobility-ddd);
+  --mobility-bright: var(--mobility-ddd-bright);
+  --dot: var(--mobility-ddd);
+}
+.mobility-aftu {
+  --mobility-badge: var(--mobility-aftu);
+  --mobility-ink: var(--mobility-aftu-ink);
+  --mobility-stroke: var(--mobility-aftu);
+  --mobility-bright: var(--mobility-aftu-bright);
+  --dot: var(--mobility-aftu-bright);
+}
+.mobility-tata {
+  --mobility-badge: var(--mobility-tata);
+  --mobility-ink: var(--mobility-tata-ink);
+  --mobility-stroke: var(--mobility-tata);
+  --mobility-bright: var(--mobility-tata-bright);
+  --dot: var(--mobility-tata-bright);
+}
+
+.mobility-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 18px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 999px;
+  background: var(--mobility-badge, var(--green-700));
+  color: var(--mobility-ink, #fff);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  line-height: 1.2;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.mobility-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--mobility-bright, #fff);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .88);
+}
+.mobility-mention {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--mobility-stroke) 18%, transparent);
+  box-shadow: inset 0 -2px 0 var(--mobility-stroke);
+  color: var(--text);
+  font-weight: 800;
+}
+.mobility-line-badges,
+.mobility-line-badge { display: inline-flex; align-items: center; gap: 4px; }
+.mobility-line-plus { color: var(--muted); font-weight: 700; }
+
+.mobility-tile.mobility-ter,
+.mobility-tile.mobility-brt,
+.mobility-tile.mobility-ddd,
+.mobility-tile.mobility-aftu,
+.mobility-tile.mobility-tata,
+.stop-row-icon.reference-icon-ter,
+.stop-row-icon.reference-icon-brt,
+.stop-row-icon.mobility-ter,
+.stop-row-icon.mobility-brt,
+.route-list-badge.mobility-ter,
+.route-list-badge.mobility-brt,
+.route-list-badge.mobility-ddd,
+.route-list-badge.mobility-aftu,
+.route-list-badge.mobility-tata,
+.stop-route-badge.mobility-ter,
+.stop-route-badge.mobility-brt,
+.stop-route-badge.mobility-ddd,
+.stop-route-badge.mobility-aftu,
+.stop-route-badge.mobility-tata {
+  background: var(--mobility-badge);
+  color: var(--mobility-ink);
+  box-shadow: inset 0 0 0 1.5px var(--mobility-bright);
+}
+
+.mobility-ter .network-summary-dot,
+.mobility-brt .network-summary-dot,
+.mobility-ddd .network-summary-dot,
+.mobility-aftu .network-summary-dot,
+.mobility-tata .network-summary-dot {
+  background: var(--dot);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot) 28%, transparent);
+}
+.network-summary-list > li.network-summary-item.mobility-ter.is-selected,
+.network-summary-list > li.network-summary-item.mobility-brt.is-selected,
+.network-summary-list > li.network-summary-item.mobility-ddd.is-selected,
+.network-summary-list > li.network-summary-item.mobility-aftu.is-selected,
+.network-summary-list > li.network-summary-item.mobility-tata.is-selected {
+  background-color: color-mix(in srgb, var(--dot) 14%, var(--surface-card));
+  box-shadow: inset 3px 0 0 var(--dot);
+}
+.network-summary-item.mobility-ter .network-summary-header:hover,
+.network-summary-item.mobility-brt .network-summary-header:hover,
+.network-summary-item.mobility-ddd .network-summary-header:hover,
+.network-summary-item.mobility-aftu .network-summary-header:hover,
+.network-summary-item.mobility-tata .network-summary-header:hover {
+  background-color: color-mix(in srgb, var(--dot) 10%, transparent);
+}
+
+.network-reference-card.mobility-ter,
+.network-reference-card.mobility-brt,
+.network-reference-card.mobility-ddd,
+.network-reference-card.mobility-aftu,
+.network-reference-card.mobility-tata,
+.journey-card.mobility-ter,
+.journey-card.mobility-brt,
+.journey-card.mobility-ddd,
+.journey-card.mobility-aftu,
+.journey-card.mobility-tata,
+.published-stop-row.mobility-ter,
+.published-stop-row.mobility-brt,
+.published-stop-row.mobility-ddd,
+.published-stop-row.mobility-aftu,
+.published-stop-row.mobility-tata,
+.network-source-card.mobility-ter,
+.network-source-card.mobility-brt,
+.network-source-card.mobility-ddd,
+.network-source-card.mobility-aftu,
+.network-source-card.mobility-tata {
+  box-shadow: inset 3px 0 0 var(--dot);
+}
+.network-reference-card-head .network-reference-fullname,
+.network-source-fullname { color: var(--text); font-weight: 750; }
+
+.filter-chip.mobility-ter,
+.filter-chip.mobility-brt,
+.filter-chip.mobility-ddd,
+.filter-chip.mobility-aftu,
+.filter-chip.mobility-tata {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: color-mix(in srgb, var(--mobility-stroke) 55%, var(--line-strong));
+  color: var(--text);
+}
+.filter-chip.mobility-ter::before,
+.filter-chip.mobility-brt::before,
+.filter-chip.mobility-ddd::before,
+.filter-chip.mobility-aftu::before,
+.filter-chip.mobility-tata::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dot);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mobility-badge) 35%, transparent);
+}
+.filter-chip.mobility-ter:hover,
+.filter-chip.mobility-brt:hover,
+.filter-chip.mobility-ddd:hover,
+.filter-chip.mobility-aftu:hover,
+.filter-chip.mobility-tata:hover {
+  border-color: var(--mobility-stroke);
+  background: color-mix(in srgb, var(--mobility-stroke) 14%, var(--surface-card));
+  color: var(--text);
+}
+.filter-chip.mobility-ter.selected,
+.filter-chip.mobility-brt.selected,
+.filter-chip.mobility-ddd.selected,
+.filter-chip.mobility-aftu.selected,
+.filter-chip.mobility-tata.selected {
+  border-color: var(--mobility-badge);
+  background: var(--mobility-badge);
+  box-shadow: none;
+  color: var(--mobility-ink);
+}
+.filter-chip.mobility-ter.selected::before,
+.filter-chip.mobility-brt.selected::before,
+.filter-chip.mobility-ddd.selected::before,
+.filter-chip.mobility-aftu.selected::before,
+.filter-chip.mobility-tata.selected::before {
+  background: var(--mobility-bright);
+  box-shadow: 0 0 0 1.5px #fff;
+}
+
+.point-option.mobility-ter,
+.point-option.mobility-brt,
+.point-option.mobility-ddd,
+.point-option.mobility-aftu,
+.point-option.mobility-tata {
+  box-shadow: inset 3px 0 0 var(--dot);
+}
+.point-option.mobility-ter.is-active,
+.point-option.mobility-brt.is-active,
+.point-option.mobility-ddd.is-active,
+.point-option.mobility-aftu.is-active,
+.point-option.mobility-tata.is-active {
+  background: color-mix(in srgb, var(--dot) 12%, var(--surface-card));
+  box-shadow: inset 3px 0 0 var(--dot);
+}
+.point-option-group.mobility-badge { font-size: 8px; letter-spacing: .02em; }
+
+.planner-leg.mobility-ter,
+.planner-leg.mobility-brt,
+.planner-leg.mobility-ddd,
+.planner-leg.mobility-aftu,
+.planner-leg.mobility-tata {
+  border-color: color-mix(in srgb, var(--mobility-stroke) 42%, var(--line));
+  box-shadow: inset 3px 0 0 var(--mobility-stroke);
+}
+.planner-leg.mobility-ter .planner-leg-icon,
+.planner-leg.mobility-brt .planner-leg-icon,
+.planner-leg.mobility-ddd .planner-leg-icon,
+.planner-leg.mobility-aftu .planner-leg-icon,
+.planner-leg.mobility-tata .planner-leg-icon {
+  background: var(--mobility-badge);
+  color: var(--mobility-ink);
+}
+.planner-leg-copy strong {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.journey-route-badge.mobility-badge,
+.alert-line-chip.mobility-badge,
+.street-report-network.mobility-badge {
+  border-color: transparent;
+  background: var(--mobility-badge);
+  color: var(--mobility-ink);
+}
+
+.mobility-step {
+  display: block;
+  margin: 5px 0;
+  padding: 6px 8px 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  box-shadow: inset 3px 0 0 var(--line-strong);
+}
+.mobility-step.mobility-ter,
+.mobility-step.mobility-brt,
+.mobility-step.mobility-ddd,
+.mobility-step.mobility-aftu,
+.mobility-step.mobility-tata {
+  background: color-mix(in srgb, var(--mobility-stroke) 14%, var(--surface-card));
+  box-shadow: inset 3px 0 0 var(--mobility-stroke);
+}
+.mobility-step-mix {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--step-a) 16%, var(--surface-card)), color-mix(in srgb, var(--step-b) 16%, var(--surface-card)));
+  box-shadow: inset 3px 0 0 var(--step-a), inset -3px 0 0 var(--step-b);
+}
+.assistant-bubble .mobility-badge,
+.assistant-answer .mobility-badge,
+.alerts-ai-text .mobility-badge { font-size: 10px; }
+.mobility-text-host { display: inline; }
+.assistant-reply-text .mobility-text-host,
+.assistant-bubble .mobility-text-host,
+.alerts-ai-text .mobility-text-host { display: block; }
+
+.map-mobility-legend {
+  position: absolute;
+  z-index: 450;
+  bottom: 28px;
+  left: 12px;
+  display: grid;
+  max-width: min(360px, calc(100% - 78px));
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(var(--overlay), .94);
+  box-shadow: 0 8px 22px rgba(16, 44, 29, .12);
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+.map-mobility-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.map-mobility-legend-title { color: var(--muted); font-size: 8.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.map-mobility-legend small { color: var(--muted); font-size: 8.5px; line-height: 1.35; }
+.leaflet-tooltip.mobility-tooltip.mobility-ter { border-color: var(--mobility-ter-bright); }
+.leaflet-tooltip.mobility-tooltip.mobility-brt { border-color: var(--mobility-brt); }
+.leaflet-tooltip.mobility-tooltip.mobility-ddd { border-color: var(--mobility-ddd); }
+.leaflet-tooltip.mobility-tooltip.mobility-aftu { border-color: var(--mobility-aftu); }
+.leaflet-tooltip.mobility-tooltip.mobility-tata { border-color: var(--mobility-tata); }
+.leaflet-tooltip .mobility-badge { margin-right: 4px; }
+
+@media (max-width: 820px) {
+  .map-mobility-legend { bottom: 26px; left: 8px; max-width: calc(100% - 62px); padding: 6px; }
+  .map-mobility-legend small { display: none; }
 }

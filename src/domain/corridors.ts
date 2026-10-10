@@ -20,6 +20,7 @@
 
 import { REFERENCE_COMMERCIAL_SPEED_KPH } from './assumptions'
 import { FREQUENCY_SOURCES, OFFICIAL_REFERENCE_FREQUENCIES, type FrequencySource, type FrequencyStatus, type OfficialFrequency } from './frequencies'
+import { MOBILITY_PALETTE } from './mobilityColors'
 
 export type CorridorNetworkId = 'ter' | 'brt'
 
@@ -176,7 +177,7 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     network: 'ter',
     shortName: 'TER',
     longName: 'Dakar ↔ Diamniadio',
-    color: '#2f6fb3',
+    color: MOBILITY_PALETTE.ter.core,
     stopIds: TER_STOPS.map((stop) => stop.id),
     // L'estimateur de correspondance n'a pas d'heure/jour de départ : il
     // retient prudemment le maximum officiel, sans l'afficher comme une cadence
@@ -199,7 +200,7 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
     // corridor. Aucun arrêt n'est retiré sur une base non nommée : l'écart
     // reste signalé ici plutôt que deviné.
     longName: 'Petersen – Papa Gueye Fall ↔ Préfecture de Guédiawaye (omnibus)',
-    color: '#0f8f66',
+    color: MOBILITY_PALETTE.brt.core,
     stopIds: BRT_STOPS.map((stop) => stop.id),
     headwayMin: maxOfficialHeadway(OFFICIAL_REFERENCE_FREQUENCIES.brt),
     frequencyStatus: 'OFFICIAL_REFERENCE',

@@ -13,6 +13,8 @@ import {
   type StreetReportKind,
 } from '../domain/streetReports'
 import { NETWORK_SOURCES, type NetworkId } from '../domain/network'
+import { isMobilityId } from '../domain/mobilityColors'
+import { MobilityBadge } from './MobilityBadge'
 
 const MIN_PLACE_LENGTH = 3
 
@@ -194,7 +196,7 @@ export function StreetReportPanel({
               </div>
               <strong className="street-report-place">{report.place}</strong>
               <div className="street-report-meta">
-                {report.networkId && <span className="street-report-network">{report.networkId.toUpperCase()}</span>}
+                {isMobilityId(report.networkId) ? <MobilityBadge id={report.networkId} /> : report.networkId ? <span className="street-report-network">{report.networkId.toUpperCase()}</span> : null}
                 {report.lat !== null && report.lng !== null && (
                   <span><MapPin size={12} /> {report.lat.toFixed(4)}, {report.lng.toFixed(4)}</span>
                 )}

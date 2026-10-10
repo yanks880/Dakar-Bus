@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { compareReferenceJourneys, PRIORITY_LABELS, type Comparison } from '../domain/comparison'
-import { describeLeg, formatMeters, type PlannerEndpoint } from '../domain/planner'
+import { formatMeters, type PlannerEndpoint } from '../domain/planner'
+import { MobilityLineBadges } from './MobilityBadge'
+import { PlannerLegList } from './PlannerLegList'
 
 type Point = { label: string; lat: number; lng: number; stopId?: string }
 
@@ -31,10 +33,10 @@ export function RouteComparison({ origin, destination }: { origin: Point; destin
                 .filter((criterion) => comparison.bestBy[criterion] === option.priority).map((criterion) => PRIORITY_LABELS[criterion])
               return (
                 <li key={option.priority}>
-                  <strong>Option {index + 1} · {option.result.boardedLines.join(' + ') || 'À pied'}</strong>
+                  <strong>Option {index + 1} · {option.result.boardedLines.length > 0 ? <MobilityLineBadges names={option.result.boardedLines} /> : 'À pied'}</strong>
                   <span>≈ {option.result.totalMinutes} min · {formatMeters(option.result.totalWalkM)} de marche · {option.result.transfers} correspondance{option.result.transfers > 1 ? 's' : ''}</span>
                   <small>{best.join(' · ')}</small>
-                  <details><summary>Voir les étapes</summary><ol>{option.result.legs.map((leg, legIndex) => <li key={legIndex}>{describeLeg(leg)}</li>)}</ol></details>
+                  <details><summary>Voir les étapes</summary><PlannerLegList legs={option.result.legs} /></details>
                 </li>
               )
             })}

@@ -17,7 +17,15 @@ SIGNATURE = '#198754'
 SIGNATURE_HUE, SIGNATURE_LIGHT, SIGNATURE_SAT = 152.2, 31.4, 68.8
 
 # Teal identity of the "Tata" network must stay distinguishable from the brand green.
-KEEP_AS_IS = {'#eef3f2', '#597772'}
+# Official mobility colours (TER / BRT / DDD / AFTU / TATA) are never pulled into the signature green.
+KEEP_AS_IS = {
+    '#eef3f2', '#597772',
+    '#003366', '#1d4ed8',
+    '#00a859', '#10b981',
+    '#f59e0b', '#eab308',
+    '#d97706', '#c05621',
+    '#1c1408',
+}
 
 HEX_RE = re.compile(r'#[0-9a-fA-F]{6}\b')
 
