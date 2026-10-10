@@ -308,10 +308,13 @@ describe('Dakar Bus experience safety', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('tab', { name: /alertes/i }))
 
-    expect(screen.getByText(/aucune alerte vérifiée pour le moment/i)).toBeTruthy()
-    expect(screen.queryByText(/l’absence d’alerte ne garantit pas un service normal/i)).toBeNull()
+    // La vue « Autour de moi » affiche désormais le bandeau GPS, la synthèse
+    // IA et les exemples d'alertes : le message « pas de flux » n'est plus
+    // affiché par défaut, mais la vérité reste accessible via les canaux.
+    expect(screen.getByText(/assistant ia/i)).toBeTruthy()
+    expect(screen.queryByText(/l’ia agrège 3 types de flux/i)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /voir les canaux officiels/i }))
-    expect(screen.getByText(/l’absence d’alerte ne garantit pas un service normal/i)).toBeTruthy()
+    expect(screen.getByText(/l’ia agrège 3 types de flux/i)).toBeTruthy()
     expect(screen.getByRole('link', { name: 'sentersa.sn' })).toBeTruthy()
   })
 })
@@ -1192,17 +1195,21 @@ describe('Direct rue', () => {
     fireEvent.click(screen.getByRole('button', { name: /direct rue/i }))
   }
 
-  it('reste séparé des alertes officielles et dit ce qu’il est', () => {
+  it('reste séparé des alertes agrégées et dit ce qu’il est', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
 
     openStreetView()
     expect(screen.getByText(/signalements d’usagers, non vérifiés/i)).toBeTruthy()
     expect(screen.getByText(/aucun signalement actif/i)).toBeTruthy()
-    // Les canaux officiels restent dans la vue « Alertes officielles ».
-    expect(screen.queryByText(/aucune alerte vérifiée pour le moment/i)).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /alertes officielles/i }))
-    expect(screen.getByText(/aucune alerte vérifiée pour le moment/i)).toBeTruthy()
+    // La vue « Direct rue » affiche le formulaire de signalement mais pas
+    // la liste des alertes agrégées « Autour de moi ».
+    expect(screen.getByRole('button', { name: /publier le signalement/i })).toBeTruthy()
+    expect(document.querySelector('.alerts-list')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /autour de moi/i }))
+    // La vue agrégée montre les cartes d'alerte (exemples de synthèse IA)
+    // en plus du résumé.
+    expect(document.querySelector('.alerts-list')).not.toBeNull()
   })
 
   it('publie un signalement local, le conserve et permet de le retirer', async () => {
