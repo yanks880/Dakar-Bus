@@ -1269,3 +1269,33 @@ describe('boutons : une action va jusqu’au bout', () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.startsWith('/api/journeys'))).toBe(true)
   })
 })
+
+
+describe('copilote et comparateur sur les parcours existants', () => {
+  it('préremplit Trajet depuis une question explicite et montre les alternatives sans tarif inventé', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    const search = screen.getByLabelText(/rechercher un arrêt, une station ou une destination/i)
+    fireEvent.change(search, { target: { value: 'Compare les trajets de Préfecture de Guédiawaye à Rufisque, moins de marche' } })
+    fireEvent.submit(search.closest('form')!)
+    expect(await screen.findByText(/Copilote · Préfecture de Guédiawaye/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /comparer les options TER\/BRT/i }))
+    const comparison = screen.getByRole('region', { name: /comparaison des itinéraires TER\/BRT/i })
+    expect(within(comparison).getByText(/Option 2/)).toBeTruthy()
+    expect(within(comparison).getByText(/Prix non comparés/)).toBeTruthy()
+    expect(within(comparison).getByText(/horaires ne sont pas mélangés/)).toBeTruthy()
+  })
+
+  it('ouvre Trajet depuis le chat sans changer les autres réponses', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'trajet de Petersen à Rufisque' } })
+    fireEvent.submit(input.closest('form')!)
+    fireEvent.click(screen.getByRole('button', { name: /ouvrir dans Trajet/i }))
+    expect(screen.getByRole('button', { name: /rechercher mon itinéraire/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /comparer les options TER\/BRT/i })).toBeTruthy()
+  })
+})

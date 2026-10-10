@@ -1852,3 +1852,18 @@ button:disabled { cursor: not-allowed; }
   border-color: var(--line);
 }
 
+
+/* Optional reference comparison: published journeys and default route stay intact. */
+.route-comparison { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-card); }
+.route-comparison-action { padding: 9px 12px; border: 1px solid var(--green-700); border-radius: 9px; background: var(--green-700); color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.route-comparison-results { margin-top: 12px; color: var(--text); font-size: 12px; line-height: 1.5; }
+.route-comparison-results h3 { margin: 0 0 6px; font-size: 14px; }
+.route-comparison-results p { margin: 6px 0; }
+.route-comparison-results > ol { display: grid; gap: 8px; padding: 0; list-style: none; }
+.route-comparison-results > ol > li { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-sunken); }
+.route-comparison-results small { color: var(--green-700); font-weight: 750; }
+.route-comparison-results details summary { cursor: pointer; }
+.route-comparison-results details ol { padding-left: 20px; }
+.assistant-route-reply { align-self: flex-start; max-width: 92%; }
+.assistant-route-reply .assistant-bubble { max-width: 100%; }
+.assistant-route-reply .assistant-chip { margin: 5px 0 0; }

@@ -38,6 +38,8 @@ import {
 } from 'lucide-react'
 import { TransitMap, type Coordinates, type RoutePointKey, type UserLocation } from './components/TransitMap'
 import { AssistantChat } from './components/AssistantChat'
+import { RouteComparison } from './components/RouteComparison'
+import { extractMobilityIntent } from './domain/intent'
 import { MultimodalPlanner } from './components/MultimodalPlanner'
 import { StopCombobox } from './components/StopCombobox'
 import { StreetReportPanel } from './components/StreetReportPanel'
@@ -62,7 +64,7 @@ import {
   type Journey,
   type JourneySearch,
 } from './domain/journeys'
-import { formatMeters, planReferenceJourney, type PlannerOutcome } from './domain/planner'
+import { formatMeters, planReferenceJourney, type PlannerEndpoint, type PlannerOutcome } from './domain/planner'
 import { NETWORK_SOURCES, type NetworkId, type NetworkSource } from './domain/network'
 import { NETWORK_REFERENCE_DATA, formatFrequencyPeriod, formatSourceVerification } from './domain/frequencies'
 import { formatPassageCountdown, nextCountdownTickDelay, nextReferencePassage, type NextPassage } from './domain/headways'
@@ -748,6 +750,18 @@ function App() {
     announce(`Arrêt ${parsed.value.stopName} · ${parsed.value.routes.length} ligne${parsed.value.routes.length > 1 ? 's' : ''} déclarée${parsed.value.routes.length > 1 ? 's' : ''}.`)
   }
 
+  /** Injecte uniquement les lieux reconnus et explicitement nommés dans Trajet. */
+  function openAssistantJourney(origin: PlannerEndpoint, destination: PlannerEndpoint) {
+    setRoutePoints({
+      origin: { label: origin.label, lat: origin.lat, lng: origin.lon, stopId: origin.stopId },
+      destination: { label: destination.label, lat: destination.lat, lng: destination.lon, stopId: destination.stopId },
+    })
+    setJourney(IDLE_JOURNEY)
+    setRouteAttempted(false)
+    setPickingPoint(null)
+    setActiveTab('route')
+  }
+
   /** Recherche universelle (en-tête) : elle couvre l’index complet des arrêts
    *  et lignes — snapshot publié + réseau de référence TER/BRT — et interroge
    *  l’assistant, qui répond à partir des mêmes références avec leur provenance. */
@@ -761,6 +775,8 @@ function App() {
       return
     }
     const context: AssistantContext = { publishedAvailable: dataAvailable, adminOnline: governance.status === 'ready' }
+    const intent = extractMobilityIntent(question)
+    if (intent?.origin && intent.destination) openAssistantJourney(intent.origin, intent.destination)
     setAssistantAnswer({ question, answer: answerAssistant(question, context) })
     void runStopSearch(question)
   }
@@ -1239,7 +1255,7 @@ function App() {
           publishedAvailable: dataAvailable,
           adminOnline: governance.status === 'ready',
           nextDepartureAt: assistantScheduleFromJourney(journey.search, countdownNow),
-        }} />
+        }} onOpenJourney={openAssistantJourney} />
       </section>
       )}
 
@@ -2065,7 +2081,9 @@ function RoutePanel({
           )}
         </div>
       )}
-
+      {routePoints.origin && routePoints.destination && (
+        <RouteComparison origin={routePoints.origin} destination={routePoints.destination} />
+      )}
     </section>
   )
 }
@@ -2869,6 +2887,14 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-10',
+      title: 'Copilote local et comparaison des trajets de référence',
+      items: [
+        'Assistant : demandes de trajet avec priorité durée, marche ou correspondances et heure d’arrivée à Dakar ; lieux explicitement nommés seulement, tarif non comparable faute de données complètes.',
+        'Trajet : comparaison facultative des variantes TER/BRT calculées, avec métriques et étapes, sans remplacer les courses directes publiées ni confondre leurs horaires avec les estimations.',
+      ],
+    },
     {
       date: '2026-10-10',
       title: 'Correctif d’accès : le bundle de production se charge à nouveau',

@@ -19,6 +19,8 @@ import { NETWORK_REFERENCE_DATA, OFFICIAL_REFERENCE_FREQUENCIES, formatFrequency
 import { getRemainingMinutes } from './truth'
 import { formatPassageCountdown } from './headways'
 import { describeLeg, formatMeters, planReferenceJourney, type PlannerEndpoint } from './planner'
+import { compareReferenceJourneys, PRIORITY_LABELS } from './comparison'
+import { departureAdvice, extractMobilityIntent } from './intent'
 
 export interface AssistantContext {
   /** Un snapshot GTFS est publié et servi par l'API de lecture. */
@@ -41,6 +43,7 @@ export interface AssistantMessage {
   text: string
   /** Only set for a valid, positive countdown calculated from a scheduled departure. */
   countdownMinutes?: number
+  journey?: { origin: PlannerEndpoint; destination: PlannerEndpoint }
 }
 
 function normalize(value: string): string {
@@ -107,23 +110,10 @@ const OFFICIAL_CHANNELS =
 const HONEST_LIMIT =
   'Je raisonne sur les références officielles TER/BRT et les horaires GTFS publiés lorsqu’ils existent : aucune position de véhicule ni donnée temps réel. Pour DDD et AFTU, le catalogue ne contient que des repères de réseau ; aucune fréquence par ligne n’est disponible.'
 
-/** Extrait un couple (origine, destination) d'une question d'itinéraire. */
+/** Extrait un couple (origine, destination) sans inférer une position actuelle. */
 export function extractJourneyRequest(question: string): { origin: PlannerEndpoint; destination: PlannerEndpoint } | null {
-  const match =
-    /(?:comment\s+(?:aller|se rendre|je vais)|itin[eé]raire|trajet|aller|voyage)\D*(?:de|depuis|entre)\s+([a-zà-ÿ0-9’' .-]{2,40}?)\s+(?:[àa]|vers|jusqu ?[àa]|pour aller [àa])\s+([a-zà-ÿ0-9’' .-]{2,40})/i.exec(
-      question,
-    )
-  if (!match) return null
-  const [, originText, destinationText] = match
-  const originStops = searchCorridorStops(originText.trim())
-  const destinationStops = searchCorridorStops(destinationText.trim())
-  if (originStops.length === 0 || destinationStops.length === 0) return null
-  const originStop = originStops[0]
-  const destinationStop = destinationStops[0]
-  return {
-    origin: { label: originStop.name, lat: originStop.lat, lon: originStop.lon, stopId: originStop.id },
-    destination: { label: destinationStop.name, lat: destinationStop.lat, lon: destinationStop.lon, stopId: destinationStop.id },
-  }
+  const intent = extractMobilityIntent(question)
+  return intent?.origin && intent.destination ? { origin: intent.origin, destination: intent.destination } : null
 }
 
 export function answerAssistant(question: string, context: AssistantContext, now = Date.now()): string {
@@ -139,20 +129,37 @@ export function answerAssistant(question: string, context: AssistantContext, now
 • Lister les 23 stations BRT ou les 13 gares TER (« liste des stations BRT ») ;
 • Dire si un lieu est desservi (« le BRT va-t-il à Guédiawaye ? ») ;
 • Calculer un itinéraire multimodal (« trajet de Petersen à Rufisque ») ;
+• Comparer durée, marche ou correspondances (« compare les trajets de Guédiawaye à Rufisque, moins de marche »), estimer un départ pour une heure d’arrivée sans garantir le service ;
 • Donner les fréquences et tarifs de référence publiés ;
 • Faire le point honnêtement sur les perturbations et l’état des données.
 ${HONEST_LIMIT}`
   }
 
-  // 2) Itinéraire A → B via le calculateur de correspondances.
-  const journey = extractJourneyRequest(question)
-  if (journey) {
+  // 2) Copilote : intention explicite puis calculateur de référence existant.
+  const intent = extractMobilityIntent(question)
+  if (intent) {
+    if (!intent.origin) return 'Quel est votre point de départ ? Indiquez « trajet de [gare ou station] à [destination] » : je ne déduis pas votre position.'
+    if (!intent.destination) return 'Destination non reconnue sur le réseau de référence TER/BRT. Choisissez une gare ou une station déclarée ; DDD/AFTU ne sont pas encore intégrés.'
+    if (intent.priority === 'cheapest') return 'Je ne peux pas classer les trajets par prix : les tarifs complets et vérifiés TER/BRT ne sont pas disponibles ici. Je peux comparer la durée, la marche ou les correspondances, pas inventer un coût.'
+    if (intent.arrivalRequested && intent.arrivalMinutes === null) return 'Heure d’arrivée invalide : indiquez une heure de Dakar au format « avant 9 h » ou « avant 09:30 ». Aucun départ ne peut être conseillé sans heure valide.'
+    const priority = intent.priority
+    const journey = { origin: intent.origin, destination: intent.destination }
+    if (intent.compare || intent.priority !== 'fastest') {
+      const comparison = compareReferenceJourneys(journey.origin, journey.destination)
+      if (!comparison.ok) return comparison.message
+      const chosen = comparison.options.find((option) => option.priority === comparison.bestBy[priority])!
+      const alternatives = comparison.options.map((option, index) =>
+        `• Option ${index + 1} (${option.result.boardedLines.join(' + ') || 'à pied'}) : environ ${option.result.totalMinutes} min, ${formatMeters(option.result.totalWalkM)} de marche, ${option.result.transfers} correspondance(s).`).join('\n')
+      const advice = intent.arrivalMinutes === null ? '' : `\n${departureAdvice(intent.arrivalMinutes, chosen.result.totalMinutes, now, intent.tomorrow)}`
+      return `Copilote · ${journey.origin.label} → ${journey.destination.label}. ${PRIORITY_LABELS[priority]} : option ${comparison.options.indexOf(chosen) + 1}.\n${alternatives}\n${comparison.options.length === 1 ? 'Une seule option distincte est calculable. ' : ''}Classement parmi ces options calculées. Données : réseau de référence TER/BRT, marche et attente estimées, sans horaires de passage ni temps réel. Tarif non comparable (données insuffisantes).${advice} Ouvrez Trajet pour voir le détail et comparer les options.`
+    }
     const outcome = planReferenceJourney(journey.origin, journey.destination)
     if (!outcome.ok) return outcome.message
     const steps = outcome.legs.map((leg) => `• ${describeLeg(leg)}`).join('\n')
+    const advice = intent.arrivalMinutes === null ? '' : `\n${departureAdvice(intent.arrivalMinutes, outcome.totalMinutes, now, intent.tomorrow)}`
     return `Itinéraire de référence ${journey.origin.label} → ${journey.destination.label} — environ ${outcome.totalMinutes} min, ${outcome.transfers} correspondance${outcome.transfers > 1 ? 's' : ''}, ${formatMeters(outcome.totalWalkM)} de marche :
 ${steps}
-${outcome.limitation}`
+${outcome.limitation}${advice}`
   }
 
   // 3) Prochain départ / fréquence officielle de référence.
