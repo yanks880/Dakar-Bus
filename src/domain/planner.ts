@@ -18,6 +18,14 @@
  */
 
 import {
+  BOARDING_WAIT_FRACTION,
+  MAX_ACCESS_M,
+  TRANSFER_BUFFER_MIN,
+  WALK_SPEED_MPM,
+  dwellMinutes,
+  walkDisplayMinutes,
+} from './assumptions'
+import {
   ALL_CORRIDOR_STOPS,
   CORRIDOR_LINES,
   CORRIDOR_TRANSFERS,
@@ -26,6 +34,8 @@ import {
   type CorridorLine,
   type CorridorStop,
 } from './corridors'
+
+export { DWELL_MIN, MAX_ACCESS_M } from './assumptions'
 
 export interface PlannerEndpoint {
   label: string
@@ -70,14 +80,8 @@ export interface PlannerFailure {
 
 export type PlannerOutcome = PlannerResult | PlannerFailure
 
-/** Vitesse de marche retenue (m/min) : ~4,8 km/h. */
-const WALK_SPEED_MPM = 80
-/** Marge d'attente ajoutée à chaque correspondance marchable (min). */
-const TRANSFER_BUFFER_MIN = 3
-/** Temps d'arrêt par station (min), partagé avec le tableau des créneaux par station. */
-export const DWELL_MIN: Record<string, number> = { ter: 1, brt: 0.5 }
-/** Rayon maximal de marche d'accès/de sortie (m). */
-export const MAX_ACCESS_M = 1200
+// Vitesses, arrêts et attente : hypothèses nommées dans assumptions.ts.
+// Les constantes historiques restent exportées pour ne pas casser les appelants.
 
 interface GraphEdge {
   to: string
@@ -103,7 +107,7 @@ function rideMinutes(line: CorridorLine, fromOrder: number, toOrder: number): { 
     if (a && b) distanceM += haversineMeters(a, b)
   }
   const travel = (distanceM / 1000 / line.speedKph) * 60
-  const dwell = (end - start - 1) * (DWELL_MIN[line.network] ?? 0.5)
+  const dwell = (end - start - 1) * dwellMinutes(line.network)
   const intermediate = line.stopIds.slice(start + 1, end).map((id) => getCorridorStop(id)?.name ?? id)
   return { minutes: travel + dwell, distanceM, intermediate }
 }
@@ -114,7 +118,7 @@ function walkLeg(kind: PlannerLegKind, from: string, to: string, meters: number)
     from,
     to,
     distanceM: Math.round(meters),
-    minutes: Math.max(1, Math.ceil(meters / WALK_SPEED_MPM)),
+    minutes: walkDisplayMinutes(meters),
   }
 }
 
@@ -190,7 +194,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
 
     // 1) Trajets : monter, continuer ou descendre de chaque ligne desservant l'arrêt.
     for (const line of CORRIDOR_LINES.filter((candidate) => candidate.stopIds.includes(currentId))) {
-      const boarding = current.ridingLine === line.id ? 0 : line.headwayMin / 2
+      const boarding = current.ridingLine === line.id ? 0 : line.headwayMin * BOARDING_WAIT_FRACTION
       for (const targetId of line.stopIds) {
         if (targetId === currentId) continue
         const fromOrder = line.stopIds.indexOf(currentId)
@@ -200,7 +204,7 @@ export function planReferenceJourney(origin: PlannerEndpoint, destination: Plann
         const target = getCorridorStop(targetId)
         if (!target) continue
         const segment = rideMinutes(line, fromOrder, toOrder)
-        const dwell = DWELL_MIN[line.network] ?? 0.5
+        const dwell = dwellMinutes(line.network)
         relax(currentId, {
           to: targetId,
           cost: boarding + segment.minutes + dwell,

@@ -25,7 +25,7 @@
 
 import { CORRIDOR_LINES, getCorridorStop, haversineMeters, type CorridorStop } from './corridors'
 import type { OfficialFrequency } from './frequencies'
-import { DWELL_MIN } from './planner'
+import { dwellMinutes } from './assumptions'
 import { nextReferencePassage, type NextPassage } from './headways'
 import type { NetworkId } from './network'
 
@@ -82,7 +82,7 @@ export function buildStationBoard(line: BoardLine, now = Date.now()): StationBoa
     .filter((stop): stop is CorridorStop => stop !== null)
   if (stops.length < 2) return null
 
-  const dwell = DWELL_MIN[line.network] ?? 0.5
+  const dwell = dwellMinutes(line.network)
   const originStop = stops[0]
   const destinationStop = stops[stops.length - 1]
 
