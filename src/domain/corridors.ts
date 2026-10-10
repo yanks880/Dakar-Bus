@@ -22,7 +22,7 @@ import { REFERENCE_COMMERCIAL_SPEED_KPH } from './assumptions'
 import { FREQUENCY_SOURCES, OFFICIAL_REFERENCE_FREQUENCIES, type FrequencySource, type FrequencyStatus, type OfficialFrequency } from './frequencies'
 import { MOBILITY_PALETTE } from './mobilityColors'
 
-export type CorridorNetworkId = 'ter' | 'brt'
+export type CorridorNetworkId = 'ter' | 'brt' | 'ddd' | 'aftu' | 'tata'
 
 export interface CorridorStop {
   id: string
@@ -109,6 +109,30 @@ export const CORRIDOR_NETWORKS: Record<CorridorNetworkId, CorridorNetwork> = {
     provenance:
       'Stations : référence CETUD / sunubrt.sn (23 stations entre Petersen – Papa Gueye Fall et la Préfecture de Guédiawaye). Le projet consigne des coordonnées et identifiants de nœuds OpenStreetMap de la relation B1 (19961937/19961993, network=SunuBRT) ; leur date de vérification externe n’est pas documentée. Tracé : liaison des arrêts dans l’ordre de desserte, pas le tracé métrique des voies.',
   },
+  ddd: {
+    id: 'ddd',
+    label: 'DDD',
+    operator: 'Dakar Dem Dikk',
+    description: 'Bus urbains — réseau de référence simplifié (arrêts principaux).',
+    provenance:
+      'Arrêts de référence DDD issus des fiches itinéraires demdikk.sn (consultation 2026-10-10). Tracé simplifié en pointillés légers pour éviter la surcharge visuelle.',
+  },
+  aftu: {
+    id: 'aftu',
+    label: 'AFTU',
+    operator: 'AFTU / TATA',
+    description: 'Minibus AFTU et TATA — réseau de référence simplifié.',
+    provenance:
+      'Arrêts de référence AFTU issus des fiches aftu-senegal.org (consultation 2026-10-10). Affichage en pointillés légers et pastilles d’arrêts.',
+  },
+  tata: {
+    id: 'tata',
+    label: 'TATA',
+    operator: 'TATA (AFTU)',
+    description: 'Réseau TATA — partage la palette orange/marron avec AFTU.',
+    provenance:
+      'Réseau TATA assimilé à AFTU pour l’affichage cartographique léger (pointillés + pastilles).',
+  },
 }
 
 /** Les 13 gares et haltes du TER, Dakar → Diamniadio.
@@ -163,6 +187,53 @@ export const BRT_STOPS: readonly CorridorStop[] = [
   { id: 'brt-golf-nord', name: 'Golf Nord', lat: 14.7763179, lon: -17.3984054, order: 20, aliases: ['golf nord guediawaye'], note: undefined, osmNodeId: 11739850125 },
   { id: 'brt-gueule-tapee', name: 'Gueule Tapée', lat: 14.7756271, lon: -17.3921489, order: 21, aliases: ['gueule tapee'], note: undefined, osmNodeId: 11739850126 },
   { id: 'brt-prefecture-guediawaye', name: 'Préfecture de Guédiawaye', shortName: 'Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 22, aliases: ['prefecture guediawaye', 'guédiawaye', 'guediawaye', 'pole guediawaye', 'pem guediawaye'], note: 'Pôle d’échange · terminus', osmNodeId: 11739850129 },
+]
+
+/** Réseau DDD — arrêts principaux de référence (coordonnées approximatives
+ *  centrées sur les pôles cités dans les fiches demdikk.sn). Affichage prévu
+ *  en pointillés légers + pastilles jaunes/or pour éviter la surcharge. */
+export const DDD_STOPS: readonly CorridorStop[] = [
+  { id: 'ddd-parcelles', name: 'Parcelles Assainies', shortName: 'Parcelles', lat: 14.7627, lon: -17.4243, order: 0, aliases: ['parcelles', 'parcelles assainies terminus'], note: 'DDD · pôle' },
+  { id: 'ddd-liberte-5', name: 'Liberté 5', lat: 14.7210415, lon: -17.464045, order: 1, aliases: ['liberte 5', 'dieuppeul'], note: 'DDD' },
+  { id: 'ddd-liberte-6', name: 'Liberté 6', lat: 14.7263088, lon: -17.4591976, order: 2, aliases: ['liberte 6'], note: 'DDD' },
+  { id: 'ddd-grand-yoff', name: 'Grand Yoff', lat: 14.755, lon: -17.46, order: 3, aliases: ['grand yoff', 'grand yoff marché'], note: 'DDD' },
+  { id: 'ddd-khar-yalla', name: 'Khar Yalla', lat: 14.7320392, lon: -17.4564326, order: 4, aliases: ['khar yalla'], note: 'DDD' },
+  { id: 'ddd-colobane', name: 'Colobane', lat: 14.7003482, lon: -17.4416523, order: 5, aliases: ['colobane'], note: 'DDD · correspondance' },
+  { id: 'ddd-petersen', name: 'Petersen', shortName: 'Petersen', lat: 14.6766438, lon: -17.4406354, order: 6, aliases: ['petersen', 'gare petersen'], note: 'DDD · pôle' },
+  { id: 'ddd-leclerc', name: 'Place Leclerc', shortName: 'Leclerc', lat: 14.6815, lon: -17.431, order: 7, aliases: ['leclerc', 'place leclerc', 'embarcadere'], note: 'DDD · terminus' },
+  { id: 'ddd-ouakam', name: 'Ouakam', lat: 14.724, lon: -17.49, order: 8, aliases: ['ouakam'], note: 'DDD' },
+  { id: 'ddd-almadies', name: 'Almadies', lat: 14.74, lon: -17.53, order: 9, aliases: ['almadies'], note: 'DDD · terminus' },
+  { id: 'ddd-pikine', name: 'Pikine', lat: 14.7498644, lon: -17.3916937, order: 10, aliases: ['pikine'], note: 'DDD' },
+  { id: 'ddd-keur-massar', name: 'Keur Massar', lat: 14.79, lon: -17.31, order: 11, aliases: ['keur massar'], note: 'DDD' },
+  { id: 'ddd-rufisque', name: 'Rufisque', lat: 14.7159649, lon: -17.2699985, order: 12, aliases: ['rufisque'], note: 'DDD' },
+  { id: 'ddd-guediawaye', name: 'Guédiawaye', shortName: 'Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 13, aliases: ['guediawaye'], note: 'DDD' },
+]
+
+/** Réseau AFTU / TATA — arrêts principaux de référence (fiches aftu-senegal.org).
+ *  Affichage prévu en pointillés légers + pastilles orange ambré / marron. */
+export const AFTU_STOPS: readonly CorridorStop[] = [
+  { id: 'aftu-lat-dior', name: 'Lat Dior', lat: 14.69, lon: -17.44, order: 0, aliases: ['lat dior', 'lat dior terminus'], note: 'AFTU · pôle' },
+  { id: 'aftu-petersen', name: 'Petersen', shortName: 'Petersen', lat: 14.6766438, lon: -17.4406354, order: 1, aliases: ['petersen aftu'], note: 'AFTU · pôle' },
+  { id: 'aftu-colobane', name: 'Colobane', lat: 14.7003482, lon: -17.4416523, order: 2, aliases: ['colobane aftu'], note: 'AFTU' },
+  { id: 'aftu-parcelles', name: 'Parcelles Assainies', shortName: 'Parcelles', lat: 14.7627, lon: -17.4243, order: 3, aliases: ['parcelles aftu'], note: 'AFTU' },
+  { id: 'aftu-yoff', name: 'Yoff', lat: 14.764, lon: -17.47, order: 4, aliases: ['yoff'], note: 'AFTU' },
+  { id: 'aftu-ouakam', name: 'Ouakam', lat: 14.724, lon: -17.49, order: 5, aliases: ['ouakam aftu'], note: 'AFTU' },
+  { id: 'aftu-grand-yoff', name: 'Grand Yoff', lat: 14.755, lon: -17.46, order: 6, aliases: ['grand yoff aftu'], note: 'AFTU' },
+  { id: 'aftu-guediawaye', name: 'Guédiawaye', shortName: 'Guédiawaye', lat: 14.7719791, lon: -17.3868591, order: 7, aliases: ['guediawaye aftu'], note: 'AFTU · terminus' },
+  { id: 'aftu-keur-massar', name: 'Keur Massar', lat: 14.79, lon: -17.31, order: 8, aliases: ['keur massar aftu'], note: 'AFTU' },
+  { id: 'aftu-pikine', name: 'Pikine', lat: 14.7498644, lon: -17.3916937, order: 9, aliases: ['pikine aftu'], note: 'AFTU' },
+  { id: 'aftu-rufisque', name: 'Rufisque', lat: 14.7159649, lon: -17.2699985, order: 10, aliases: ['rufisque aftu'], note: 'AFTU' },
+  { id: 'aftu-diamalaye', name: 'Diamalaye', lat: 14.76, lon: -17.40, order: 11, aliases: ['diamalaye'], note: 'AFTU' },
+  { id: 'aftu-almadies', name: 'Almadies', lat: 14.74, lon: -17.53, order: 12, aliases: ['almadies aftu'], note: 'AFTU' },
+]
+
+export const TATA_STOPS: readonly CorridorStop[] = [
+  { id: 'tata-colobane', name: 'Colobane', lat: 14.7008, lon: -17.442, order: 0, aliases: ['colobane tata'], note: 'TATA' },
+  { id: 'tata-pikine', name: 'Pikine', lat: 14.75, lon: -17.392, order: 1, aliases: ['pikine tata'], note: 'TATA' },
+  { id: 'tata-keur-massar', name: 'Keur Massar', lat: 14.7905, lon: -17.3105, order: 2, aliases: ['keur massar tata'], note: 'TATA' },
+  { id: 'tata-rufisque', name: 'Rufisque', lat: 14.7165, lon: -17.2705, order: 3, aliases: ['rufisque tata'], note: 'TATA' },
+  { id: 'tata-guediawaye', name: 'Guédiawaye', shortName: 'Guédiawaye', lat: 14.7725, lon: -17.3875, order: 4, aliases: ['guediawaye tata'], note: 'TATA' },
+  { id: 'tata-parcelles', name: 'Parcelles Assainies', shortName: 'Parcelles', lat: 14.763, lon: -17.425, order: 5, aliases: ['parcelles tata'], note: 'TATA' },
 ]
 
 /** Plus grand headway officiel déclaré, en minutes : l'entrée prudente du
@@ -220,6 +291,104 @@ export const CORRIDOR_LINES: readonly CorridorLine[] = [
       'brt-prefecture-guediawaye',
     ],
   },
+  {
+    id: 'ddd-1',
+    network: 'ddd',
+    shortName: 'DDD 1',
+    longName: 'Parcelles Assainies ↔ Place Leclerc (référence)',
+    color: MOBILITY_PALETTE.ddd.core,
+    stopIds: ['ddd-parcelles', 'ddd-liberte-5', 'ddd-liberte-6', 'ddd-khar-yalla', 'ddd-colobane', 'ddd-petersen', 'ddd-leclerc'],
+    headwayMin: 15,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00 · fréquence non publiée ligne par ligne',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.ddd,
+  },
+  {
+    id: 'ddd-2',
+    network: 'ddd',
+    shortName: 'DDD 4',
+    longName: 'Guédiawaye ↔ Almadies (référence)',
+    color: MOBILITY_PALETTE.ddd.core,
+    stopIds: ['ddd-guediawaye', 'ddd-parcelles', 'ddd-grand-yoff', 'ddd-ouakam', 'ddd-almadies'],
+    headwayMin: 15,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00 · fréquence non publiée',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.ddd,
+  },
+  {
+    id: 'ddd-3',
+    network: 'ddd',
+    shortName: 'DDD 15',
+    longName: 'Keur Massar ↔ Leclerc via Pikine (référence)',
+    color: MOBILITY_PALETTE.ddd.core,
+    stopIds: ['ddd-keur-massar', 'ddd-pikine', 'ddd-colobane', 'ddd-petersen', 'ddd-leclerc'],
+    headwayMin: 20,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.ddd,
+  },
+  {
+    id: 'aftu-1',
+    network: 'aftu',
+    shortName: 'AFTU 42',
+    longName: 'Gadaye ↔ Ouakam (référence AFTU)',
+    color: MOBILITY_PALETTE.aftu.core,
+    stopIds: ['aftu-guediawaye', 'aftu-parcelles', 'aftu-grand-yoff', 'aftu-ouakam'],
+    headwayMin: 12,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00 · AFTU',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.aftu,
+  },
+  {
+    id: 'aftu-2',
+    network: 'aftu',
+    shortName: 'AFTU 53',
+    longName: 'Keur Massar ↔ Sébikotane via Rufisque (référence)',
+    color: MOBILITY_PALETTE.aftu.core,
+    stopIds: ['aftu-keur-massar', 'aftu-pikine', 'aftu-rufisque', 'aftu-lat-dior'],
+    headwayMin: 15,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00 · AFTU',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.aftu,
+  },
+  {
+    id: 'aftu-3',
+    network: 'aftu',
+    shortName: 'AFTU 1',
+    longName: 'Lat Dior ↔ HLM Grand Médine (référence)',
+    color: MOBILITY_PALETTE.aftu.core,
+    stopIds: ['aftu-lat-dior', 'aftu-petersen', 'aftu-colobane', 'aftu-parcelles', 'aftu-diamalaye'],
+    headwayMin: 10,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00 · AFTU',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.aftu,
+  },
+  {
+    id: 'tata-1',
+    network: 'tata',
+    shortName: 'TATA',
+    longName: 'Colobane ↔ Guédiawaye (référence TATA)',
+    color: MOBILITY_PALETTE.tata.core,
+    stopIds: ['tata-colobane', 'tata-pikine', 'tata-guediawaye', 'tata-parcelles'],
+    headwayMin: 15,
+    frequencyStatus: 'UNKNOWN',
+    frequencySource: FREQUENCY_SOURCES.cetud,
+    officialFrequencies: [],
+    serviceWindow: '06:00–21:00 · TATA',
+    speedKph: REFERENCE_COMMERCIAL_SPEED_KPH.tata,
+  },
 ]
 
 /** Correspondances marchables de référence entre les deux réseaux.
@@ -243,7 +412,7 @@ export const CORRIDOR_TRANSFERS: readonly CorridorTransfer[] = [
   },
 ]
 
-export const ALL_CORRIDOR_STOPS: readonly CorridorStop[] = [...TER_STOPS, ...BRT_STOPS]
+export const ALL_CORRIDOR_STOPS: readonly CorridorStop[] = [...TER_STOPS, ...BRT_STOPS, ...DDD_STOPS, ...AFTU_STOPS, ...TATA_STOPS]
 
 export function getCorridorStop(stopId: string): CorridorStop | null {
   return ALL_CORRIDOR_STOPS.find((stop) => stop.id === stopId) ?? null

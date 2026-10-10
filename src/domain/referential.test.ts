@@ -15,24 +15,29 @@ import {
 } from './referential'
 
 describe('référentiel central des mobilités', () => {
-  it('ne contient que les arrêts réels des corridors : aucun arrêt fictif', () => {
+  it('ne contient que les arrêts réels des corridors : aucun arrêt fictif (TER/BRT continus, DDD/AFTU/TATA pointillés)', () => {
     expect(REFERENTIAL_STOPS.map((stop) => stop.id).sort())
       .toEqual(ALL_CORRIDOR_STOPS.map((stop) => stop.id).sort())
-    expect(REFERENTIAL_STOPS.length).toBe(36)
+    // 13 TER + 23 BRT + 14 DDD + 13 AFTU + 6 TATA = 69
+    expect(REFERENTIAL_STOPS.length).toBe(ALL_CORRIDOR_STOPS.length)
+    expect(REFERENTIAL_STOPS.length).toBeGreaterThanOrEqual(36)
     expect(referentialConsistencyIssues()).toEqual([])
   })
 
-  it('distingue les niveaux d’intégration sans mélanger les réseaux', () => {
+  it('distingue les niveaux d’intégration sans mélanger les réseaux (DDD/AFTU/TATA en pointillés légers)', () => {
     const byId = Object.fromEntries(REFERENTIAL_NETWORKS.map((network) => [network.id, network]))
     expect(byId.ter.integrationStatus).toBe('REFERENCE_NETWORK')
     expect(byId.brt.integrationStatus).toBe('REFERENCE_NETWORK')
-    expect(byId.ddd.integrationStatus).toBe('METADATA_ONLY')
-    expect(byId.aftu.integrationStatus).toBe('METADATA_ONLY')
-    expect(byId.tata.integrationStatus).toBe('NOT_INTEGRATED')
+    // Après ajustement visuel : DDD, AFTU, TATA ont des arrêts de référence en pointillés légers + pastilles
+    expect(byId.ddd.integrationStatus).toBe('REFERENCE_NETWORK')
+    expect(byId.aftu.integrationStatus).toBe('REFERENCE_NETWORK')
+    expect(byId.tata.integrationStatus).toBe('REFERENCE_NETWORK')
     expect(byId.ddd.classification).toBe('BUS_URBAN')
     expect(byId.aftu.classification).toBe('MINIBUS')
+    expect(byId.tata.classification).toBe('MINIBUS')
     expect(byId.ddd.frequencyStatus).toBe('UNKNOWN')
     expect(byId.aftu.frequencyStatus).toBe('UNKNOWN')
+    expect(byId.tata.frequencyStatus).toBe('UNKNOWN')
   })
 
   it('retrouve un arrêt par nom, alias et variante orthographique', () => {

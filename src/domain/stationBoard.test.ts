@@ -79,12 +79,19 @@ describe('tableau des créneaux par station et par sens', () => {
     }
   })
 
-  it('reste honnête : aucun réseau sans ligne publiée ne reçoit de station', () => {
-    expect(boardLinesForNetwork('ddd')).toEqual([])
-    expect(boardLinesForNetwork('aftu')).toEqual([])
-    expect(boardLinesForNetwork('tata')).toEqual([])
+  it('reste honnête : DDD/AFTU/TATA affichent désormais des lignes de référence en pointillés légers', () => {
+    // Après ajustement visuel : TER/BRT en tracés continus, DDD/AFTU/TATA en pointillés légers + pastilles
     expect(boardLinesForNetwork('ter')).toHaveLength(1)
     expect(boardLinesForNetwork('brt')).toHaveLength(1)
+    expect(boardLinesForNetwork('ddd').length).toBeGreaterThanOrEqual(1)
+    expect(boardLinesForNetwork('aftu').length).toBeGreaterThanOrEqual(1)
+    expect(boardLinesForNetwork('tata').length).toBeGreaterThanOrEqual(1)
+    // Les fréquences DDD/AFTU/TATA restent non publiées (UNKNOWN) : pas de prochain passage temps réel
+    for (const id of ['ddd', 'aftu', 'tata'] as const) {
+      for (const line of boardLinesForNetwork(id)) {
+        expect(line.officialFrequencies).toEqual([])
+      }
+    }
   })
 
   it('utilise un libellé court pour les en-têtes de sens', () => {

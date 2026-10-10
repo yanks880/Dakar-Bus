@@ -159,5 +159,8 @@ export function mobilityFromLabel(text: string): MobilityId | null {
 export function mobilityFromStopId(stopId: string): MobilityId | null {
   if (stopId.startsWith('ter')) return 'ter'
   if (stopId.startsWith('brt')) return 'brt'
+  if (stopId.startsWith('ddd')) return 'ddd'
+  if (stopId.startsWith('aftu')) return 'aftu'
+  if (stopId.startsWith('tata')) return 'tata'
   return null
 }

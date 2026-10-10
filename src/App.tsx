@@ -47,10 +47,13 @@ import { StopCombobox } from './components/StopCombobox'
 import { StreetReportPanel } from './components/StreetReportPanel'
 import { answerAssistant, type AssistantContext } from './domain/assistant'
 import {
+  AFTU_STOPS,
   BRT_STOPS,
   CORRIDOR_LINES,
   CORRIDOR_NETWORKS,
   DAKAR_REGION_BOUNDS,
+  DDD_STOPS,
+  TATA_STOPS,
   TER_STOPS,
   getCorridorStop,
   linesServingStop,
@@ -461,16 +464,22 @@ function App() {
   const dataAvailable = network !== null && isCurrentSnapshot(network)
   const mappablePublishedStops = dataAvailable ? nearby.stops : NO_PUBLISHED_STOPS
 
-  // Réseau de référence TER/BRT : tracés et arrêts superposés au fond OSM,
-  // pilotés par les interrupteurs de couche existants. Mémorisés : la carte ne
-  // doit pas être recalculée à chaque tic de l’horloge.
+  // Réseau de référence : TER/BRT en tracés structurants complets (continu),
+  // DDD (jaune #F59E0B) et AFTU/TATA (orange #D97706) en pointillés légers + pastilles.
+  // Piloté par les interrupteurs de couche existants. Mémorisé pour éviter recalcul à chaque tic.
   const visibleCorridorLines = useMemo(
     () => CORRIDOR_LINES.filter((line) => networkLayers[line.network]),
     [networkLayers],
   )
   const visibleCorridorStops = useMemo<CorridorStop[]>(
-    () => [...(networkLayers.ter ? TER_STOPS : []), ...(networkLayers.brt ? BRT_STOPS : [])],
-    [networkLayers.ter, networkLayers.brt],
+    () => [
+      ...(networkLayers.ter ? TER_STOPS : []),
+      ...(networkLayers.brt ? BRT_STOPS : []),
+      ...(networkLayers.ddd ? DDD_STOPS : []),
+      ...(networkLayers.aftu ? AFTU_STOPS : []),
+      ...(networkLayers.tata ? TATA_STOPS : []),
+    ],
+    [networkLayers.ter, networkLayers.brt, networkLayers.ddd, networkLayers.aftu, networkLayers.tata],
   )
 
   useEffect(() => {
@@ -1293,7 +1302,7 @@ function App() {
           <div className="map-mobility-legend-row">
             {MOBILITY_IDS.map((id) => <MobilityBadge key={id} id={id} />)}
           </div>
-          <small>Tracés affichés : TER et BRT. DDD, AFTU et TATA n’ont pas de géométrie publiée.</small>
+          <small>TER bleu #003366 et BRT vert #00A859 en tracés continus · DDD jaune #F59E0B et AFTU/TATA orange #D97706 en pointillés légers + pastilles d'arrêts.</small>
         </div>
 
         <div className="map-controls" aria-label="Contrôles de la carte">

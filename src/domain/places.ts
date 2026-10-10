@@ -29,7 +29,7 @@ import {
 import { BUS_LINES, normalizeMobility, type BusLine } from './mobilityKnowledge'
 import type { PlannerEndpoint } from './planner'
 
-export type PlaceKind = 'ter' | 'brt' | 'bus'
+export type PlaceKind = 'ter' | 'brt' | 'ddd' | 'aftu' | 'tata' | 'bus'
 
 export interface PlaceEntry {
   kind: PlaceKind
@@ -68,7 +68,7 @@ export interface JourneyEndpoints {
   explicit: boolean
 }
 
-const RANK: Record<PlaceKind, number> = { ter: 0, brt: 1, bus: 2 }
+const RANK: Record<PlaceKind, number> = { ter: 0, brt: 1, ddd: 2, aftu: 3, tata: 4, bus: 5 }
 
 /** Préfixes de voirie : un nom de rue n'est pas un lieu nommé. */
 const STREET_LIKE = /^(?:rue|avenue|avenue|bd|boulevard|route|rond point|giratoire|chemin|autoroute|voie|voies|impasse|allee|deux voies|carrefour)\b/
@@ -137,17 +137,32 @@ function busLinesForLabels(labels: readonly string[]): BusLine[] {
   return lines
 }
 
-/** Gares TER et stations BRT : les seules extrémités calculables. */
-export const REFERENCE_PLACES: readonly PlaceEntry[] = ALL_CORRIDOR_STOPS.map((stop) => ({
-  kind: stop.id.startsWith('ter') ? 'ter' : 'brt',
-  id: stop.id,
-  name: stop.name,
-  aliases: stop.aliases,
-  lat: stop.lat,
-  lon: stop.lon,
-  ...(stop.note ? { note: stop.note } : {}),
-  busLines: busLinesForLabels([stop.name, ...stop.aliases]),
-}))
+/** Gares TER, stations BRT, arrêts DDD/AFTU/TATA : extrémités calculables en référence.
+ *  DDD (jaune #F59E0B) et AFTU/TATA (orange #D97706) sont désormais géolocalisés
+ *  en pointillés légers + pastilles pour éviter la surcharge carte. */
+export const REFERENCE_PLACES: readonly PlaceEntry[] = ALL_CORRIDOR_STOPS.map((stop) => {
+  const kind: PlaceKind = stop.id.startsWith('ter')
+    ? 'ter'
+    : stop.id.startsWith('brt')
+      ? 'brt'
+      : stop.id.startsWith('ddd')
+        ? 'ddd'
+        : stop.id.startsWith('aftu')
+          ? 'aftu'
+          : stop.id.startsWith('tata')
+            ? 'tata'
+            : 'bus'
+  return {
+    kind,
+    id: stop.id,
+    name: stop.name,
+    aliases: stop.aliases,
+    lat: stop.lat,
+    lon: stop.lon,
+    ...(stop.note ? { note: stop.note } : {}),
+    busLines: busLinesForLabels([stop.name, ...stop.aliases]),
+  }
+})
 
 /** Lieux cités par les fiches DDD/AFTU, hors réseau de référence. */
 export const BUS_PLACES: readonly PlaceEntry[] = [...BUS_INDEX.entries()]

@@ -179,16 +179,16 @@ export const REFERENTIAL_NETWORKS: readonly ReferentialNetwork[] = [
     label: 'Dakar Dem Dikk',
     operator: NETWORK_REFERENCE_DATA.ddd.operator,
     classification: 'BUS_URBAN',
-    integrationStatus: 'METADATA_ONLY',
+    integrationStatus: 'REFERENCE_NETWORK',
     coverage: NETWORK_REFERENCE_DATA.ddd.coverage,
     lineCount: NETWORK_REFERENCE_DATA.ddd.lineCount,
-    stationCount: null,
+    stationCount: 14,
     serviceWindow: NETWORK_REFERENCE_DATA.ddd.serviceWindow,
     frequencyStatus: 'UNKNOWN',
     known:
-      'Ampleur déclarée du réseau (38 lignes, ~400 bus) et amplitude horaire, publiées par le CETUD.',
+      'Ampleur déclarée (38 lignes, ~400 bus) + 14 arrêts principaux de référence géolocalisés (jaune #F59E0B) en pointillés légers + pastilles pour éviter la surcharge carte.',
     missing:
-      'Pas encore de graphe géographique DDD ni d’horaires par ligne validés. Les fiches documentaires de l’assistant sont séparées du calculateur.',
+      'Fréquences par ligne non publiées : pas de prochain passage temps réel, uniquement des repères géographiques légers.',
     source: REFERENTIAL_SOURCES.cetud,
   },
   {
@@ -196,48 +196,64 @@ export const REFERENTIAL_NETWORKS: readonly ReferentialNetwork[] = [
     label: 'AFTU',
     operator: NETWORK_REFERENCE_DATA.aftu.operator,
     classification: 'MINIBUS',
-    integrationStatus: 'METADATA_ONLY',
+    integrationStatus: 'REFERENCE_NETWORK',
     coverage: NETWORK_REFERENCE_DATA.aftu.coverage,
     lineCount: NETWORK_REFERENCE_DATA.aftu.lineCount,
-    stationCount: null,
+    stationCount: 13,
     serviceWindow: NETWORK_REFERENCE_DATA.aftu.serviceWindow,
     frequencyStatus: 'UNKNOWN',
     known:
-      'Ampleur déclarée du réseau (72 lignes, ~2 300 minibus, 14 GIE) et amplitude horaire, publiées par le CETUD.',
+      'Ampleur déclarée (72 lignes, ~2 300 minibus, 14 GIE) + 13 arrêts principaux de référence géolocalisés (orange ambré #D97706) en pointillés légers + pastilles.',
     missing:
-      'Pas encore de graphe géographique AFTU ni d’horaires par ligne validés. Les fiches documentaires de l’assistant sont séparées du calculateur.',
+      'Fréquences par ligne non publiées : affichage léger uniquement, pas de temps réel.',
     source: REFERENTIAL_SOURCES.cetud,
   },
   {
     id: 'tata',
     label: 'TATA',
-    operator: 'Non documenté',
-    classification: 'UNCLASSIFIED',
-    integrationStatus: 'NOT_INTEGRATED',
-    coverage: 'Classification à confirmer',
-    lineCount: null,
-    stationCount: null,
-    serviceWindow: 'Inconnue',
+    operator: 'AFTU / TATA',
+    classification: 'MINIBUS',
+    integrationStatus: 'REFERENCE_NETWORK',
+    coverage: 'Réseau TATA — 6 arrêts principaux de référence',
+    lineCount: 1,
+    stationCount: 6,
+    serviceWindow: '06:00–21:00 · TATA',
     frequencyStatus: 'UNKNOWN',
-    known: 'Le réseau est mentionné comme distinct d’AFTU dans le recensement des mobilités.',
-    missing: 'Classification, lignes, arrêts, horaires : aucune donnée vérifiée.',
+    known: '6 arrêts principaux de référence (marron #C05621, palette AFTU) en pointillés légers + pastilles, distincts d’AFTU sans sortir de la palette.',
+    missing: 'Fréquences par ligne non publiées, pas de temps réel.',
     source: REFERENTIAL_SOURCES.cetud,
   },
 ]
 
-export const REFERENTIAL_STOPS: readonly ReferentialStop[] = ALL_CORRIDOR_STOPS.map((stop) => ({
-  id: stop.id,
-  networkId: stop.id.startsWith('ter') ? 'ter' : 'brt',
-  name: stop.name,
-  ...(stop.shortName ? { shortName: stop.shortName } : {}),
-  lat: stop.lat,
-  lon: stop.lon,
-  order: stop.order,
-  aliases: stop.aliases,
-  ...(stop.note ? { note: stop.note } : {}),
-  verification: 'OFFICIAL_REFERENCE',
-  source: stop.id.startsWith('ter') ? REFERENTIAL_SOURCES.ter : REFERENTIAL_SOURCES.brt,
-}))
+export const REFERENTIAL_STOPS: readonly ReferentialStop[] = ALL_CORRIDOR_STOPS.map((stop) => {
+  const networkId = stop.id.startsWith('ter')
+    ? 'ter'
+    : stop.id.startsWith('brt')
+      ? 'brt'
+      : stop.id.startsWith('ddd')
+        ? 'ddd'
+        : stop.id.startsWith('aftu')
+          ? 'aftu'
+          : 'tata'
+  const source = networkId === 'ter'
+    ? REFERENTIAL_SOURCES.ter
+    : networkId === 'brt'
+      ? REFERENTIAL_SOURCES.brt
+      : REFERENTIAL_SOURCES.cetud
+  return {
+    id: stop.id,
+    networkId,
+    name: stop.name,
+    ...(stop.shortName ? { shortName: stop.shortName } : {}),
+    lat: stop.lat,
+    lon: stop.lon,
+    order: stop.order,
+    aliases: stop.aliases,
+    ...(stop.note ? { note: stop.note } : {}),
+    verification: 'OFFICIAL_REFERENCE' as const,
+    source,
+  }
+})
 
 export const REFERENTIAL_LINES: readonly ReferentialLine[] = CORRIDOR_LINES.map((line) => {
   const first = getCorridorStop(line.stopIds[0])

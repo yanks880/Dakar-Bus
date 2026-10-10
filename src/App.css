@@ -2054,6 +2054,8 @@ button:disabled { cursor: not-allowed; }
   align-items: center;
   gap: 5px;
   min-height: 18px;
+  max-width: 1cm;
+  max-width: 38px;
   padding: 1px 7px 1px 5px;
   border-radius: 999px;
   background: var(--mobility-badge, var(--green-700));
@@ -2064,6 +2066,46 @@ button:disabled { cursor: not-allowed; }
   line-height: 1.2;
   white-space: nowrap;
   vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  justify-content: center;
+  box-sizing: border-box;
+}
+/* Réseaux de référence : format badge/pilule compact ≤1 cm pour laisser respirer l'écran.
+   Les barres horizontales colorées (TER bleu, BRT vert, DDD jaune, AFTU orange) sont réduites
+   à ce format badge compact, conservant toutes les métriques textuelles associées. */
+.network-summary-item .mobility-badge,
+.network-reference-card .mobility-badge,
+.map-mobility-legend .mobility-badge,
+.station-direction-kicker .mobility-badge,
+.map-frequency-tooltip .mobility-badge {
+  max-width: 1cm;
+  max-width: 38px;
+  min-width: 0;
+  width: auto;
+  padding: 1px 6px 1px 4px;
+  font-size: 8.5px;
+  line-height: 1.1;
+  letter-spacing: .03em;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.network-summary-item .mobility-badge::before,
+.network-reference-card .mobility-badge::before,
+.map-mobility-legend .mobility-badge::before {
+  width: 5px;
+  height: 5px;
+}
+/* Barre de couleur horizontale : jamais plus de 1 cm, format pilule */
+.network-summary-dot {
+  max-width: 1cm;
+  max-height: 1cm;
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+}
+.network-summary-header {
+  gap: 8px;
 }
 .mobility-badge::before {
   content: '';
