@@ -79,6 +79,18 @@ import {
   type StreetReport,
   type StreetReportDraft,
 } from './domain/streetReports'
+import {
+  aggregateAlerts,
+  aiTrafficSummaryFr,
+  aiTrafficSummaryWo,
+  formatDistanceMeters,
+  proximityLabel,
+  rankAlerts,
+  sourceLabel,
+  OFFICIAL_ALERT_CHANNELS,
+  ALERT_PROXIMITY_RADIUS_M,
+  type RankedAlert,
+} from './domain/trafficAlerts'
 import { getRemainingMinutes } from './domain/truth'
 import { isValidLatLng, readJsonBody, safeHttpUrl, timedRequest } from './domain/http'
 import { ConsolePanel } from './Console'
@@ -774,7 +786,15 @@ function App() {
       setAssistantAnswer(null)
       return
     }
-    const context: AssistantContext = { publishedAvailable: dataAvailable, adminOnline: governance.status === 'ready' }
+    const context: AssistantContext = {
+      publishedAvailable: dataAvailable,
+      adminOnline: governance.status === 'ready',
+      userLocation: gpsState === 'ready' && location
+        ? { lat: location.lat, lon: location.lng, accuracyM: location.accuracy }
+        : null,
+      trafficSummaryFr: aiSummaryFr || null,
+      trafficSummaryWo: aiSummaryWo || null,
+    }
     const intent = extractMobilityIntent(question)
     if (intent?.origin && intent.destination) openAssistantJourney(intent.origin, intent.destination)
     setAssistantAnswer({ question, answer: answerAssistant(question, context) })
@@ -1135,6 +1155,34 @@ function App() {
     }
   }, [savedDestinations])
 
+  /** Activation automatique du GPS à l'ouverture de l'onglet Alertes
+   *  (géolocalisation en direct) — la permission est demandée une fois, puis
+   *  la position est réutilisée dans Explorer et Trajet. */
+  useEffect(() => {
+    if (activeTab !== 'alerts') return
+    if (gpsState === 'ready' || gpsState === 'loading') return
+    if (gpsState === 'denied') return
+    requestLocation('center')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
+
+  /** Agrégation multisource des alertes : exemples IA de synthèse
+   *  + signalements « Direct rue » en cours, classés par proximité GPS. */
+  const rankedAlerts = useMemo<RankedAlert[]>(() => {
+    const alerts = aggregateAlerts(streetReports, countdownNow)
+    const userPoint = location ? { lat: location.lat, lng: location.lng } : null
+    return rankAlerts(alerts, userPoint, ALERT_PROXIMITY_RADIUS_M)
+  }, [streetReports, location, countdownNow])
+
+  const aiSummaryFr = useMemo(
+    () => aiTrafficSummaryFr(rankedAlerts, location ? { lat: location.lat, lng: location.lng } : null),
+    [rankedAlerts, location],
+  )
+  const aiSummaryWo = useMemo(
+    () => aiTrafficSummaryWo(rankedAlerts, location ? { lat: location.lat, lng: location.lng } : null),
+    [rankedAlerts, location],
+  )
+
   const visibleSources = exploreFilter === 'all'
     ? NETWORK_SOURCES
     : NETWORK_SOURCES.filter((network) => network.id === exploreFilter)
@@ -1290,6 +1338,8 @@ function App() {
                 userLocation: gpsState === 'ready' && location
                   ? { lat: location.lat, lon: location.lng, accuracyM: location.accuracy }
                   : null,
+                trafficSummaryFr: aiSummaryFr || null,
+                trafficSummaryWo: aiSummaryWo || null,
               }} onOpenJourney={openAssistantJourney} />
             </div>
           </header>
@@ -1308,7 +1358,8 @@ function App() {
                 >
                   <Icon size={16} strokeWidth={1.9} />
                   <span>{item.label}</span>
-                  {item.id === 'alerts' && <span className="nav-dot" aria-label="Source non connectée" />}
+                  {null}
+
                 </button>
               )
             })}
@@ -1403,6 +1454,11 @@ function App() {
               streetReports={streetReports}
               now={countdownNow}
               location={location ? { lat: location.lat, lng: location.lng } : null}
+              gpsState={gpsState}
+              gpsMessage={gpsMessage}
+              rankedAlerts={rankedAlerts}
+              aiSummaryFr={aiSummaryFr}
+              aiSummaryWo={aiSummaryWo}
               onLocate={() => requestLocation()}
               onSubmitStreetReport={publishStreetReport}
               onRemoveStreetReport={deleteStreetReport}
@@ -2659,6 +2715,11 @@ function AlertsPanel({
   streetReports,
   now,
   location,
+  gpsState,
+  gpsMessage,
+  rankedAlerts,
+  aiSummaryFr,
+  aiSummaryWo,
   onLocate,
   onSubmitStreetReport,
   onRemoveStreetReport,
@@ -2670,24 +2731,66 @@ function AlertsPanel({
   streetReports: readonly StreetReport[]
   now: number
   location: { lat: number; lng: number } | null
+  gpsState: GpsState
+  gpsMessage: string | null
+  rankedAlerts: readonly RankedAlert[]
+  aiSummaryFr: string
+  aiSummaryWo: string
   onLocate: () => void
   onSubmitStreetReport: (draft: StreetReportDraft) => void
   onRemoveStreetReport: (id: string) => void
 }) {
+  const hasGps = gpsState === 'ready' && location !== null
+  const nearbyCount = rankedAlerts.filter((r) => r.nearby).length
+  const officialAlerts = rankedAlerts.filter((r) => r.alert.source.kind !== 'COMMUNITY')
   return (
     <section className="panel alerts-panel" aria-label="Alertes de service">
       <div className="panel-heading-row">
         <div>
-          <span className="eyebrow">INFORMATION VOYAGEUR</span>
+          <span className="eyebrow">INFORMATION VOYAGEUR · GPS &amp; TEMPS RÉEL</span>
           <h2>Alertes</h2>
-          <p>Les informations vérifiées apparaîtront ici.</p>
+          <p>{hasGps ? `${nearbyCount} alerte(s) dans un rayon de ${formatDistanceMeters(ALERT_PROXIMITY_RADIUS_M)} autour de vous.` : 'Activez la localisation pour voir les perturbations autour de vous.'}</p>
         </div>
         <span className="alert-heading-icon"><Bell size={20} /></span>
       </div>
 
-      {/* « Direct rue » vit dans Alertes : deux vues d’un même écran, pas un
-          cinquième onglet. Les signalements d’usagers restent séparés des
-          informations officielles, qui n’existent pas encore. */}
+      {/* Bandeau GPS : activation de la géolocalisation en direct. */}
+      <div className={`alerts-gps-banner${hasGps ? ' is-ready' : gpsState === 'denied' ? ' is-denied' : ''}`}>
+        {hasGps ? (
+          <>
+            <LocateFixed size={15} />
+            <span>Position localisée · arrêt{nearbyCount > 1 ? 's' : ''} à proximité détecté{nearbyCount > 1 ? 's' : ''}.</span>
+          </>
+        ) : gpsState === 'denied' ? (
+          <>
+            <CircleAlert size={15} />
+            <span>Localisation refusée. Activez-la dans votre navigateur.</span>
+          </>
+        ) : (
+          <>
+            <LocateFixed size={15} />
+            <span>{gpsState === 'loading' ? 'Localisation en cours…' : gpsMessage ?? 'Activez le GPS pour détecter les arrêts autour de vous.'}</span>
+            {gpsState !== 'loading' && (
+              <button type="button" className="alerts-gps-action" onClick={onLocate}>
+                <LocateFixed size={13} /> Me localiser
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Synthèse IA (français + wolof) des signaux bruts : perturbations,
+          arrêts recommandés, retards estimés. */}
+      <div className="alerts-ai-summary" aria-label="Synthèse IA des perturbations">
+        <div className="alerts-ai-header">
+          <span className="alerts-ai-badge"><Bot size={12} /> Assistant IA</span>
+        </div>
+        <p className="alerts-ai-text">{aiSummaryFr}</p>
+        <p className="alerts-ai-text alerts-ai-wolof" lang="wo">{aiSummaryWo}</p>
+      </div>
+
+      {/* Switch entre vue des alertes agrégées (officielles + trafic + IA)
+          et « Direct rue » (signalements communautaires). */}
       <div className="alerts-switch" role="group" aria-label="Choisir la vue des alertes">
         <button
           type="button"
@@ -2695,7 +2798,8 @@ function AlertsPanel({
           aria-pressed={view === 'official'}
           onClick={() => onViewChange('official')}
         >
-          <Bell size={14} /> Alertes officielles
+          <Bell size={14} /> Autour de moi
+          {officialAlerts.length > 0 && <span className="alerts-switch-count">{officialAlerts.length}</span>}
         </button>
         <button
           type="button"
@@ -2718,31 +2822,80 @@ function AlertsPanel({
           onRemove={onRemoveStreetReport}
         />
       ) : (
-      <div className="alerts-unavailable-card">
-        <div className="alerts-status-icon"><CircleAlert size={22} /></div>
-        <span className="eyebrow">PAS DE FLUX CONNECTÉ</span>
-        <h3>Aucune alerte vérifiée pour le moment.</h3>
-        <p>Vérifiez auprès de votre opérateur avant de partir.</p>
-        <button
-          type="button"
-          className="quiet-action"
-          aria-expanded={infoOpen}
-          onClick={onToggleInfo}
-        >
-          {infoOpen ? 'Masquer les canaux officiels' : 'Voir les canaux officiels'}
-          <ChevronDown size={16} className={infoOpen ? 'rotate-icon' : ''} />
-        </button>
-        {infoOpen && (
-          <div className="alert-channels-card">
-            <p className="alert-channels-intro">L’absence d’alerte ne garantit pas un service normal.</p>
-            <ul className="alert-channels-list">
-              <li><strong>TER</strong><a href="https://sentersa.sn" target="_blank" rel="noreferrer">sentersa.sn</a></li>
-              <li><strong>BRT</strong><a href="https://sunubrt.sn" target="_blank" rel="noreferrer">sunubrt.sn</a></li>
-              <li><strong>CETUD</strong><a href="https://cetud.sn" target="_blank" rel="noreferrer">cetud.sn</a></li>
+        <>
+          {officialAlerts.length === 0 ? (
+            <div className="alerts-unavailable-card">
+              <div className="alerts-status-icon"><CircleAlert size={22} /></div>
+              <span className="eyebrow">AUCUNE ALERTE CHARGÉE</span>
+              <h3>Aucune alerte officielle connectée pour le moment.</h3>
+              <p>Vérifiez auprès de votre opérateur avant de partir. La synthèse ci-dessus est un exemple de ce que l’IA produira quand les flux seront branchés.</p>
+            </div>
+          ) : (
+            <ul className="alerts-list" aria-label="Liste des alertes classées par proximité">
+              {officialAlerts.map(({ alert, nearestStop, distanceM, nearby }) => (
+                <li
+                  key={alert.id}
+                  className={`alert-card severity-${alert.severity}${nearby ? ' is-nearby' : ''}`}
+                >
+                  <div className="alert-card-top">
+                    <span className={`alert-severity-dot severity-${alert.severity}`} aria-hidden="true" />
+                    <strong className="alert-card-title">{alert.headlineFr}</strong>
+                    {nearby && <span className="alert-nearby-chip">À proximité</span>}
+                  </div>
+                  <p className="alert-card-summary">{alert.summaryFr}</p>
+                  {alert.recommendationFr && (
+                    <p className="alert-card-reco"><strong>Conseil :</strong> {alert.recommendationFr}</p>
+                  )}
+                  <div className="alert-card-meta">
+                    <span className="alert-source-tag">{sourceLabel(alert.source)}</span>
+                    {alert.delayMinutes !== null && (
+                      <span className="alert-delay-tag">~{alert.delayMinutes} min de retard</span>
+                    )}
+                    {nearestStop && distanceM !== null && (
+                      <span className="alert-proximity-tag">
+                        {proximityLabel(nearestStop, distanceM)}
+                      </span>
+                    )}
+                  </div>
+                  {alert.affectedLines.length > 0 && (
+                    <div className="alert-affected-lines">
+                      {alert.affectedLines.map((line) => (
+                        <span key={line} className="alert-line-chip">{line}</span>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              ))}
             </ul>
-          </div>
-        )}
-      </div>
+          )}
+
+          <button
+            type="button"
+            className="quiet-action"
+            aria-expanded={infoOpen}
+            onClick={onToggleInfo}
+          >
+            {infoOpen ? 'Masquer les canaux officiels' : 'Voir les canaux officiels et sources'}
+            <ChevronDown size={16} className={infoOpen ? 'rotate-icon' : ''} />
+          </button>
+          {infoOpen && (
+            <div className="alert-channels-card">
+              <p className="alert-channels-intro">L’IA agrège 3 types de flux : sources officielles (CETUD, SETER, SunuBRT), trafic routier (OSM/Waze) et Direct rue (usagers). Les flux temps réel ne sont pas encore connectés : les alertes ci-dessus sont des exemples de synthèse.</p>
+              <ul className="alert-channels-list">
+                {OFFICIAL_ALERT_CHANNELS.map((channel) => (
+                  <li key={channel.label}>
+                    <strong>{channel.label}</strong>
+                    {channel.url ? (
+                      <a href={channel.url} target="_blank" rel="noreferrer">{channel.url.replace(/^https?:\/\//, '')}</a>
+                    ) : null}
+                  </li>
+                ))}
+                <li><strong>Trafic routier</strong><span>OSM / Waze — bientôt connecté</span></li>
+                <li><strong>Direct rue</strong><span>Signalements d’usagers sur cet appareil</span></li>
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </section>
   )
@@ -2792,7 +2945,7 @@ function SettingsHelpSection() {
     {
       id: 'alerts',
       label: 'Alertes',
-      text: 'Canaux officiels des réseaux, et « Direct rue » : signalez ou lisez ce que les usagers voient sur la route.'
+      text: 'Activez le GPS pour voir les arrêts à proximité et les perturbations autour de vous. L’IA agrège sources officielles, trafic routier et « Direct rue » en un résumé clair (français et wolof).'
     },
     {
       id: 'settings',
@@ -2890,6 +3043,17 @@ function LegalSection() {
 /** Historique des mises à jour, daté et vérifiable dans l’historique Git. */
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
+    {
+      date: '2026-10-10',
+      title: 'Alertes : GPS, arrêts à proximité et synthèse IA temps réel',
+      items: [
+        'Géolocalisation : à l’ouverture de l’onglet Alertes, le GPS est activé automatiquement (avec votre accord) pour détecter les arrêts TER/BRT/DDD/TATA dans un rayon de 1,5 km autour de vous ; un bandeau indique l’état du GPS (localisé, en cours, refusé).',
+        'Collecte multisource : l’onglet agrège trois types de flux — sources officielles (CETUD, SETER/Sen TER, SunuBRT), trafic routier (OSM/Waze — en cours de connexion), et « Direct rue » (signalements communautaires) ; les signalements d’usagers apparaissent dans la liste globale avec la mention « non vérifié ».',
+        'Synthèse IA : l’assistant agrège les signaux bruts (incidents, ralentissements, pannes) en un résumé clair en français et en wolof (modèle de base), avec sévérité, arrêt le plus proche, retard estimé et recommandation (arrêt de repli / ligne alternative).',
+        'Classement : les alertes impactant les arrêts et lignes à proximité du voyageur s’affichent en premier (géofencing), avec pastille « À proximité » ; les alertes critiques (accident, route coupée) sont priorisées.',
+        'Assistant : la question « Y a-t-il des bouchons sur mon trajet actuel ? » reçoit une réponse contextualisée à partir du résumé IA au lieu du message « pas de flux connecté » ; le wolof est joint comme seconde langue.',
+      ],
+    },
     {
       date: '2026-10-10',
       title: 'Copilote de mobilité : fenêtre fiabilisée, référentiel, wolof et voix',

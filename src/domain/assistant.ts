@@ -42,6 +42,12 @@ export interface AssistantContext {
     /** Provenance text for an exact trip selected from the published schedule. */
     routeDescription?: string
   } | null
+  /** Résumé IA des alertes trafic autour de l'usager (français), alimenté par
+   *  le pilier multisource de l'onglet Alertes. Quand il est absent, le
+   *  copilote redonne sa réponse honnête « pas de flux connecté ». */
+  trafficSummaryFr?: string | null
+  /** Version wolof du résumé, quand elle est disponible. */
+  trafficSummaryWo?: string | null
 }
 
 export interface AssistantMessage {
@@ -339,9 +345,22 @@ Demandez-moi « liste des stations BRT » ou « liste des gares TER » pour le d
 Une fréquence ne donne pas l’heure du prochain passage : aucun départ individuel ni temps réel n’est déduit de ces références.`
   }
 
-  // 8) Perturbations / alertes.
-  if (includesAny(text, ['perturbation', 'panne', 'greve', 'greve', 'retard', 'probleme', 'incident', 'alerte', 'information trafic', 'trafic'])) {
-    return `Je n’ai aucune alerte vérifiable à afficher : aucune source de perturbation n’est connectée, et l’absence d’alerte ne signifie pas que le service est normal. ${OFFICIAL_CHANNELS}${context.adminOnline ? ' L’API de gouvernance locale est joignable, mais elle ne transporte pas encore de flux d’alertes.' : ''}`
+  // 8) Perturbations / alertes / bouchons — connecté au résumé IA de
+  //    l'onglet Alertes (géolocalisation + sources multisources).
+  const trafficAsk = includesAny(text, [
+    'perturbation', 'panne', 'greve', 'retard', 'probleme', 'incident',
+    'alerte', 'information trafic', 'trafic', 'bouchon', 'embouteillage',
+    'circulation', 'ralentissement', 'boul ma dige', 'ndaw',
+  ])
+  const asksCurrentRoute = includesAny(text, ['mon trajet', 'sur mon trajet', 'actuel', 'maintenant', 'autour de moi', 'ci ma wet', 'ci sa wet'])
+  if (trafficAsk || asksCurrentRoute) {
+    if (context.trafficSummaryFr) {
+      const prefix = asksCurrentRoute
+        ? 'Sur votre trajet actuel / autour de vous : '
+        : 'Voici l’état du trafic autour de vous : '
+      return `${prefix}${context.trafficSummaryFr}${context.trafficSummaryWo ? `\n\n(Wolof · ${context.trafficSummaryWo})` : ''}`
+    }
+    return `Je n’ai aucune alerte vérifiable à afficher : aucune source de perturbation n’est connectée, et l’absence d’alerte ne signifie pas que le service est normal. ${OFFICIAL_CHANNELS}${context.adminOnline ? ' L’API de gouvernance locale est joignable, mais elle ne transporte pas encore de flux d’alertes.' : ''} Activez le GPS dans l’onglet Alertes pour activer la détection des arrêts à proximité.`
   }
 
   // 9) État des données / gouvernance.

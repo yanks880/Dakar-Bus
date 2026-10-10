@@ -1674,6 +1674,47 @@ button:disabled { cursor: not-allowed; }
 .street-footnote { display: flex; align-items: flex-start; margin: 0; color: #7d9589; font-size: 9px; line-height: 1.55; gap: 6px; }
 .street-footnote svg { flex: 0 0 auto; margin-top: 1px; color: #a8bdb2; }
 
+/* --- GPS activation banner + AI summary + alert cards (onglet Alertes) --- */
+.alerts-gps-banner { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 11px; padding: 9px 11px; border: 1px solid #e7eef0; border-radius: 12px; background: #f2f7fb; color: #4e6879; font-size: 10.5px; font-weight: 650; gap: 8px; }
+.alerts-gps-banner svg { color: #477aa8; flex: 0 0 auto; }
+.alerts-gps-banner.is-ready { border-color: #d9ede2; background: #f1f9f4; color: #2f674d; }
+.alerts-gps-banner.is-ready svg { color: #198754; }
+.alerts-gps-banner.is-denied { border-color: #f0dcc4; background: #fcf4e7; color: #8a6130; }
+.alerts-gps-banner.is-denied svg { color: #c07a2b; }
+.alerts-gps-action { display: inline-flex; margin-left: auto; min-height: 28px; align-items: center; padding: 0 10px; border: 1px solid #c7d7e3; border-radius: 999px; background: #fff; color: #2d5d85; cursor: pointer; font-size: 10px; font-weight: 750; gap: 5px; }
+.alerts-gps-action:hover { border-color: #477aa8; color: #1f4e74; }
+
+.alerts-ai-summary { margin-bottom: 13px; padding: 12px 13px; border: 1px solid #e4ecf5; border-left: 3px solid #477aa8; border-radius: 13px; background: linear-gradient(140deg, #f3f7fc, #f9fbff); }
+.alerts-ai-header { display: flex; align-items: center; margin-bottom: 7px; gap: 7px; }
+.alerts-ai-badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px; background: #477aa8; color: #fff; font-size: 9px; font-weight: 800; letter-spacing: .04em; gap: 5px; }
+.alerts-ai-text { margin: 0; color: #2a4a63; font-size: 11.5px; line-height: 1.55; }
+.alerts-ai-text + .alerts-ai-text { margin-top: 6px; }
+.alerts-ai-wolof { color: #4e6879; font-style: italic; font-size: 10.5px; }
+
+.alerts-list { display: grid; margin: 0 0 12px; padding: 0; list-style: none; gap: 9px; }
+.alert-card { display: grid; padding: 11px 12px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--surface-card); gap: 7px; }
+.alert-card.is-nearby { border-color: #d3e8dc; box-shadow: 0 2px 8px rgba(25, 135, 84, .10); }
+.alert-card.severity-critical { border-left: 3px solid #c0563c; }
+.alert-card.severity-warning { border-left: 3px solid #c98a2e; }
+.alert-card.severity-info { border-left: 3px solid #477aa8; }
+.alert-card-top { display: flex; align-items: center; gap: 8px; }
+.alert-severity-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.alert-severity-dot.severity-critical { background: #c0563c; }
+.alert-severity-dot.severity-warning { background: #c98a2e; }
+.alert-severity-dot.severity-info { background: #477aa8; }
+.alert-card-title { color: #1f3d55; font-size: 13px; font-weight: 780; line-height: 1.35; }
+.alert-nearby-chip { margin-left: auto; padding: 2px 8px; border-radius: 999px; background: #e5f2eb; color: #1f7a4e; font-size: 8.5px; font-weight: 800; letter-spacing: .04em; }
+.alert-card-summary { margin: 0; color: #506777; font-size: 11px; line-height: 1.5; }
+.alert-card-reco { margin: 0; color: #355064; font-size: 10.5px; line-height: 1.5; }
+.alert-card-reco strong { color: #1f3d55; font-weight: 800; }
+.alert-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.alert-source-tag, .alert-delay-tag, .alert-proximity-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 9px; font-weight: 700; }
+.alert-source-tag { background: #f0f4f8; color: #4e6879; }
+.alert-delay-tag { background: #fbf0e8; color: #a4523a; }
+.alert-proximity-tag { background: #f2f7fb; color: #2d5d85; }
+.alert-affected-lines { display: flex; flex-wrap: wrap; gap: 5px; }
+.alert-line-chip { padding: 2px 8px; border: 1px solid #d8e1ea; border-radius: 7px; background: #fff; color: #2d5d85; font-size: 9px; font-weight: 800; }
+
 @media (max-width: 860px) {
   .street-kind-chip { min-height: 40px; font-size: 13px; }
   .alerts-switch-button { min-height: 44px; font-size: 13px; }
