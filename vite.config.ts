@@ -37,6 +37,30 @@ function contentSecurityPolicy(): Plugin {
 export default defineConfig({
   base: '/Dakar-Bus/',
   plugins: [react(), contentSecurityPolicy()],
+  build: {
+    rolldownOptions: {
+      output: {
+        // Leaflet et React sortent du chunk d'entrée : le bundle unique
+        // dépassait 480 kB et frôlait l'avertissement Vite (500 kB).
+        codeSplitting: {
+          groups: [
+            {
+              name: 'react',
+              priority: 20,
+              // Sans cette priorité, le groupe Leaflet avale React via react-leaflet.
+              test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+            {
+              name: 'leaflet',
+              priority: 10,
+              includeDependenciesRecursively: false,
+              test: /[\\/]node_modules[\\/](leaflet|react-leaflet)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
   test: {
     // La carte rend ~40 calques Leaflet de plus (réseau de référence) :
     // les parcours jsdom les plus longs dépassent le délai par défaut de 5 s.
