@@ -1303,14 +1303,52 @@ describe('copilote et comparateur sur les parcours existants', () => {
 })
 
 describe('fenêtre du copilote : questions et réponses visibles', () => {
-  it('une suggestion prédéfinie affiche la question et la réponse dans le panneau, sans double envoi', async () => {
+  it('affiche une fiche bus sourcée sans créer un faux trajet TER/BRT', async () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant IA' }))
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'Itinéraire AFTU 53' } })
+    fireEvent.submit(input.closest('form')!)
+    const panel = screen.getByRole('region', { name: /assistant mobilité/i })
+    expect(await within(panel).findByText(/AFTU 53 : Keur Massar/)).toBeTruthy()
+    expect(within(panel).queryByRole('button', { name: /ouvrir dans trajet/i })).toBeNull()
+    const summary = within(panel).getByText('Sources et date de consultation')
+    expect(summary.closest('details')?.open).toBe(false)
+    fireEvent.click(summary)
+    expect(within(panel).getByRole('link', { name: 'aftu-senegal.org' }).getAttribute('href')).toBe('https://aftu-senegal.org/map/dakar-urbain-ligne-53/')
+    fireEvent.change(input, { target: { value: 'Et ses horaires ?' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(await within(panel).findByText(/Aucun prochain départ fiable/)).toBeTruthy()
+  })
+
+  it('reste dans l’en-tête, ouvre un échange vide et rend le focus avec Échap', () => {
+    stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
+    render(<App />)
+    const toggle = screen.getByRole('button', { name: /assistant IA/i })
+    expect(toggle.closest('.brand-row')).not.toBeNull()
+    fireEvent.click(toggle)
+    expect(screen.getByRole('log').textContent).toBe('')
+    expect(screen.queryByRole('button', { name: 'Trajet de Petersen à Rufisque' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: /votre question à l’assistant/i }))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: /assistant mobilité/i })).toBeNull()
+    expect(document.activeElement).toBe(toggle)
+    fireEvent.click(screen.getByRole('tab', { name: /paramètres/i }))
+    expect(screen.getByRole('button', { name: /assistant IA/i })).toBe(toggle)
+    fireEvent.click(toggle)
+    expect(screen.getByRole('region', { name: /assistant mobilité/i })).toBeTruthy()
+  })
+
+  it('une question affiche la réponse dans le panneau, sans double envoi', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
-    const suggestion = screen.getByRole('button', { name: 'Trajet de Petersen à Rufisque' })
-    fireEvent.click(suggestion)
-    // Un second clic avant la réponse ne duplique pas la question.
-    fireEvent.click(suggestion)
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'Trajet de Petersen à Rufisque' } })
+    fireEvent.submit(input.closest('form')!)
+    // Un second envoi avant la réponse ne duplique pas la question.
+    fireEvent.submit(input.closest('form')!)
     const panel = screen.getByRole('region', { name: /assistant mobilité/i })
     const log = within(panel).getByRole('log')
     expect(within(log).getAllByText('Trajet de Petersen à Rufisque')).toHaveLength(1)
@@ -1319,15 +1357,17 @@ describe('fenêtre du copilote : questions et réponses visibles', () => {
     expect(within(log).queryByText(/L’assistant consulte les données/i)).toBeNull()
   })
 
-  it('la suggestion « prochain BRT » reçoit une réponse honnête dans le panneau', async () => {
+  it('la question « prochain BRT » reçoit une réponse honnête dans le panneau', async () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
-    fireEvent.click(screen.getByRole('button', { name: /Quel est le prochain BRT vers Guédiawaye/i }))
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'Quel est le prochain BRT vers Guédiawaye ?' } })
+    fireEvent.submit(input.closest('form')!)
     const panel = screen.getByRole('region', { name: /assistant mobilité/i })
     const log = within(panel).getByRole('log')
     expect(await within(log).findByText(/fréquence officielle de référence du BRT/i)).toBeTruthy()
-    expect(within(log).queryByText(/temps réel/i)).toBeTruthy()
+    expect(within(log).queryByText(/aucune heure de prochain passage fiable/i)).toBeTruthy()
   })
 
   it('« Ouvrir dans Trajet » injecte le trajet sans fermer la fenêtre', async () => {
@@ -1375,7 +1415,10 @@ describe('fenêtre du copilote : questions et réponses visibles', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
-    const voices = screen.getAllByRole('button', { name: /écouter la réponse/i })
+    const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })
+    fireEvent.change(input, { target: { value: 'bonjour' } })
+    fireEvent.submit(input.closest('form')!)
+    const voices = await screen.findAllByRole('button', { name: /écouter la réponse/i })
     fireEvent.click(voices[0])
     expect(await screen.findByText(/synthèse vocale n’est pas disponible/i)).toBeTruthy()
     expect(screen.getByRole('region', { name: /assistant mobilité/i })).toBeTruthy()
@@ -1385,6 +1428,7 @@ describe('fenêtre du copilote : questions et réponses visibles', () => {
     stubApi([{ match: '/api/network', respond: () => jsonResponse(NETWORK_EMPTY) }])
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /assistant IA/i }))
+    fireEvent.click(screen.getByText('Langue'))
     fireEvent.click(screen.getByRole('button', { name: 'WO', hidden: false }))
     expect(window.localStorage.getItem('dakar-bus:assistant-language')).toBe('wo')
     const input = screen.getByRole('textbox', { name: /votre question à l’assistant/i })

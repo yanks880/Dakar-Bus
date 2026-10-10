@@ -83,9 +83,9 @@ describe('copilote : questions libres fondées sur les données', () => {
 
   it('donne le dernier départ publié avec son statut, jamais un passage observé', () => {
     const { reply } = ask('Quel est le dernier horaire publié pour le TER ?')
-    expect(reply.text).toContain('22:00')
-    expect(reply.text).toContain('SCHEDULED')
-    expect(reply.text).toContain('pas un passage observé')
+    expect(reply.text).toContain('22h05')
+    expect(reply.text).toContain('Horaires de référence')
+    expect(reply.text).toContain('pas un suivi en direct')
     const brt = ask('Dernier bus BRT ?')
     expect(brt.reply.text).toContain('21:00')
   })
@@ -205,5 +205,21 @@ describe('copilote : honnêteté et non-invention', () => {
     const { reply } = ask('Quel temps fera-t-il demain à Dakar ?')
     expect(reply.text).toContain('météo')
     expect(reply.text).toMatch(/n’en invente pas|n'invente pas/)
+  })
+})
+
+
+describe('mémoire embarquée sans publication ni API', () => {
+  it('expose la couverture des cinq mobilités sans exiger un fichier GTFS', () => {
+    const { reply } = ask('Quels réseaux connais-tu dans ta mémoire ?')
+    for (const name of ['TER', 'BRT', 'Dakar Dem Dikk', 'AFTU', 'TATA']) expect(reply.text).toContain(name)
+    expect(reply.text).toContain('aucun import GTFS n’est nécessaire')
+  })
+
+  it('consulte la fiche AFTU pour TATA sans fabriquer un trajet géographique', () => {
+    const { reply } = ask('Où passe le bus TATA 42 ?')
+    expect(reply.text).toContain('AFTU 42')
+    expect(reply.text).toContain('Ouakam Baye')
+    expect(reply.journey).toBeUndefined()
   })
 })

@@ -188,7 +188,7 @@ export const REFERENTIAL_NETWORKS: readonly ReferentialNetwork[] = [
     known:
       'Ampleur déclarée du réseau (38 lignes, ~400 bus) et amplitude horaire, publiées par le CETUD.',
     missing:
-      'Liste des lignes, numéros, arrêts, tracés, horaires : aucune donnée vérifiée dans le dépôt. Rien n’est inventé en attendant.',
+      'Pas encore de graphe géographique DDD ni d’horaires par ligne validés. Les fiches documentaires de l’assistant sont séparées du calculateur.',
     source: REFERENTIAL_SOURCES.cetud,
   },
   {
@@ -205,7 +205,7 @@ export const REFERENTIAL_NETWORKS: readonly ReferentialNetwork[] = [
     known:
       'Ampleur déclarée du réseau (72 lignes, ~2 300 minibus, 14 GIE) et amplitude horaire, publiées par le CETUD.',
     missing:
-      'Liste des lignes, codes, arrêts, tracés, horaires : aucune donnée vérifiée dans le dépôt. Rien n’est inventé en attendant.',
+      'Pas encore de graphe géographique AFTU ni d’horaires par ligne validés. Les fiches documentaires de l’assistant sont séparées du calculateur.',
     source: REFERENTIAL_SOURCES.cetud,
   },
   {

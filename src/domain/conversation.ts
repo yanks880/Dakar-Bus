@@ -23,6 +23,8 @@ export interface JourneyMemory {
 }
 
 export interface ConversationMemory {
+  /** Dernière fiche documentaire bus ; séparée des trajets géographiques. */
+  lastKnowledgeLineId?: string | null
   lastOrigin: PlannerEndpoint | null
   lastDestination: PlannerEndpoint | null
   lastJourney: JourneyMemory | null
@@ -34,6 +36,7 @@ export interface ConversationMemory {
 
 export function createConversationMemory(): ConversationMemory {
   return {
+    lastKnowledgeLineId: null,
     lastOrigin: null,
     lastDestination: null,
     lastJourney: null,
