@@ -438,6 +438,32 @@ libres, toujours local et sans service externe :
 Inventaire complet des données intégrées, sources et lacunes :
 `docs/donnees-mobilite-2026-10-10.md`.
 
+## Mémoire du maître : langage naturel et lieux de Dakar (ajouts du 10 octobre 2026)
+
+L'assistant ne répond plus par des phrases figées : il analyse la phrase de
+l'usager et s'appuie sur une mémoire des lieux de Dakar.
+
+- **Langage naturel** (`src/domain/places.ts`) : « Comment faire pour aller à
+  Dakar ? Je suis à Keur Mbaye Fall » suffit — le départ et la destination sont
+  déduits des mots de liaison (`depuis`, `je suis à`, `aller à`, `vers`…),
+  jamais d'une position supposée. La réponse rigide « Quel est votre point de
+  départ ? Indiquez « trajet de… » » a été supprimée et est désormais
+  interdite par les tests.
+- **Mémoire des lieux** (`src/domain/places.ts`, `src/domain/placeMemory.ts`) :
+  13 gares TER, 23 stations BRT et les lieux cités par les fiches DDD/AFTU.
+  Pour chaque lieu : identité, mode le plus adapté, desserte, correspondances
+  (déclarées ou mesurées à vol d'oiseau, avec le rayon de marche annoncé),
+  itinéraire réellement calculé depuis le pôle central, fiches bus citant le
+  lieu, et limites honnêtes.
+- **Mémoire de conversation** (`src/domain/conversation.ts`) : un lieu énoncé
+  (« je suis à Keur Mbaye Fall ») complète la phrase suivante (« je vais à
+  Dakar ») au lieu d'être redemandé — le lieu repris est toujours nommé.
+- **Rien d'inventé** : un lieu sans coordonnées (fiche DDD/AFTU) n'entre pas
+  dans le calculateur ; deux lieux non calculables produisent une réponse
+  documentaire, sans durée ni correspondance fabriquée.
+
+Détail, sources et vérifications : `docs/memoire-maitre-2026-10-10.md`.
+
 ## Prochaines étapes de la feuille de route
 
 1. Identifier les sources officielles, leurs conditions de réutilisation, la fréquence de mise à jour et les responsables de validation.

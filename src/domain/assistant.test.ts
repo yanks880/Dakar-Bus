@@ -98,6 +98,28 @@ describe('assistant mobilité', () => {
     expect(offline).toContain('npm run admin:api')
   })
 
+  it('comprend une phrase libre et sert l’itinéraire sans rien redemander', () => {
+    const answer = answerAssistant('Comment faire pour aller à Dakar ? Je suis à Keur Mbaye Fall', CONTEXT)
+    expect(answer).toContain('Itinéraire de référence Keur Mbaye Fall → Dakar')
+    expect(answer).toContain('TER')
+    expect(answer).not.toContain('Quel est votre point de départ')
+    expect(answer).not.toContain('Indiquez « trajet de')
+    // L’ordre des propositions ne change pas le résultat.
+    expect(answerAssistant('je suis à Parcelles Assainies, je vais à Diamniadio', CONTEXT))
+      .toContain('Itinéraire de référence Parcelles → Diamniadio')
+  })
+
+  it('propose un itinéraire concret pour un lieu seul, sans phrase toute faite', () => {
+    for (const place of ['Parcelles Assainies', 'Petersen', 'Rufisque', 'Keur Mbaye Fall']) {
+      const answer = answerAssistant(place, CONTEXT)
+      expect(answer).not.toMatch(/Quel est votre point de départ|Destination non reconnue/)
+      expect(answer).toMatch(/(gare\/halte TER|station BRT|fiches documentaires)/)
+    }
+    const parcelles = answerAssistant('Parcelles Assainies', CONTEXT)
+    expect(parcelles).toContain('B1')
+    expect(parcelles).toContain('Itinéraire repère')
+  })
+
   it('extrait un couple origine/destination d’une phrase naturelle', () => {
     const request = extractJourneyRequest('Comment aller de Colobane à Bargny ?')
     expect(request?.origin.label).toBe('Colobane')

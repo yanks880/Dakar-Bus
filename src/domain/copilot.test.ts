@@ -22,6 +22,25 @@ describe('copilote : questions libres fondées sur les données', () => {
     expect(memory.lastJourney).not.toBeNull()
   })
 
+  it('complète un trajet avec le lieu énoncé au message précédent, en le nommant', () => {
+    const memory = createConversationMemory()
+    copilotAnswer('Je suis à Keur Mbaye Fall', CONTEXT, memory, 'auto', NOW)
+    const reply = copilotAnswer('je voudrais aller à Dakar', CONTEXT, memory, 'auto', NOW)
+    expect(reply.journey?.origin.stopId).toBe('ter-mbao')
+    expect(reply.journey?.destination.stopId).toBe('ter-dakar')
+    expect(reply.text).toContain('Départ repris')
+    expect(reply.text).toContain('Itinéraire de référence Keur Mbaye Fall → Dakar')
+  })
+
+  it('mémorise aussi une destination énoncée seule', () => {
+    const memory = createConversationMemory()
+    copilotAnswer('Je dois aller à Diamniadio', CONTEXT, memory, 'auto', NOW)
+    const reply = copilotAnswer('je pars de Rufisque', CONTEXT, memory, 'auto', NOW)
+    expect(reply.journey?.origin.stopId).toBe('ter-rufisque')
+    expect(reply.journey?.destination.stopId).toBe('ter-diamniadio')
+    expect(reply.text).toContain('Destination reprise')
+  })
+
   it('répond au suivi « en sens inverse » sans faire répéter les lieux', () => {
     const memory = createConversationMemory()
     copilotAnswer('Trajet de Petersen à Rufisque', CONTEXT, memory, 'auto', NOW)
@@ -188,10 +207,21 @@ describe('copilote : wolof et formulations mixtes', () => {
 })
 
 describe('copilote : honnêteté et non-invention', () => {
-  it('un lieu inconnu produit une réponse explicite, pas un trajet fictif', () => {
+  it('un lieu hors réseau de référence est documenté, jamais transformé en trajet fictif', () => {
     const { reply } = ask('Trajet de Ngor à Yoff')
     expect(reply.text).not.toContain('Montez à')
-    expect(reply.text.toLowerCase()).toMatch(/pas reconnu|non reconnue|ne sont reconnus/)
+    expect(reply.text).toContain('Ngor')
+    expect(reply.text).toContain('Yoff')
+    expect(reply.text.toLowerCase()).toMatch(/aucun arrêt géolocalisé|je ne peux pas calculer cet itinéraire/)
+    expect(reply.journey).toBeUndefined()
+  })
+
+  it('un lieu inconnu est nommé au lieu d’être ignoré, et le reste est servi', () => {
+    const { reply } = ask('Trajet de Mbour à Rufisque')
+    expect(reply.text).toContain('Mbour')
+    expect(reply.text.toLowerCase()).toContain('ne figure pas dans ma mémoire')
+    expect(reply.text).toContain('Rufisque')
+    expect(reply.text).toContain('Itinéraire repère')
     expect(reply.journey).toBeUndefined()
   })
 

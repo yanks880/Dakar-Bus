@@ -22,6 +22,16 @@ export interface JourneyMemory {
   alightStop: string | null
 }
 
+/**
+ * Lieu déjà donné par l'usager, en attente de son complément. La mémoire ne
+ * devine rien : elle ne fait que réemployer un lieu explicitement énoncé
+ * (« je suis à Keur Mbaye Fall » … « je vais à Dakar »).
+ */
+export interface PendingPlace {
+  role: 'origin' | 'destination'
+  place: PlannerEndpoint
+}
+
 export interface ConversationMemory {
   /** Dernière fiche documentaire bus ; séparée des trajets géographiques. */
   lastKnowledgeLineId?: string | null
@@ -32,6 +42,8 @@ export interface ConversationMemory {
   lastNetwork: 'ter' | 'brt' | 'ddd' | 'aftu' | null
   /** Dernier texte de réponse, pour les questions « qu'est-ce qui est confirmé ? ». */
   lastAnswer: string | null
+  /** Lieu énoncé, en attente du lieu complémentaire (jamais déduit). */
+  pendingPlace: PendingPlace | null
 }
 
 export function createConversationMemory(): ConversationMemory {
@@ -43,6 +55,7 @@ export function createConversationMemory(): ConversationMemory {
     lastStopId: null,
     lastNetwork: null,
     lastAnswer: null,
+    pendingPlace: null,
   }
 }
 
@@ -91,4 +104,17 @@ export function rememberJourney(
   memory.lastOrigin = journey.origin
   memory.lastDestination = journey.destination
   memory.lastJourney = journey
+  memory.pendingPlace = null
+}
+
+/**
+ * Mémorise un lieu énoncé seul (« je suis à … », « je vais à … ») pour
+ * compléter la phrase suivante au lieu de la redemander.
+ */
+export function rememberPendingPlace(
+  memory: ConversationMemory,
+  role: 'origin' | 'destination',
+  place: PlannerEndpoint,
+): void {
+  memory.pendingPlace = { role, place }
 }
