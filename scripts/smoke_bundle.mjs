@@ -62,6 +62,21 @@ check('chunk d’entrée', Boolean(entryMatch), entryMatch?.[1] ?? 'script index
 if (entryMatch) {
   const entry = readFileSync(join(dist, 'assets', entryMatch[1]), 'utf8')
   check('Leaflet hors du chunk d’entrée', !entry.includes('leafletjs.com'), entryMatch[1])
+  // Garde anti-cycle : le 10 octobre 2026, le paquet @react-leaflet/core
+  // retombé dans le chunk d'entrée faisait que le chunk leaflet importait le
+  // chunk d'entrée — cycle d'initialisation plantant le bundle au premier
+  // import (page blanche en production, invisible des tests sur la source).
+  const entryName = entryMatch[1]
+  const escapedEntry = entryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const cyclePattern = new RegExp(`(?:from|\\bimport)\\s*["']\\.\\/${escapedEntry}["']`)
+  const importers = scripts
+    .filter((name) => name !== entryName)
+    .filter((name) => cyclePattern.test(readFileSync(join(dist, 'assets', name), 'utf8')))
+  check(
+    'aucun cycle vers le chunk d’entrée',
+    importers.length === 0,
+    importers.length ? `${importers.join(', ')} importent ${entryName}` : 'aucun autre chunk n’importe le chunk d’entrée',
+  )
 }
 
 const css = styles.map((name) => readFileSync(join(dist, 'assets', name), 'utf8')).join('\n')

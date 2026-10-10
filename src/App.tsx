@@ -2870,6 +2870,14 @@ function LegalSection() {
 function ChangelogSection() {
   const releases: { date: string; title: string; items: string[] }[] = [
     {
+      date: '2026-10-10',
+      title: 'Correctif d’accès : le bundle de production se charge à nouveau',
+      items: [
+        'Production : correction du découpage du bundle introduit le matin même — le paquet @react-leaflet/core retombait dans le chunk d’entrée, créant un cycle entre chunks qui plantait le chargement (page blanche) dans tous les navigateurs.',
+        'Fiabilité : le contrôle de production exécute désormais réellement le bundle construit — chunks, montage de l’application, quatre piliers visibles — en plus des tests qui portent sur la source, et vérifie qu’aucun chunk n’importe le chunk d’entrée.',
+      ],
+    },
+    {
       date: '2026-10-09',
       title: 'Horaires par station et par sens',
       items: [

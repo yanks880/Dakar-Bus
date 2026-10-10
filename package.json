@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build && node scripts/smoke_bundle.mjs",
+    "build": "tsc -b && vite build && node scripts/smoke_bundle.mjs && node scripts/smoke_bundle_runtime.mjs",
     "smoke:bundle": "node scripts/smoke_bundle.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",

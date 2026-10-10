@@ -54,7 +54,13 @@ export default defineConfig({
               name: 'leaflet',
               priority: 10,
               includeDependenciesRecursively: false,
-              test: /[\\/]node_modules[\\/](leaflet|react-leaflet)[\\/]/,
+              // `@react-leaflet` (core) est un package distinct de react-leaflet :
+              // sans lui dans ce groupe, il retombe dans le chunk d'entrée et le
+              // chunk leaflet importe le chunk d'entrée — cycle d'initialisation
+              // qui plantait le bundle de production au premier import
+              // (« Cannot read properties of undefined (reading 'forwardRef') »),
+              // invisible des tests (la source, pas les chunks, y est exécutée).
+              test: /[\\/]node_modules[\\/](leaflet|react-leaflet|@react-leaflet)[\\/]/,
             },
           ],
         },
